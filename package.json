@@ -1,0 +1,12 @@
+{
+  "name": "diff-comments-to-md",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Локальный просмотр git-диффа с комментариями к строкам и экспортом в .md",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "review": "node review.js",
+    "review:staged": "node review.js --staged",
+    "smoke": "node tools/local-review/smoke.js"
+  }
+}

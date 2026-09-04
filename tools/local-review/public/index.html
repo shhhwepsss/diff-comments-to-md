@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>local-review</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand">local-review</span>
+        <span id="repo-root" class="muted" title=""></span>
+      </div>
+
+      <div class="topbar-mid">
+        <div class="modes" id="modes">
+          <button class="mode" data-mode="working" type="button">рабочая копия</button>
+          <button class="mode" data-mode="staged" type="button">staged</button>
+          <button class="mode" data-mode="base" type="button">base</button>
+        </div>
+        <input id="base-input" class="base-input" type="text" spellcheck="false" />
+        <button id="reload" class="btn ghost" type="button" title="Перечитать дифф">↻</button>
+      </div>
+
+      <div class="topbar-right">
+        <span id="comment-total" class="badge">0</span>
+        <button id="copy-all" class="btn" type="button">Скопировать всё</button>
+        <button id="export-md" class="btn" type="button">Сгенерировать .md</button>
+        <button id="clear-all" class="btn danger" type="button">Очистить всё</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <span id="range-label" class="muted"></span>
+        </div>
+        <ul id="file-list" class="file-list"></ul>
+      </aside>
+
+      <section class="content">
+        <div id="file-header" class="file-header"></div>
+        <div id="diff" class="diff"></div>
+      </section>
+    </main>
+
+    <div id="modal-overlay" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title">Очистить все комментарии?</h2>
+        <p id="modal-text"></p>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="btn" type="button">Отмена</button>
+          <button id="modal-confirm" class="btn danger" type="button">Удалить</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
