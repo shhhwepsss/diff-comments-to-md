@@ -155,9 +155,9 @@ function lineRow(line, filePath) {
   newTd.textContent = line.newLine === null ? '' : String(line.newLine);
   if (line.newLine !== null) {
     newTd.classList.add('clickable');
-    newTd.title = 'клик — комментарий к строке, Shift+клик — к диапазону';
+    newTd.title = 'клик — строка, протяжка по номерам или Shift+клик — диапазон';
     tr.dataset.newLine = String(line.newLine);
-    newTd.addEventListener('click', (event) => onLineClick(filePath, line.newLine, event));
+    newTd.addEventListener('mousedown', (event) => startDrag(filePath, line.newLine, event));
   }
 
   const code = document.createElement('td');
@@ -200,6 +200,11 @@ function renderDiff() {
   fileBtn.textContent = '+ комментарий к файлу';
   fileBtn.addEventListener('click', () => openEditor({ file: state.activeFile, start: null, end: null }));
   el.fileHeader.append(fileBtn);
+
+  const dragHint = document.createElement('span');
+  dragHint.className = 'hint';
+  dragHint.textContent = 'по номерам строк: клик — строка, протяжка или Shift+клик — диапазон';
+  el.fileHeader.append(dragHint);
 
   const fileComments = commentsFor(state.activeFile);
   const byLine = new Map();
@@ -524,13 +529,63 @@ function closeEditor() {
   state.selection = null;
 }
 
-function onLineClick(file, lineNumber, event) {
-  // Shift+click extends the current selection into a range within the same file.
-  if (event.shiftKey && state.selection && state.selection.file === file) {
-    openEditor({ file, start: state.selection.start, end: lineNumber });
-    return;
+// ------------------------------------------------------- selecting lines
+//
+// Как в гитхабе: клик по номеру — одна строка, протяжка по номерам вниз или
+// вверх — диапазон, Shift+клик — расширить уже выбранное. Пока тянешь, строки
+// подсвечиваются без перерисовки диффа (иначе на больших файлах лагает).
+
+const drag = { active: false, file: null, anchor: null, current: null };
+
+function paintRange(from, to) {
+  const min = Math.min(from, to);
+  const max = Math.max(from, to);
+  for (const tr of el.diff.querySelectorAll('tr.line')) {
+    const raw = tr.dataset.newLine;
+    const n = raw === undefined ? null : Number(raw);
+    tr.classList.toggle('selected', n !== null && n >= min && n <= max);
   }
-  openEditor({ file, start: lineNumber, end: lineNumber });
+}
+
+function startDrag(file, lineNumber, event) {
+  if (event.button !== 0) return;
+  // Иначе браузер начнёт выделять текст диффа, пока тянем по номерам.
+  event.preventDefault();
+  const anchor =
+    event.shiftKey && state.selection && state.selection.file === file
+      ? state.selection.start
+      : lineNumber;
+  drag.active = true;
+  drag.file = file;
+  drag.anchor = anchor;
+  drag.current = lineNumber;
+  document.body.classList.add('dragging-lines');
+  paintRange(drag.anchor, drag.current);
+}
+
+function extendDrag(event) {
+  if (!drag.active) return;
+  const row = event.target.closest ? event.target.closest('tr.line[data-new-line]') : null;
+  if (!row) return;
+  const n = Number(row.dataset.newLine);
+  if (n === drag.current) return;
+  drag.current = n;
+  paintRange(drag.anchor, drag.current);
+}
+
+function finishDrag() {
+  if (!drag.active) return;
+  const { file, anchor, current } = drag;
+  drag.active = false;
+  document.body.classList.remove('dragging-lines');
+  openEditor({ file, start: Math.min(anchor, current), end: Math.max(anchor, current) });
+}
+
+function cancelDrag() {
+  if (!drag.active) return;
+  drag.active = false;
+  document.body.classList.remove('dragging-lines');
+  renderDiff();
 }
 
 // ------------------------------------------------------------------ actions
@@ -652,7 +707,12 @@ el.overlay.addEventListener('click', (event) => {
   if (event.target === el.overlay) closeModal(false);
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !el.overlay.hidden) closeModal(false);
+  if (event.key !== 'Escape') return;
+  if (!el.overlay.hidden) {
+    closeModal(false);
+    return;
+  }
+  cancelDrag();
 });
 
 async function clearAll() {
@@ -674,6 +734,11 @@ async function clearAll() {
 }
 
 // ------------------------------------------------------------------- wiring
+
+el.diff.addEventListener('mousemove', extendDrag);
+document.addEventListener('mouseup', finishDrag);
+// Курсор ушёл из окна с зажатой кнопкой — отпускание мы уже не увидим.
+window.addEventListener('blur', cancelDrag);
 
 el.modes.addEventListener('click', async (event) => {
   const button = event.target.closest('.mode');
