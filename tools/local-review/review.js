@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const { findRepoRoot } = require('./lib/git');
 const { resolveRange } = require('./lib/diff');
 const { CommentStore, STORE_DIR, STORE_FILE } = require('./lib/store');
-const { sendJson } = require('./lib/http');
+const { sendJson, getPublicDir } = require('./lib/http');
 const { createApp, MODES } = require('./lib/routes');
 const config = require('./lib/config');
 
@@ -161,6 +161,18 @@ function openBrowser(url) {
 }
 
 async function start(options) {
+  // Fail before touching anything else: a UI that was never built is not a
+  // git problem, a port problem, or a repo-selection problem, and should not
+  // be diagnosed as one of those.
+  const staticDir = getPublicDir();
+  if (!fs.existsSync(path.join(staticDir, 'index.html'))) {
+    const err = new Error(
+      `UI не собран: выполни \`npm run build\` (каталог ${staticDir})`
+    );
+    err.userFacing = true;
+    throw err;
+  }
+
   // The only thing the tool ever creates outside the chosen repository.
   const homeDir = config.ensureHome();
 
