@@ -88,6 +88,7 @@ function parseArgs(argv) {
 const HELP = `
 local-review — локальный просмотр git-диффа с комментариями к строкам.
 
+  review [флаги]                         (после npm link)
   node tools/local-review/review.js [флаги]
 
   --working            рабочая копия vs HEAD (по умолчанию)
