@@ -80,6 +80,9 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   const confirm = useConfirm();
 
   const [descriptor, setDescriptor] = useState<Descriptor>(initial);
+  // Mode and base edits build on the latest descriptor, not on the one a
+  // callback happened to close over.
+  const descriptorRef = useRef(descriptor);
   const [state, setState] = useState<StateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -130,6 +133,14 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         setState(next);
         setComments(commentData.comments);
         setLoadError(null);
+        // We asked for the repository's default branch without naming it;
+        // adopt the answer so the header shows the real revision (and so a
+        // later mode switch keeps comparing against the same thing).
+        if (d.source === 'local' && !d.base && next.base) {
+          const filled: Descriptor = { ...d, base: next.base };
+          descriptorRef.current = filled;
+          setDescriptor(filled);
+        }
         const inDiff = keepFile !== null && next.files.some((f) => f.path === keepFile);
         const inOrphans = keepFile !== null && next.orphanFiles.some((f) => f.path === keepFile);
         if (inDiff || inOrphans) {
@@ -169,9 +180,6 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     void load(descriptor, activeFileRef.current, true);
   }, [descriptor, load]);
 
-  // Mode and base edits build on the latest descriptor, not on the one a
-  // callback happened to close over.
-  const descriptorRef = useRef(descriptor);
   const updateLocal = useCallback(
     (patch: (d: LocalDescriptor) => LocalDescriptor | null) => {
       const current = descriptorRef.current;
@@ -192,7 +200,8 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
 
   const setBase = useCallback(
     (base: string) => {
-      const value = base.trim() || 'origin/main';
+      // Cleared field = back to the repository's default branch.
+      const value = base.trim();
       updateLocal((d) => (d.base === value ? null : { ...d, base: value }));
     },
     [updateLocal],

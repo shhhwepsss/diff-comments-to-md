@@ -80,7 +80,8 @@ export function LocalPicker() {
         }
       }
       setError(null);
-      const descriptor = { source: 'local' as const, root: v.repoRoot, mode: 'working' as const, base: 'origin/main' };
+      // Empty base: the server resolves the repository's default branch.
+      const descriptor = { source: 'local' as const, root: v.repoRoot, mode: 'working' as const, base: '' };
       const saved = await api.saveSession(descriptor);
       if (saved.gitignore && saved.gitignore.changed) toast('В .gitignore добавлено .local-review/');
       window.location.hash = hashFor(descriptor);

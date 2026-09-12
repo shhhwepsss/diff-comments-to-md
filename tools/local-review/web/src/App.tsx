@@ -20,8 +20,10 @@ type Props = { theme: ThemePref; onTheme: (t: ThemePref) => void };
 
 export function App({ theme, onTheme }: Props) {
   const hash = useSyncExternalStore(subscribeHash, getHash);
-  // The hash is the source of truth; the saved descriptor is consulted only
-  // when there is no hash at all (a fresh tab after a server restart).
+  // The hash is the source of truth. With no hash at all (a fresh tab, or a
+  // server that was just restarted) the repository `review` was launched in
+  // wins over the remembered one: running the command inside a folder is an
+  // explicit choice, the saved session is only the previous run's leftover.
   const [booted, setBooted] = useState(Boolean(hash));
 
   useEffect(() => {
@@ -30,7 +32,9 @@ export function App({ theme, onTheme }: Props) {
     api
       .session()
       .then((s) => {
-        if (alive && !window.location.hash) window.location.hash = hashFor(s.last) || '#/local';
+        if (alive && !window.location.hash) {
+          window.location.hash = hashFor(s.defaults) || hashFor(s.last) || '#/local';
+        }
       })
       .catch(() => {
         if (alive && !window.location.hash) window.location.hash = '#/local';

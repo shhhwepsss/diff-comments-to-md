@@ -76,6 +76,24 @@ async function mergeBase(rev, cwd) {
   return out ? out.trim() : null;
 }
 
+const BASE_FALLBACKS = ['origin/main', 'origin/master', 'main', 'master'];
+
+/**
+ * The revision a branch is measured against when the user named none.
+ * `origin/HEAD` is what the remote itself calls its default branch, so it is
+ * right in repositories whose main branch is not called "main" — the guessed
+ * names are only for a repo with no remote, or one that never fetched a HEAD.
+ */
+async function defaultBase(cwd) {
+  const out = await gitTry(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], cwd);
+  const named = out ? out.trim() : '';
+  if (named) return named;
+  for (const candidate of BASE_FALLBACKS) {
+    if (await revExists(candidate, cwd)) return candidate;
+  }
+  return 'origin/main';
+}
+
 /**
  * `git show <rev>:<path>` as raw bytes, or null on any failure — missing
  * revision, path not present at that revision, no HEAD yet, etc. Callers rely
@@ -90,4 +108,14 @@ async function gitShow(rev, filePath, cwd) {
   return res.stdout;
 }
 
-module.exports = { git, gitText, gitTry, findRepoRoot, hasHead, revExists, mergeBase, gitShow };
+module.exports = {
+  git,
+  gitText,
+  gitTry,
+  findRepoRoot,
+  hasHead,
+  revExists,
+  mergeBase,
+  defaultBase,
+  gitShow,
+};

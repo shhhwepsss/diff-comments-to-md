@@ -23,7 +23,9 @@ export function descriptorFromHash(hash: string): Descriptor | null {
     .split('/')
     .filter(Boolean);
   if (parts[0] === 'local' && parts[1]) {
-    return { source: 'local', root: decodeURIComponent(parts[1]), mode: 'working', base: 'origin/main' };
+    // No base in the hash: an empty one asks the server for the repository's
+    // own default branch, and /api/state answers with what it picked.
+    return { source: 'local', root: decodeURIComponent(parts[1]), mode: 'working', base: '' };
   }
   if (parts[0] === 'pr' && parts.length >= 5) {
     const number = Number(parts[4]);

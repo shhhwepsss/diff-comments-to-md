@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { git, gitTry, hasHead, revExists, mergeBase, gitShow } = require('./git');
+const { git, gitTry, hasHead, revExists, mergeBase, defaultBase, gitShow } = require('./git');
 
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 const TEXT_TOO_BIG_MESSAGE = 'Файл слишком большой для построчного просмотра';
@@ -12,6 +12,11 @@ const TEXT_TOO_BIG_MESSAGE = 'Файл слишком большой для по
  * working : worktree vs HEAD (staged + unstaged)
  * staged  : index vs HEAD
  * base    : worktree vs merge-base(<base>, HEAD)
+ *
+ * An empty `base` is not an error: it means "whatever this repository calls
+ * its default branch", which is the only answer that is right in a repo whose
+ * main branch is named `production`. `range.base` reports what was chosen so
+ * the UI can show it instead of a placeholder.
  */
 async function resolveRange(repoRoot, mode, base) {
   const head = await hasHead(repoRoot);
@@ -21,13 +26,14 @@ async function resolveRange(repoRoot, mode, base) {
   }
 
   if (mode === 'base') {
-    if (!(await revExists(base, repoRoot))) {
-      const err = new Error(`Ревизия "${base}" не найдена в этом репозитории.`);
+    const rev = base || (await defaultBase(repoRoot));
+    if (!(await revExists(rev, repoRoot))) {
+      const err = new Error(`Ревизия "${rev}" не найдена в этом репозитории.`);
       err.userFacing = true;
       throw err;
     }
-    const mb = (await mergeBase(base, repoRoot)) || base;
-    return { args: ['diff', mb], label: `worktree vs merge-base(${base})`, resolvedBase: mb };
+    const mb = (await mergeBase(rev, repoRoot)) || rev;
+    return { args: ['diff', mb], label: `worktree vs merge-base(${rev})`, resolvedBase: mb, base: rev };
   }
 
   // working

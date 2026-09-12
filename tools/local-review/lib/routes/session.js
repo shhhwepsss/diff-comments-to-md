@@ -3,10 +3,14 @@
 const { sendJson, readJsonBody } = require('../http');
 const config = require('../config');
 
-async function get(req, res) {
+async function get(req, res, ctx) {
   const state = config.readState();
   sendJson(res, 200, {
     last: state.last,
+    // The repository this server was started in, when there was one. Running
+    // `review` inside a folder is a deliberate act now; `last` is only what
+    // some previous run happened to leave behind, so the UI prefers this.
+    defaults: (ctx && ctx.defaults) || null,
     recent: state.recent,
     homeDir: config.homeDir(),
     storedPrs: config.countStoredPrs(),

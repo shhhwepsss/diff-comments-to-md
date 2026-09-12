@@ -30,6 +30,23 @@ const THEMES: { value: ThemePref; label: string; icon: typeof SunIcon }[] = [
   { value: 'dark', label: 'Тёмная', icon: MoonIcon },
 ];
 
+/**
+ * Which repository is on screen is the one thing a reviewer must not have to
+ * hunt for: a diff of the wrong repo looks exactly like a diff of the right
+ * one, only empty. So the folder name is read first and the full path trails
+ * behind it as the confirmation.
+ */
+function RepoLabel({ root }: { root: string }) {
+  const name = root.split(/[/\\]/).filter(Boolean).pop() || root;
+  return (
+    <span className="rv-header__root" title={root}>
+      <RepoIcon size={16} />
+      <span className="rv-header__repo">{name}</span>
+      <span className="rv-header__path">{root}</span>
+    </span>
+  );
+}
+
 function BaseInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -116,10 +133,7 @@ export function AppHeader({ route, theme, onTheme }: Props) {
 
       {local && review && (
         <div className="rv-header__row rv-header__row--sub">
-          <span className="rv-header__root" title={local.root}>
-            <RepoIcon size={16} />
-            <span>{local.root}</span>
-          </span>
+          <RepoLabel root={local.root} />
           <SegmentedControl aria-label="Режим диффа" size="small">
             {MODES.map((m) => (
               <SegmentedControl.Button key={m.value} selected={local.mode === m.value} onClick={() => review.setMode(m.value)}>
@@ -135,7 +149,7 @@ export function AppHeader({ route, theme, onTheme }: Props) {
         <div className="rv-header__row rv-header__row--sub">
           <span className="rv-header__root">
             <MarkGithubIcon size={16} />
-            <span>
+            <span className="rv-header__repo">
               {review.descriptor.owner}/{review.descriptor.repo} #{review.descriptor.number}
             </span>
           </span>

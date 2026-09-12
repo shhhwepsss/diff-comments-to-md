@@ -3,8 +3,16 @@ import { descriptorFromHash, hashFor, routeFromHash } from './hash';
 
 describe('hash routing', () => {
   it('round-trips a local root with spaces and Cyrillic', () => {
-    const d = { source: 'local' as const, root: 'C:/Users/me/мой проект', mode: 'working' as const, base: 'origin/main' };
-    expect(descriptorFromHash(hashFor(d))).toEqual(d);
+    const root = 'C:/Users/me/мой проект';
+    const d = { source: 'local' as const, root, mode: 'working' as const, base: 'origin/production' };
+    // The hash carries the root and nothing else: mode resets to working and
+    // base comes back empty, meaning "ask the repository for its default".
+    expect(descriptorFromHash(hashFor(d))).toEqual({
+      source: 'local',
+      root,
+      mode: 'working',
+      base: '',
+    });
   });
 
   it('round-trips a PR', () => {

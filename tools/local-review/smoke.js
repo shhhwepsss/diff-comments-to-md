@@ -551,6 +551,35 @@ async function main() {
   ok(badBase.status === 400, 'несуществующая база -> 400 с текстом, а не 500',
     JSON.stringify(badBase.body));
 
+  // A repository whose main branch is not called "main". Base mode must ask
+  // origin/HEAD which revision that is; guessing the name is what made the
+  // tool answer «Ревизия "origin/main" не найдена» in a real project.
+  const prodRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prod-'));
+  git(['init', '-q', '-b', 'production'], prodRepo);
+  git(['config', 'user.email', 'smoke@example.com'], prodRepo);
+  git(['config', 'user.name', 'Smoke Test'], prodRepo);
+  git(['config', 'commit.gpgsign', 'false'], prodRepo);
+  write(prodRepo, 'a.txt', 'a\n');
+  git(['add', '-A'], prodRepo);
+  git(['commit', '-q', '-m', 'init'], prodRepo);
+  git(['update-ref', 'refs/remotes/origin/production', git(['rev-parse', 'HEAD'], prodRepo).trim()], prodRepo);
+  git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/production'], prodRepo);
+  write(prodRepo, 'a.txt', 'a\nb\n');
+  const prodServer = await start({
+    cwd: prodRepo, mode: 'base', base: '', port: 0, host: '127.0.0.1', open: false,
+  });
+  const prodCall = makeClient(prodServer.port);
+  eq(prodServer.resolvedBase, 'origin/production', 'CLI без --base берёт ветку по умолчанию у origin');
+  const prodState = await prodCall('/api/state?mode=base');
+  eq(prodState.body.base, 'origin/production', 'режим base без base= берёт origin/HEAD, а не origin/main');
+  // `.gitignore` is the tool's own doing (it adds .local-review/ on start).
+  eq(
+    prodState.body.files.map((f) => f.path),
+    ['.gitignore', 'a.txt'],
+    'дифф от этой базы действительно читается'
+  );
+  await new Promise((r) => prodServer.server.close(r));
+
   // ---------------------------------------------------- дескриптор в query
   console.log('\nдескриптор источника');
   const byDescriptor = await call(
@@ -717,6 +746,18 @@ async function main() {
     (await call('/api/session')).body.recent[0].root,
     noGitignoreRepo,
     'выбранная папка попала в недавние'
+  );
+
+  // `last` now points at a folder that was picked in the UI, while this server
+  // was launched against `repo`. The launch repository must win on boot, or a
+  // fresh tab silently opens someone else's diff (and calls it empty).
+  const sessAfterPick = await call('/api/session');
+  eq(sessAfterPick.body.last.root, noGitignoreRepo, 'last = последняя выбранная папка');
+  eq(
+    sessAfterPick.body.defaults && sessAfterPick.body.defaults.root,
+    // findRepoRoot reports git's own forward-slash spelling of the path.
+    repo.split('\\').join('/'),
+    'defaults = репозиторий запуска, даже когда last указывает в другой'
   );
 
   // ------------------------------------------- Origin / Sec-Fetch-Site

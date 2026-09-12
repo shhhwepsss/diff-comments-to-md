@@ -2,6 +2,7 @@
 
 const { sendJson } = require('../http');
 const { parseDescriptor, MODES } = require('../descriptor');
+const { defaultBase } = require('../git');
 const { createSource } = require('../sources/factory');
 const { storeFor } = require('../stores/factory');
 
@@ -20,11 +21,19 @@ async function getState(req, res, ctx, url) {
   const pr = descriptor.source === 'pr' ? await source.meta() : null;
   const counts = store.countsByFile();
 
+  // The client may send no base at all; answer with the revision Base mode
+  // would actually use, so the header shows `origin/production` and not a
+  // placeholder the repository has never heard of.
+  const base =
+    descriptor.source !== 'local'
+      ? descriptor.base
+      : range.base || descriptor.base || (await defaultBase(descriptor.root));
+
   sendJson(res, 200, {
     repoRoot: descriptor.source === 'local' ? descriptor.root : null,
     source: descriptor.source,
     mode: descriptor.mode,
-    base: descriptor.base,
+    base,
     pr,
     rangeLabel:
       pr && pr.baseRefName && pr.headRefName

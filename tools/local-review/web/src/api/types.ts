@@ -115,6 +115,8 @@ export type RecentRepo = { root: string };
 
 export type SessionResponse = {
   last: Descriptor | null;
+  /** The repository `review` was started in, when it was started inside one. */
+  defaults: Descriptor | null;
   recent: RecentRepo[];
   homeDir: string;
   storedPrs: number;

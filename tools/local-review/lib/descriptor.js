@@ -32,7 +32,9 @@ function parseDescriptor(url, defaults) {
     const root = p.get('root');
     if (!root) throw bad('Не передан параметр root');
     const mode = p.get('mode') || 'working';
-    const base = p.get('base') || 'origin/main';
+    // Empty base = "the repository's default branch"; resolveRange decides
+    // which revision that is, because only it can ask git.
+    const base = p.get('base') || '';
     if (!MODES.has(mode)) throw bad(`Неизвестный режим: ${mode}`);
     return { source: 'local', root, mode, base };
   }

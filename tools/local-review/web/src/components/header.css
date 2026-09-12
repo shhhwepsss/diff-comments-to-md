@@ -68,12 +68,17 @@
 
 .rv-header__root {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--base-size-8);
   min-width: 0;
-  max-width: 40vw;
-  font-family: var(--fontStack-monospace);
+  max-width: 46vw;
   font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-header__root > svg {
+  align-self: center;
+  flex: none;
   color: var(--fgColor-muted);
 }
 
@@ -81,6 +86,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The repository name never shrinks away: the path may be clipped, the
+   identity of what you are reviewing may not. */
+.rv-header__repo {
+  flex: none;
+  color: var(--fgColor-default);
+  font-size: var(--text-body-size-medium);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-header__path {
+  flex: 0 1 auto;
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
 }
 
 .rv-header__base {

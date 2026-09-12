@@ -44,7 +44,9 @@ export function descriptorQuery(d: Descriptor | null, extra?: Record<string, str
     p.set('source', 'local');
     p.set('root', d.root);
     p.set('mode', d.mode);
-    p.set('base', d.base);
+    // An omitted base means "the repository's default branch" server-side;
+    // sending an empty string would be the same thing, but noisier in logs.
+    if (d.base) p.set('base', d.base);
   } else if (d && d.source === 'pr') {
     p.set('source', 'pr');
     p.set('host', d.host);
