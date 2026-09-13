@@ -225,4 +225,6 @@ async function fileDiff(repoRoot, mode, base, filePath, context) {
   return Object.assign({}, entry, parsePatch(patch));
 }
 
-module.exports = { resolveRange, listFiles, fileDiff, parsePatch, splitLines };
+// parseRawZ / splitZ экспортируются для lib/commits.js: режим коммитов разбирает
+// тот же `git diff --raw -z`, но своим набором аргументов.
+module.exports = { resolveRange, listFiles, fileDiff, parsePatch, splitLines, parseRawZ, splitZ };

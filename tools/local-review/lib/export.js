@@ -27,10 +27,26 @@ function sortComments(comments) {
   });
 }
 
+/**
+ * Вторая строка блока — коммит или диапазон, в котором комментарий писали.
+ * Её получают только комментарии из режима коммитов, оставленные не на
+ * последнем коммите: всё остальное экспортируется как раньше — путь и текст.
+ */
+function commitLineOf(comment) {
+  const ctx = comment.commit;
+  if (!ctx || !ctx.to) return null;
+  const range = ctx.from && ctx.from !== ctx.to ? `${ctx.from}..${ctx.to}` : ctx.to;
+  return ctx.label ? `${range} · ${ctx.label}` : range;
+}
+
 function renderMarkdown(comments) {
   return (
     sortComments(comments)
-      .map((c) => `${anchorOf(c)}\n${String(c.text).replace(/\r\n/g, '\n').trim()}`)
+      .map((c) => {
+        const commitLine = commitLineOf(c);
+        const head = commitLine ? `${anchorOf(c)}\n${commitLine}` : anchorOf(c);
+        return `${head}\n${String(c.text).replace(/\r\n/g, '\n').trim()}`;
+      })
       .join('\n\n') + (comments.length ? '\n' : '')
   );
 }
@@ -52,4 +68,4 @@ function writeMarkdownFile(repoRoot, comments, date) {
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };

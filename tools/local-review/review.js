@@ -9,6 +9,14 @@ const { findRepoRoot } = require('./lib/git');
 const { listFiles, fileDiff, resolveRange } = require('./lib/diff');
 const { CommentStore, STORE_DIR } = require('./lib/store');
 const { renderMarkdown, writeMarkdownFile } = require('./lib/export');
+const {
+  listCommits,
+  uncommittedSummary,
+  listCommitFiles,
+  commitFileDiff,
+  describeCommand,
+  rangeLabel,
+} = require('./lib/commits');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MODES = new Set(['working', 'staged', 'base']);
@@ -290,6 +298,7 @@ function createApp(context) {
         startLine: body.startLine === undefined ? null : body.startLine,
         endLine: body.endLine === undefined ? null : body.endLine,
         text: String(body.text).trim(),
+        commit: body.commit,
       });
       sendJson(res, 201, { comment });
       return;
@@ -349,6 +358,65 @@ function createApp(context) {
         count: comments.length,
         remaining: store.all().length,
       });
+      return;
+    }
+
+    // ---- режим коммитов ----------------------------------------------------
+    // Отдельные эндпоинты, а не ещё один mode у /api/state: фича добавляется
+    // поверх существующих режимов и не меняет их поведение.
+    if (pathname === '/api/commits' && req.method === 'GET') {
+      const base = url.searchParams.get('base') || context.base;
+      const limit = Number(url.searchParams.get('limit'));
+      const history = await listCommits(repoRoot, base, limit);
+      const dirty = await uncommittedSummary(repoRoot);
+      sendJson(res, 200, Object.assign({ repoRoot, dirty }, history));
+      return;
+    }
+
+    if (pathname === '/api/commits/state' && req.method === 'GET') {
+      const from = url.searchParams.get('from');
+      const to = url.searchParams.get('to') || from;
+      if (!from) {
+        sendJson(res, 400, { error: 'Не переданы параметры from / to' });
+        return;
+      }
+      const count = Number(url.searchParams.get('count'));
+      const { files, combined } = await listCommitFiles(repoRoot, from, to);
+      const counts = store.countsByFile();
+      sendJson(res, 200, {
+        repoRoot,
+        mode: 'commits',
+        base: context.base,
+        from,
+        to,
+        combined,
+        command: await describeCommand(repoRoot, from, to),
+        rangeLabel: rangeLabel(from, to, Number.isFinite(count) ? count : 0),
+        totalComments: store.all().length,
+        files: files.map((f) => ({
+          path: f.path,
+          oldPath: f.oldPath,
+          status: f.status,
+          kind: f.kind,
+          untracked: false,
+          comments: counts[f.path] || 0,
+        })),
+        orphanFiles: Object.keys(counts)
+          .filter((p) => !files.some((f) => f.path === p))
+          .map((p) => ({ path: p, comments: counts[p], orphan: true })),
+      });
+      return;
+    }
+
+    if (pathname === '/api/commits/diff' && req.method === 'GET') {
+      const file = url.searchParams.get('file');
+      const from = url.searchParams.get('from');
+      const to = url.searchParams.get('to') || from;
+      if (!file || !from) {
+        sendJson(res, 400, { error: 'Нужны параметры file и from' });
+        return;
+      }
+      sendJson(res, 200, await commitFileDiff(repoRoot, from, to, file, 3));
       return;
     }
 

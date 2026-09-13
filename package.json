@@ -7,6 +7,7 @@
   "scripts": {
     "review": "node review.js",
     "review:staged": "node review.js --staged",
-    "smoke": "node tools/local-review/smoke.js"
+    "smoke": "node tools/local-review/smoke.js",
+    "smoke:commits": "node tools/local-review/smoke-commits.js"
   }
 }

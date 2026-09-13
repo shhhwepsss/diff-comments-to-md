@@ -7,6 +7,22 @@ const crypto = require('node:crypto');
 const STORE_DIR = '.local-review';
 const STORE_FILE = 'comments.json';
 
+/**
+ * { from, to, label } — диапазон коммитов, в котором комментарий был написан.
+ * Нужен, чтобы комментарий не всплывал в диффе другого диапазона и чтобы
+ * экспорт мог указать, что именно читал ревьюер.
+ */
+function normalizeCommit(commit) {
+  if (!commit || typeof commit !== 'object') return null;
+  const to = commit.to ? String(commit.to) : '';
+  if (!to) return null;
+  return {
+    from: commit.from ? String(commit.from) : to,
+    to,
+    label: commit.label ? String(commit.label) : '',
+  };
+}
+
 class CommentStore {
   constructor(repoRoot) {
     this.repoRoot = repoRoot;
@@ -53,7 +69,7 @@ class CommentStore {
     return counts;
   }
 
-  add({ file, startLine, endLine, text }) {
+  add({ file, startLine, endLine, text, commit }) {
     const now = new Date().toISOString();
     const comment = {
       id: crypto.randomUUID(),
@@ -74,6 +90,10 @@ class CommentStore {
       comment.startLine = comment.endLine;
       comment.endLine = tmp;
     }
+    // Контекст коммита пишем только когда он есть: комментарий, оставленный
+    // в режимах working / staged / base, хранится ровно как раньше.
+    const ctx = normalizeCommit(commit);
+    if (ctx) comment.commit = ctx;
     this.data.comments.push(comment);
     this.save();
     return comment;
@@ -105,4 +125,4 @@ class CommentStore {
   }
 }
 
-module.exports = { CommentStore, STORE_DIR, STORE_FILE };
+module.exports = { CommentStore, STORE_DIR, STORE_FILE, normalizeCommit };

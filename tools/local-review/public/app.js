@@ -34,6 +34,17 @@ const state = {
 
 const MAX_RENDERED_LINES = 20000;
 
+// Точки расширения для режима, который подключается отдельным скриптом
+// (public/commits.js). Дефолты повторяют прежнее поведение один в один:
+// без commits.js страница работает ровно как до появления режима коммитов.
+const hooks = {
+  stateUrl: (params) => `/api/state?${params}`,
+  diffUrl: (params) => `/api/diff?${params}`,
+  commentVisible: () => true,
+  commentBadge: () => null,
+  commentPayload: (payload) => payload,
+};
+
 // ---------------------------------------------------------------- utilities
 
 async function api(pathname, options) {
@@ -67,7 +78,7 @@ function anchorLabel(comment) {
 }
 
 function commentsFor(file) {
-  return state.comments.filter((c) => c.file === file);
+  return state.comments.filter((c) => c.file === file && hooks.commentVisible(c));
 }
 
 // ------------------------------------------------------------------- header
@@ -434,7 +445,18 @@ function commentCard(comment) {
   });
 
   actions.append(edit, remove);
-  meta.append(anchor, actions);
+  meta.append(anchor);
+
+  const badgeText = hooks.commentBadge(comment);
+  if (badgeText) {
+    const badge = document.createElement('span');
+    badge.className = 'commit-chip';
+    badge.textContent = badgeText;
+    badge.title = 'Коммит, в котором написан комментарий';
+    meta.append(badge);
+  }
+
+  meta.append(actions);
 
   const body = document.createElement('div');
   body.className = 'body';
@@ -481,12 +503,14 @@ function editorCard(target) {
     await api('/api/comments', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        file: target.file,
-        startLine: target.start === null ? null : Math.min(target.start, target.end),
-        endLine: target.end === null ? null : Math.max(target.start, target.end),
-        text,
-      }),
+      body: JSON.stringify(
+        hooks.commentPayload({
+          file: target.file,
+          startLine: target.start === null ? null : Math.min(target.start, target.end),
+          endLine: target.end === null ? null : Math.max(target.start, target.end),
+          text,
+        })
+      ),
     });
     closeEditor();
     await refreshComments();
@@ -600,7 +624,7 @@ async function refreshComments() {
 
 async function refreshState(keepFile) {
   const params = new URLSearchParams({ mode: state.mode, base: state.base });
-  const data = await api(`/api/state?${params.toString()}`);
+  const data = await api(hooks.stateUrl(params.toString()));
   state.repoRoot = data.repoRoot;
   state.rangeLabel = data.rangeLabel;
   state.files = data.files;
@@ -636,7 +660,7 @@ async function selectFile(file, orphan) {
   }
   try {
     const params = new URLSearchParams({ file, mode: state.mode, base: state.base });
-    state.diff = await api(`/api/diff?${params.toString()}`);
+    state.diff = await api(hooks.diffUrl(params.toString()));
   } catch (e) {
     state.diff = { orphan: true, hunks: [] };
     toast(e.message, true);
