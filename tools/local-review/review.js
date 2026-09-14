@@ -8,13 +8,14 @@ const { spawn } = require('node:child_process');
 const { findRepoRoot } = require('./lib/git');
 const { resolveRange } = require('./lib/diff');
 const { CommentStore, STORE_DIR, STORE_FILE } = require('./lib/store');
-const { sendJson } = require('./lib/http');
+const { sendJson, getPublicDir } = require('./lib/http');
 const { createApp, MODES } = require('./lib/routes');
 const config = require('./lib/config');
 
 function parseArgs(argv) {
   const options = {
-    base: 'origin/main',
+    // Empty = the repository's default branch, resolved from origin/HEAD.
+    base: '',
     port: 4321,
     mode: 'working',
     open: true,
@@ -93,7 +94,8 @@ local-review — локальный просмотр git-диффа с комм�
 
   --working            рабочая копия vs HEAD (по умолчанию)
   --staged             индекс vs HEAD
-  --base <rev>         рабочая копия vs merge-base(<rev>, HEAD); по умолчанию origin/main
+  --base <rev>         рабочая копия vs merge-base(<rev>, HEAD); по умолчанию
+                       ветка по умолчанию у origin (origin/HEAD)
   --mode <m>           working | staged | base
   --port <n>           стартовый порт (по умолчанию 4321, занятый — берётся следующий)
   --host <addr>        адрес прослушивания (по умолчанию 127.0.0.1)
@@ -161,6 +163,18 @@ function openBrowser(url) {
 }
 
 async function start(options) {
+  // Fail before touching anything else: a UI that was never built is not a
+  // git problem, a port problem, or a repo-selection problem, and should not
+  // be diagnosed as one of those.
+  const staticDir = getPublicDir();
+  if (!fs.existsSync(path.join(staticDir, 'index.html'))) {
+    const err = new Error(
+      `UI не собран: выполни \`npm run build\` (каталог ${staticDir})`
+    );
+    err.userFacing = true;
+    throw err;
+  }
+
   // The only thing the tool ever creates outside the chosen repository.
   const homeDir = config.ensureHome();
 
@@ -175,7 +189,8 @@ async function start(options) {
   }
 
   // Fail early with a readable message instead of a stack trace mid-request.
-  if (repoRoot) await resolveRange(repoRoot, options.mode, options.base);
+  const range = repoRoot ? await resolveRange(repoRoot, options.mode, options.base) : null;
+  const resolvedBase = (range && range.base) || options.base;
 
   // No repository under cwd is no longer a reason to refuse: the UI opens on
   // the folder picker and the descriptor arrives with the first request.
@@ -198,7 +213,7 @@ async function start(options) {
   });
 
   const port = await listen(server, options.port, options.host, 50);
-  return { server, port, repoRoot, store, gitignore, homeDir };
+  return { server, port, repoRoot, store, gitignore, homeDir, resolvedBase };
 }
 
 async function main() {
@@ -222,7 +237,9 @@ async function main() {
   if (started.repoRoot) {
     console.log(`  репозиторий     ${started.repoRoot}`);
     console.log(
-      `  режим           ${options.mode}${options.mode === 'base' ? ` (${options.base})` : ''}`
+      `  режим           ${options.mode}${
+        options.mode === 'base' ? ` (${started.resolvedBase})` : ''
+      }`
     );
     console.log(`  комментарии     ${STORE_DIR}/comments.json (${started.store.all().length} шт.)`);
   } else {

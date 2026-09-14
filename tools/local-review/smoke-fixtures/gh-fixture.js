@@ -21,6 +21,19 @@ try {
 }
 
 const key = argv.join(' ');
+
+// Optional call log, for tests that need to prove a cache actually prevented
+// a second invocation (e.g. per-file PR content fetches). Only written when
+// a test opts in, so it costs nothing to every other caller of this fixture.
+const callLogPath = process.env.LOCAL_REVIEW_GH_CALL_LOG;
+if (callLogPath) {
+  try {
+    fs.appendFileSync(callLogPath, `${key}\n`);
+  } catch {
+    /* logging is a test convenience, never a reason to fail the fixture */
+  }
+}
+
 const hit = manifest[key] || manifest['*'];
 if (!hit) {
   process.stderr.write(`gh-fixture: no fixture for: ${key}\n`);

@@ -175,6 +175,15 @@ async function main() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-home-'));
   process.env.LOCAL_REVIEW_HOME = home;
 
+  // Points every `start()` call in this suite at a throwaway static dir
+  // instead of the real dist/ (which may not be built in this checkout).
+  // Also doubles as the assertion fixture for the "GET / serves the
+  // configured static dir" check right after the first server starts.
+  const staticDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-static-'));
+  const staticIndexHtml = '<!doctype html><title>smoke ui</title><body>smoke-static-marker</body>\n';
+  fs.writeFileSync(path.join(staticDir, 'index.html'), staticIndexHtml, 'utf8');
+  process.env.LOCAL_REVIEW_STATIC_DIR = staticDir;
+
   const repo = buildRepo();
   console.log(`\ntemp repo: ${repo}`);
   console.log(`temp home: ${home}\n`);
@@ -193,6 +202,18 @@ async function main() {
     open: false,
   });
   let call = makeClient(server.port);
+
+  // ------------------------------------------------------------- static UI
+  console.log('статика UI (LOCAL_REVIEW_STATIC_DIR)');
+  const indexRes = await fetch(`http://127.0.0.1:${server.port}/`);
+  const indexBody = await indexRes.text();
+  ok(indexRes.status === 200, 'GET / -> 200', String(indexRes.status));
+  ok(
+    (indexRes.headers.get('content-type') || '').includes('text/html'),
+    'GET / -> text/html',
+    indexRes.headers.get('content-type')
+  );
+  eq(indexBody, staticIndexHtml, 'GET / отдаёт index.html из LOCAL_REVIEW_STATIC_DIR');
 
   // ---------------------------------------------------------------- state
   console.log('state / diff');
@@ -244,6 +265,52 @@ async function main() {
 
   const missing = await call('/api/diff?file=nope.txt');
   ok(missing.status === 404, 'дифф несуществующего файла -> 404, а не stacktrace');
+
+  // ------------------------------------------------- oldText / newText (working)
+  console.log('\noldText / newText (working)');
+  const appTextDiff = await call('/api/diff?file=' + encodeURIComponent('src/app.js'));
+  eq(
+    appTextDiff.body.oldText,
+    git(['show', 'HEAD:src/app.js'], repo),
+    'модифицированный файл: oldText = git show HEAD:path'
+  );
+  eq(
+    appTextDiff.body.newText,
+    fs.readFileSync(path.join(repo, 'src/app.js'), 'utf8'),
+    'модифицированный файл: newText = содержимое на диске'
+  );
+
+  ok(deleted.body.newText === null, 'удалённый файл: newText = null');
+  eq(
+    deleted.body.oldText,
+    git(['show', 'HEAD:src/to-delete.js'], repo),
+    'удалённый файл: oldText = git show HEAD:path'
+  );
+
+  const renamedTextDiff = await call('/api/diff?file=' + encodeURIComponent('src/renamed.js'));
+  eq(
+    renamedTextDiff.body.oldText,
+    git(['show', 'HEAD:src/to-rename.js'], repo),
+    'переименованный файл: oldText берётся по старому пути'
+  );
+  eq(
+    renamedTextDiff.body.newText,
+    fs.readFileSync(path.join(repo, 'src/renamed.js'), 'utf8'),
+    'переименованный файл: newText = содержимое на диске'
+  );
+
+  ok(
+    binary.body.oldText === null && binary.body.newText === null,
+    'бинарный файл: oldText и newText оба null',
+    JSON.stringify(binary.body)
+  );
+
+  ok(untracked.body.oldText === null, 'untracked-файл: oldText = null');
+  eq(
+    untracked.body.newText,
+    fs.readFileSync(path.join(repo, 'brand new.txt'), 'utf8'),
+    'untracked-файл: newText = содержимое на диске'
+  );
 
   // ------------------------------------------------- invariant 4: numbers
   console.log('\nинвариант 4: реальные номера строк');
@@ -451,11 +518,67 @@ async function main() {
     'staged показывает добавленный в индекс файл',
     JSON.stringify(stagedAfterAdd.body.files.map((f) => f.path))
   );
+  const stagedAppText = await call('/api/diff?file=' + encodeURIComponent('src/app.js') + '&mode=staged');
+  eq(
+    stagedAppText.body.oldText,
+    git(['show', 'HEAD:src/app.js'], repo),
+    'staged: oldText = git show HEAD:path'
+  );
+  eq(
+    stagedAppText.body.newText,
+    git(['show', ':src/app.js'], repo),
+    'staged: newText = git show :path (индекс)'
+  );
+
   const baseMode = await call('/api/state?mode=base&base=HEAD~1');
   ok(baseMode.status === 200 && baseMode.body.files.length > 0, 'режим base работает');
+
+  const baseAppText = await call(
+    '/api/diff?file=' + encodeURIComponent('src/app.js') + '&mode=base&base=HEAD~1'
+  );
+  eq(
+    baseAppText.body.oldText,
+    git(['show', 'HEAD~1:src/app.js'], repo),
+    'base: oldText = git show <merge-base>:path'
+  );
+  eq(
+    baseAppText.body.newText,
+    fs.readFileSync(path.join(repo, 'src/app.js'), 'utf8'),
+    'base: newText = содержимое на диске'
+  );
+
   const badBase = await call('/api/state?mode=base&base=не-существует');
   ok(badBase.status === 400, 'несуществующая база -> 400 с текстом, а не 500',
     JSON.stringify(badBase.body));
+
+  // A repository whose main branch is not called "main". Base mode must ask
+  // origin/HEAD which revision that is; guessing the name is what made the
+  // tool answer «Ревизия "origin/main" не найдена» in a real project.
+  const prodRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prod-'));
+  git(['init', '-q', '-b', 'production'], prodRepo);
+  git(['config', 'user.email', 'smoke@example.com'], prodRepo);
+  git(['config', 'user.name', 'Smoke Test'], prodRepo);
+  git(['config', 'commit.gpgsign', 'false'], prodRepo);
+  write(prodRepo, 'a.txt', 'a\n');
+  git(['add', '-A'], prodRepo);
+  git(['commit', '-q', '-m', 'init'], prodRepo);
+  git(['update-ref', 'refs/remotes/origin/production', git(['rev-parse', 'HEAD'], prodRepo).trim()], prodRepo);
+  git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/production'], prodRepo);
+  write(prodRepo, 'a.txt', 'a\nb\n');
+  const prodServer = await start({
+    cwd: prodRepo, mode: 'base', base: '', port: 0, host: '127.0.0.1', open: false,
+  });
+  const prodCall = makeClient(prodServer.port);
+  eq(prodServer.resolvedBase, 'origin/production', 'CLI без --base берёт ветку по умолчанию у origin');
+  const prodState = await prodCall('/api/state?mode=base');
+  eq(prodState.body.base, 'origin/production', 'режим base без base= берёт origin/HEAD, а не origin/main');
+  // `.gitignore` is the tool's own doing (it adds .local-review/ on start).
+  eq(
+    prodState.body.files.map((f) => f.path),
+    ['.gitignore', 'a.txt'],
+    'дифф от этой базы действительно читается'
+  );
+  await new Promise((r) => prodServer.server.close(r));
 
   // ---------------------------------------------------- дескриптор в query
   console.log('\nдескриптор источника');
@@ -623,6 +746,18 @@ async function main() {
     (await call('/api/session')).body.recent[0].root,
     noGitignoreRepo,
     'выбранная папка попала в недавние'
+  );
+
+  // `last` now points at a folder that was picked in the UI, while this server
+  // was launched against `repo`. The launch repository must win on boot, or a
+  // fresh tab silently opens someone else's diff (and calls it empty).
+  const sessAfterPick = await call('/api/session');
+  eq(sessAfterPick.body.last.root, noGitignoreRepo, 'last = последняя выбранная папка');
+  eq(
+    sessAfterPick.body.defaults && sessAfterPick.body.defaults.root,
+    // findRepoRoot reports git's own forward-slash spelling of the path.
+    repo.split('\\').join('/'),
+    'defaults = репозиторий запуска, даже когда last указывает в другой'
   );
 
   // ------------------------------------------- Origin / Sec-Fetch-Site
@@ -869,6 +1004,15 @@ async function main() {
   const viewKeyFor = (n) =>
     `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url`;
 
+  // gh's path segments are percent-encoded one segment at a time (spaces and
+  // Cyrillic survive git paths, not raw URLs) — mirrors lib/sources/pr-source.js.
+  function encodePathSegments(p) {
+    return p.split('/').map(encodeURIComponent).join('/');
+  }
+  function ghContentsKey(p, ref) {
+    return `api -H Accept: application/vnd.github.raw+json repos/o/r/contents/${encodePathSegments(p)}?ref=${ref}`;
+  }
+
   ghFixtures(
     {
       [viewKeyFor(25)]: prView(25),
@@ -880,6 +1024,19 @@ async function main() {
         code: 1,
         stderr: 'HTTP 406: Sorry, this diff is taking too long to generate.\n',
       },
+      // oldText/newText plumbing (§2 of the design doc) kicks in for every
+      // /api/diff in PR mode from here on, so PR #25's file-text fetches need
+      // fixtures too, not just its `pr diff`.
+      'pr view 25 --repo o/r --json baseRefOid,headRefOid': {
+        code: 0,
+        stdout: JSON.stringify({ baseRefOid: 'earlyBaseSha', headRefOid: 'abc123' }),
+      },
+      'api repos/o/r/compare/earlyBaseSha...abc123': {
+        code: 0,
+        stdout: JSON.stringify({ merge_base_commit: { sha: 'earlyMergeBaseSha' } }),
+      },
+      [ghContentsKey('src/app.js', 'earlyMergeBaseSha')]: { code: 0, stdout: 'early old app content\n' },
+      [ghContentsKey('src/app.js', 'abc123')]: { code: 0, stdout: 'early new app content\n' },
     },
     home
   );
@@ -914,8 +1071,15 @@ async function main() {
 
   const prBin = await call(`/api/diff?file=${encodeURIComponent('assets/logo.bin')}&${prQuery}`);
   ok(prBin.body.binary === true, 'бинарный файл PR-а помечен binary', JSON.stringify(prBin.body));
+  ok(
+    prBin.body.oldText === null && prBin.body.newText === null,
+    'бинарный файл PR-а: oldText/newText оба null',
+    JSON.stringify(prBin.body)
+  );
 
   const prApp = await call(`/api/diff?file=${encodeURIComponent('src/app.js')}&${prQuery}`);
+  eq(prApp.body.oldText, 'early old app content\n', 'PR: oldText файла берётся не из baseRefOid, а из merge-base');
+  eq(prApp.body.newText, 'early new app content\n', 'PR: newText файла берётся с head');
   const prAdded = prApp.body.hunks.flatMap((h) => h.lines).filter((l) => l.type === 'add');
   eq(prAdded.length, 1, 'в диффе PR-а одна добавленная строка');
   eq(
@@ -944,6 +1108,95 @@ async function main() {
     'GitHub не отдал дифф -> читаемое сообщение без стека',
     JSON.stringify(prRefused.body)
   );
+
+  // -------------------------------------------- PR: тексты файлов и их кэш
+  console.log('\nPR: oldText/newText с merge-base/head и кэш содержимого');
+  const PR_BASE_SHA = 'textsBaseSha';
+  const PR_HEAD_SHA = 'textsHeadSha';
+  const PR_MERGE_BASE_SHA = 'textsMergeBaseSha'; // deliberately != PR_BASE_SHA
+
+  ghFixtures(
+    {
+      [viewKeyFor(25)]: prView(25),
+      'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
+      'pr view 25 --repo o/r --json baseRefOid,headRefOid': {
+        code: 0,
+        stdout: JSON.stringify({ baseRefOid: PR_BASE_SHA, headRefOid: PR_HEAD_SHA }),
+      },
+      [`api repos/o/r/compare/${PR_BASE_SHA}...${PR_HEAD_SHA}`]: {
+        code: 0,
+        stdout: JSON.stringify({ merge_base_commit: { sha: PR_MERGE_BASE_SHA } }),
+      },
+      [ghContentsKey('src/app.js', PR_MERGE_BASE_SHA)]: { code: 0, stdout: 'merge-base app content\n' },
+      [ghContentsKey('src/app.js', PR_HEAD_SHA)]: { code: 0, stdout: 'head app content\n' },
+      [ghContentsKey('created.txt', PR_MERGE_BASE_SHA)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      [ghContentsKey('created.txt', PR_HEAD_SHA)]: { code: 0, stdout: 'head created content\n' },
+      [ghContentsKey('gone.txt', PR_MERGE_BASE_SHA)]: { code: 0, stdout: 'merge-base gone content\n' },
+      [ghContentsKey('gone.txt', PR_HEAD_SHA)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      [ghContentsKey('old name.txt', PR_MERGE_BASE_SHA)]: { code: 0, stdout: 'merge-base old-name content\n' },
+      [ghContentsKey('новое имя.txt', PR_HEAD_SHA)]: { code: 0, stdout: 'head new-name content\n' },
+    },
+    home
+  );
+
+  const prTextQ = 'source=pr&host=github.com&owner=o&repo=r&number=25';
+  const callLog = path.join(home, 'gh-calls.log');
+  fs.writeFileSync(callLog, '');
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = callLog;
+  const logLines = () => fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+
+  // fresh=1 forces the sha cache (loadShas) populated by the earlier PR
+  // section to be recomputed against *this* section's fixtures.
+  const prAppTexts = await call(`/api/diff?file=${encodeURIComponent('src/app.js')}&${prTextQ}&fresh=1`);
+  eq(
+    prAppTexts.body.oldText,
+    'merge-base app content\n',
+    'PR: oldText берётся с merge-base, а не с baseRefOid'
+  );
+  eq(prAppTexts.body.newText, 'head app content\n', 'PR: newText берётся с head');
+
+  const prCreatedTexts = await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${prTextQ}`);
+  ok(prCreatedTexts.body.oldText === null, 'PR: добавленный файл — oldText null (нет на merge-base)');
+  eq(prCreatedTexts.body.newText, 'head created content\n', 'PR: добавленный файл — newText с head');
+
+  const prGoneTexts = await call(`/api/diff?file=${encodeURIComponent('gone.txt')}&${prTextQ}`);
+  eq(prGoneTexts.body.oldText, 'merge-base gone content\n', 'PR: удалённый файл — oldText с merge-base');
+  ok(prGoneTexts.body.newText === null, 'PR: удалённый файл — newText null (нет на head)');
+
+  const prRenamedTexts = await call(`/api/diff?file=${encodeURIComponent('новое имя.txt')}&${prTextQ}`);
+  eq(
+    prRenamedTexts.body.oldText,
+    'merge-base old-name content\n',
+    'PR: переименование — oldText со старого пути на merge-base'
+  );
+  eq(prRenamedTexts.body.newText, 'head new-name content\n', 'PR: переименование — newText с head');
+
+  const prBinTexts = await call(`/api/diff?file=${encodeURIComponent('assets/logo.bin')}&${prTextQ}`);
+  ok(
+    prBinTexts.body.oldText === null && prBinTexts.body.newText === null,
+    'PR: бинарный файл — тексты null'
+  );
+  ok(
+    !logLines().some((l) => l.includes('contents/assets/logo.bin')),
+    'PR: бинарный файл — gh за содержимым не запрашивается вовсе'
+  );
+
+  const appContentCallsBefore = logLines().filter((l) => l.includes('contents/src/app.js')).length;
+  eq(
+    appContentCallsBefore,
+    2,
+    'PR: за первый показ src/app.js — по одному обращению к gh на старую и новую версию'
+  );
+
+  await call(`/api/diff?file=${encodeURIComponent('src/app.js')}&${prTextQ}`);
+  const appContentCallsAfter = logLines().filter((l) => l.includes('contents/src/app.js')).length;
+  eq(
+    appContentCallsAfter,
+    appContentCallsBefore,
+    'PR: повторный /api/diff для того же файла не обращается к gh за содержимым снова'
+  );
+
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
 
   // ----------------------------------- clear-all with confirm actually clears
   console.log('\nclear-all с подтверждением');
@@ -1108,12 +1361,19 @@ async function main() {
     'инвариант 6: в lib/git.js нет пишущих git-команд'
   );
 
-  // --------------------------------- инвариант 7: ноль зависимостей
-  console.log('\nинвариант 7: ноль npm-зависимостей');
+  // --------------------------------- инвариант 7: ноль зависимостей у сервера
+  // 2026-09-11 spec revision (docs/superpowers/specs/2026-09-11-react-primer-ui-design.md
+  // §"Что меняется"): the *server* still ships with zero runtime dependencies,
+  // but the React/Vite/CodeMirror/Primer front end now lives in devDependencies
+  // (bundled into tools/local-review/dist/ at build time, never required by
+  // any file under tools/local-review/lib/ or review.js). So devDependencies
+  // is no longer required to be empty — only the three that would actually
+  // ship as runtime deps of the published package are.
+  console.log('\nинвариант 7: ноль npm-зависимостей у сервера');
   const pkg = JSON.parse(
     fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')
   );
-  for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+  for (const key of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
     ok(
       !pkg[key] || Object.keys(pkg[key]).length === 0,
       `инвариант 7: ${key} пуст`,
@@ -1242,6 +1502,7 @@ async function main() {
   fs.rmSync(notRepo, { recursive: true, force: true });
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(staticDir, { recursive: true, force: true });
   console.log('\nвсе проверки зелёные\n');
   process.exit(0);
 }

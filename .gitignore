@@ -1,3 +1,4 @@
 node_modules/
+tools/local-review/dist/
 .local-review/
 review-*.md

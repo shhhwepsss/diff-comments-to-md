@@ -2,13 +2,21 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { git, gitTry, hasHead, revExists, mergeBase } = require('./git');
+const { git, gitTry, hasHead, revExists, mergeBase, defaultBase, gitShow } = require('./git');
+
+const MAX_TEXT_BYTES = 5 * 1024 * 1024;
+const TEXT_TOO_BIG_MESSAGE = 'Файл слишком большой для построчного просмотра';
 
 /**
  * Builds the argv prefix that selects what we compare.
  * working : worktree vs HEAD (staged + unstaged)
  * staged  : index vs HEAD
  * base    : worktree vs merge-base(<base>, HEAD)
+ *
+ * An empty `base` is not an error: it means "whatever this repository calls
+ * its default branch", which is the only answer that is right in a repo whose
+ * main branch is named `production`. `range.base` reports what was chosen so
+ * the UI can show it instead of a placeholder.
  */
 async function resolveRange(repoRoot, mode, base) {
   const head = await hasHead(repoRoot);
@@ -18,13 +26,14 @@ async function resolveRange(repoRoot, mode, base) {
   }
 
   if (mode === 'base') {
-    if (!(await revExists(base, repoRoot))) {
-      const err = new Error(`Ревизия "${base}" не найдена в этом репозитории.`);
+    const rev = base || (await defaultBase(repoRoot));
+    if (!(await revExists(rev, repoRoot))) {
+      const err = new Error(`Ревизия "${rev}" не найдена в этом репозитории.`);
       err.userFacing = true;
       throw err;
     }
-    const mb = (await mergeBase(base, repoRoot)) || base;
-    return { args: ['diff', mb], label: `worktree vs merge-base(${base})`, resolvedBase: mb };
+    const mb = (await mergeBase(rev, repoRoot)) || rev;
+    return { args: ['diff', mb], label: `worktree vs merge-base(${rev})`, resolvedBase: mb, base: rev };
   }
 
   // working
@@ -197,6 +206,56 @@ function syntheticNewFile(repoRoot, filePath) {
   };
 }
 
+/** Worktree file as raw bytes, or null: missing, deleted, or a directory. */
+function readWorktreeFile(repoRoot, filePath) {
+  const abs = path.join(repoRoot, filePath);
+  try {
+    const stat = fs.statSync(abs);
+    if (!stat.isFile()) return null;
+    return fs.readFileSync(abs);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Full old/new file text for the diff-text feature (CodeMirror's own diff on
+ * two full documents, see the design doc §2/§4). Deliberately does *not*
+ * special-case "added" / "deleted" / "no HEAD" — `gitShow` and
+ * `readWorktreeFile` already return null for all of those, so the null falls
+ * out naturally instead of being computed twice.
+ */
+async function loadTexts(repoRoot, mode, range, entry) {
+  if (entry.binary) return { oldText: null, newText: null };
+
+  const oldPath = entry.oldPath || entry.path;
+  let oldBuf = null;
+  let newBuf = null;
+
+  if (entry.untracked) {
+    newBuf = readWorktreeFile(repoRoot, entry.path);
+  } else if (mode === 'staged') {
+    oldBuf = await gitShow('HEAD', oldPath, repoRoot);
+    newBuf = await gitShow('', entry.path, repoRoot); // ":<path>" = the index
+  } else if (mode === 'base') {
+    // resolveRange (lib/diff.js:13-32) always sets resolvedBase for mode 'base'.
+    oldBuf = await gitShow(range.resolvedBase, oldPath, repoRoot);
+    newBuf = readWorktreeFile(repoRoot, entry.path);
+  } else {
+    // working
+    oldBuf = await gitShow('HEAD', oldPath, repoRoot);
+    newBuf = readWorktreeFile(repoRoot, entry.path);
+  }
+
+  if ((oldBuf && oldBuf.length > MAX_TEXT_BYTES) || (newBuf && newBuf.length > MAX_TEXT_BYTES)) {
+    return { oldText: null, newText: null, textUnavailable: TEXT_TOO_BIG_MESSAGE };
+  }
+  return {
+    oldText: oldBuf !== null ? oldBuf.toString('utf8') : null,
+    newText: newBuf !== null ? newBuf.toString('utf8') : null,
+  };
+}
+
 async function fileDiff(repoRoot, mode, base, filePath, context) {
   const range = await resolveRange(repoRoot, mode, base);
   const { files } = await listFiles(repoRoot, mode, base);
@@ -208,21 +267,33 @@ async function fileDiff(repoRoot, mode, base, filePath, context) {
     throw err;
   }
 
+  let result;
   if (entry.untracked) {
-    return Object.assign({}, entry, syntheticNewFile(repoRoot, filePath));
+    result = Object.assign({}, entry, syntheticNewFile(repoRoot, filePath));
+  } else {
+    const args = range.args.concat([
+      '-M',
+      '--no-color',
+      `-U${Number.isFinite(context) ? context : 3}`,
+      '--',
+    ]);
+    args.push(entry.path);
+    if (entry.oldPath) args.push(entry.oldPath);
+
+    const patch = (await git(args, repoRoot)).toString('utf8');
+    result = Object.assign({}, entry, parsePatch(patch));
   }
 
-  const args = range.args.concat([
-    '-M',
-    '--no-color',
-    `-U${Number.isFinite(context) ? context : 3}`,
-    '--',
-  ]);
-  args.push(entry.path);
-  if (entry.oldPath) args.push(entry.oldPath);
-
-  const patch = (await git(args, repoRoot)).toString('utf8');
-  return Object.assign({}, entry, parsePatch(patch));
+  const texts = await loadTexts(repoRoot, mode, range, result);
+  return Object.assign(result, texts);
 }
 
-module.exports = { resolveRange, listFiles, fileDiff, parsePatch, splitLines };
+module.exports = {
+  resolveRange,
+  listFiles,
+  fileDiff,
+  parsePatch,
+  splitLines,
+  MAX_TEXT_BYTES,
+  TEXT_TOO_BIG_MESSAGE,
+};
