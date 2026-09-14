@@ -545,3 +545,214 @@ tr.comment-row td {
 .toast.error {
   border-left-color: var(--danger);
 }
+
+/* ------------------------------------------------- screens and navigation */
+
+/* `display: flex` beats the default [hidden] rule, so say it explicitly. */
+.screen[hidden],
+.topbar-mid[hidden] {
+  display: none;
+}
+
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tab {
+  padding: 5px 10px;
+  color: var(--muted);
+  text-decoration: none;
+  font: inherit;
+}
+
+.tab:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.file-item .status.C {
+  color: var(--warn);
+}
+
+/* ------------------------------------------------------------ picker pages */
+
+.picker {
+  padding: 18px 24px 40px;
+  max-width: 1000px;
+}
+
+.picker-title {
+  font-size: 18px;
+  margin: 4px 0 6px;
+}
+
+.picker-sub {
+  font-size: 14px;
+  margin: 22px 0 6px;
+  color: var(--muted);
+}
+
+.picker-hint {
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.picker-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.picker-path {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.picker-error {
+  border: 1px solid var(--del-num);
+  color: var(--del-num);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.browse-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.browse-item:last-child {
+  border-bottom: 0;
+}
+
+.browse-item:hover {
+  background: var(--panel-2);
+}
+
+.browse-item .name {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  word-break: break-all;
+}
+
+.browse-item .hint {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.browse-item.repo .name {
+  color: var(--text);
+}
+
+.picker-manual {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.text-input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font: inherit;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- PR page */
+
+.gh-status {
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.pr-form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.pr-form .text-input {
+  flex: 1;
+}
+
+.pr-form select.text-input {
+  flex: 0 0 120px;
+}
+
+.pr-results {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pr-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-item:last-child {
+  border-bottom: 0;
+}
+
+.pr-number {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.pr-title {
+  flex: 1;
+}
+
+.pr-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pr-header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.pr-header[hidden] {
+  display: none;
+}

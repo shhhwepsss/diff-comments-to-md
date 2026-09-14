@@ -51,6 +51,14 @@ function git(args, cwd) {
   return res.stdout;
 }
 
+/** Worktree status minus everything the tool is allowed to touch. */
+function gitStatusOfProject(root) {
+  return git(['status', '--porcelain'], root)
+    .split('\n')
+    .filter(Boolean)
+    .filter((l) => !/\.local-review|review-\d{4}-\d{2}-\d{2}-\d{4}\.md|\.gitignore/.test(l));
+}
+
 function write(root, rel, content) {
   const abs = path.join(root, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -134,6 +142,23 @@ function makeClient(port) {
   };
 }
 
+const FIXTURE_GH = path.join(__dirname, 'smoke-fixtures', 'gh-fixture.js');
+
+/** Points lib/gh.js at the fixture script and installs a manifest. */
+function ghFixtures(manifest, dir) {
+  const file = path.join(dir, `gh-manifest-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  fs.writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf8');
+  process.env.LOCAL_REVIEW_GH_BIN = FIXTURE_GH;
+  process.env.LOCAL_REVIEW_GH_FIXTURES = file;
+  return file;
+}
+
+/** Simulates "gh is not installed" with a real ENOENT. */
+function noGh() {
+  process.env.LOCAL_REVIEW_GH_BIN = path.join(os.tmpdir(), 'definitely-no-gh-here-12345');
+  delete process.env.LOCAL_REVIEW_GH_FIXTURES;
+}
+
 function json(method, payload) {
   return {
     method,
@@ -145,8 +170,19 @@ function json(method, payload) {
 // -------------------------------------------------------------------- suite
 
 async function main() {
+  // Never touch the real ~/.local-review: the whole home config goes to a
+  // throwaway directory for the duration of the test.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-home-'));
+  process.env.LOCAL_REVIEW_HOME = home;
+
   const repo = buildRepo();
-  console.log(`\ntemp repo: ${repo}\n`);
+  console.log(`\ntemp repo: ${repo}`);
+  console.log(`temp home: ${home}\n`);
+
+  // Snapshot of git state before the tool touches anything (invariant 6).
+  const headBefore = git(['rev-parse', 'HEAD'], repo).trim();
+  const reflogBefore = git(['reflog', '--format=%H'], repo).split('\n').length;
+  let statusBefore = gitStatusOfProject(repo);
 
   let server = await start({
     cwd: repo,
@@ -299,6 +335,14 @@ async function main() {
     'файл review-<YYYY-MM-DD-HHmm>.md создан в корне репозитория',
     file1.body.file
   );
+  // findRepoRoot normalises to forward slashes (lib/git.js:63), so compare
+  // both sides through path.resolve rather than as raw strings.
+  const samePath = (a, b) => path.resolve(a) === path.resolve(b);
+  ok(
+    samePath(path.dirname(file1.body.path), repo) && samePath(file1.body.dir, repo),
+    'в локальном режиме .md пишется в корень репозитория',
+    `${file1.body.dir} vs ${repo}`
+  );
 
   const markdown = fs.readFileSync(file1.body.path, 'utf8');
   eq(markdown, text1.body, '.md и текст для буфера совпадают');
@@ -398,6 +442,9 @@ async function main() {
   const staged = await call('/api/state?mode=staged');
   ok(staged.status === 200, 'режим staged отвечает 200');
   git(['add', 'src/app.js'], repo);
+  // The test itself just staged a file; re-baseline so invariant 6 measures
+  // what the tool did, not what the test did.
+  statusBefore = gitStatusOfProject(repo);
   const stagedAfterAdd = await call('/api/state?mode=staged');
   ok(
     stagedAfterAdd.body.files.some((f) => f.path === 'src/app.js'),
@@ -409,6 +456,22 @@ async function main() {
   const badBase = await call('/api/state?mode=base&base=не-существует');
   ok(badBase.status === 400, 'несуществующая база -> 400 с текстом, а не 500',
     JSON.stringify(badBase.body));
+
+  // ---------------------------------------------------- дескриптор в query
+  console.log('\nдескриптор источника');
+  const byDescriptor = await call(
+    `/api/state?source=local&root=${encodeURIComponent(repo)}&mode=working`
+  );
+  ok(byDescriptor.status === 200, 'явный локальный дескриптор -> 200');
+  eq(
+    byDescriptor.body.files.map((f) => f.path).sort(),
+    (await call('/api/state')).body.files.map((f) => f.path).sort(),
+    'явный дескриптор и дефолтный дают один и тот же список файлов'
+  );
+  const noRoot = await call('/api/state?source=local');
+  ok(noRoot.status === 400, 'source=local без root -> 400');
+  const badSource = await call('/api/state?source=svn');
+  ok(badSource.status === 400, 'неизвестный source -> 400, а не 500');
 
   // port already taken -> next free one
   const a = await start({ cwd: repo, mode: 'working', base: 'origin/main', port: 45311, host: '127.0.0.1', open: false });
@@ -422,13 +485,89 @@ async function main() {
   const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-notgit-'));
   let notRepoError = null;
   try {
-    await start({ cwd: notRepo, mode: 'working', base: 'origin/main', port: 0, host: '127.0.0.1', open: false });
+    await start({ cwd: notRepo, cwdExplicit: true, mode: 'working', base: 'origin/main', port: 0, host: '127.0.0.1', open: false });
   } catch (e) {
     notRepoError = e;
   }
   ok(
     notRepoError && notRepoError.userFacing && /не git-репозиторий/i.test(notRepoError.message),
     'запуск вне git-репозитория -> внятная ошибка'
+  );
+
+  // ... but launching *without* --cwd anywhere must open the folder picker
+  // instead of refusing to start (acceptance criterion 4).
+  const pickerServer = await start({
+    cwd: notRepo,
+    mode: 'working',
+    base: 'origin/main',
+    port: 0,
+    host: '127.0.0.1',
+    open: false,
+  });
+  const pickerCall = makeClient(pickerServer.port);
+  ok(pickerServer.repoRoot === null, 'запуск без --cwd вне репозитория поднимает сервер');
+  const pickerBrowse = await pickerCall('/api/browse?path=' + encodeURIComponent(notRepo));
+  ok(pickerBrowse.status === 200, 'вне репозитория обзор каталогов работает');
+  const pickerState = await pickerCall('/api/state');
+  ok(
+    pickerState.status === 400 && /источник|папк/i.test(pickerState.body.error),
+    'вне репозитория запрос без дескриптора -> читаемое 400',
+    JSON.stringify(pickerState.body)
+  );
+  const pickerWithDescriptor = await pickerCall(
+    '/api/state?source=local&root=' + encodeURIComponent(repo)
+  );
+  ok(
+    pickerWithDescriptor.status === 200 && pickerWithDescriptor.body.files.length > 0,
+    'выбранная в UI папка открывается без перезапуска сервера'
+  );
+  await new Promise((r) => pickerServer.server.close(r));
+
+  // ------------------------------------- инвариант 8: обзор каталогов
+  console.log('\nинвариант 8: обзор каталогов не отдаёт файлы и не лезет вверх');
+  const browseRepo = await call('/api/browse?path=' + encodeURIComponent(repo));
+  ok(browseRepo.status === 200, 'GET /api/browse -> 200');
+  const browseNames = browseRepo.body.entries.map((e) => e.name);
+  ok(browseNames.includes('src'), 'подкаталог src в выдаче', browseNames.join(', '));
+  ok(
+    !browseNames.includes('crlf.txt') && !browseNames.includes('big.txt'),
+    'файлы в выдачу не попадают',
+    browseNames.join(', ')
+  );
+  ok(
+    !JSON.stringify(browseRepo.body).includes('line 1') &&
+      !JSON.stringify(browseRepo.body).includes('alpha'),
+    'в ответе нет содержимого файлов'
+  );
+  eq(
+    browseRepo.body.path,
+    path.resolve(repo),
+    'browse отдаёт ровно запрошенный каталог, а не родительский'
+  );
+  const browseSrc = await call('/api/browse?path=' + encodeURIComponent(path.join(repo, 'src')));
+  eq(browseSrc.body.entries.length, 0, 'в src нет подкаталогов -> пустой список');
+  const browseMissing = await call(
+    '/api/browse?path=' + encodeURIComponent(path.join(repo, 'нет-такого'))
+  );
+  ok(browseMissing.status === 404, 'несуществующий каталог -> 404 с текстом');
+
+  const vRoot = await call('/api/local/validate?root=' + encodeURIComponent(repo));
+  ok(
+    vRoot.body.ok === true && vRoot.body.sameAsRequested === true,
+    'корень репозитория валиден и совпадает с запрошенным',
+    JSON.stringify(vRoot.body)
+  );
+  const vSub = await call('/api/local/validate?root=' + encodeURIComponent(path.join(repo, 'src')));
+  ok(
+    vSub.body.ok === true && vSub.body.sameAsRequested === false,
+    'подкаталог -> ok, но sameAsRequested:false',
+    JSON.stringify(vSub.body)
+  );
+  const vNot = await call('/api/local/validate?root=' + encodeURIComponent(notRepo));
+  ok(
+    vNot.body.ok === false && /не git-репозиторий/i.test(vNot.body.error),
+    'не-git каталог -> ok:false с читаемым текстом',
+    JSON.stringify(vNot.body)
   );
 
   // empty diff -> empty file list, no crash
@@ -446,6 +585,366 @@ async function main() {
   eq(cleanState.body.files.length, 0, 'чистый репозиторий -> пустой список файлов');
   await new Promise((r) => cleanServer.server.close(r));
 
+  // ------------------------------------------------------------ сессия
+  console.log('\nсессия и .gitignore по подтверждению');
+  const sess0 = await call('/api/session');
+  ok(
+    sess0.status === 200 && sess0.body.homeDir === home,
+    'GET /api/session отдаёт домашний конфиг',
+    JSON.stringify(sess0.body)
+  );
+
+  const gitignoreBeforeBrowse = fs.readFileSync(path.join(clean, '.gitignore'), 'utf8');
+  await call('/api/browse?path=' + encodeURIComponent(clean));
+  eq(
+    fs.readFileSync(path.join(clean, '.gitignore'), 'utf8'),
+    gitignoreBeforeBrowse,
+    'обзор каталога НЕ пишет в .gitignore'
+  );
+
+  const noGitignoreRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-pick-'));
+  git(['init', '-q', '-b', 'main'], noGitignoreRepo);
+  const picked = await call(
+    '/api/session',
+    json('POST', {
+      descriptor: { source: 'local', root: noGitignoreRepo, mode: 'working', base: 'origin/main' },
+    })
+  );
+  ok(
+    picked.status === 200 && picked.body.gitignore.changed === true,
+    'подтверждение выбора папки пишет .local-review/ в .gitignore',
+    JSON.stringify(picked.body)
+  );
+  ok(
+    fs.readFileSync(path.join(noGitignoreRepo, '.gitignore'), 'utf8').includes('.local-review/'),
+    'строка действительно в файле'
+  );
+  eq(
+    (await call('/api/session')).body.recent[0].root,
+    noGitignoreRepo,
+    'выбранная папка попала в недавние'
+  );
+
+  // ------------------------------------------- Origin / Sec-Fetch-Site
+  console.log('\nпроверка происхождения запроса');
+  const crossSite = await call('/api/state', { headers: { 'sec-fetch-site': 'cross-site' } });
+  ok(crossSite.status === 403, 'Sec-Fetch-Site: cross-site -> 403', JSON.stringify(crossSite.body));
+  const evilOrigin = await call('/api/state', { headers: { origin: 'http://evil.example' } });
+  ok(evilOrigin.status === 403, 'чужой Origin -> 403', JSON.stringify(evilOrigin.body));
+  const sameOrigin = await call('/api/state', {
+    headers: { 'sec-fetch-site': 'same-origin', origin: `http://127.0.0.1:${server.port}` },
+  });
+  ok(sameOrigin.status === 200, 'свой Origin + same-origin -> 200');
+  const noHeaders = await call('/api/state');
+  ok(noHeaders.status === 200, 'запрос без Origin и Sec-Fetch-Site пропускается');
+
+  // ------------------------------------------------------------ фикстура gh
+  console.log('\nфикстура gh');
+  const manifestFile = ghFixtures({ 'auth status': { code: 0, stdout: 'ok\n' } }, home);
+  const probe = spawnSync(process.execPath, [FIXTURE_GH, 'auth', 'status'], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { LOCAL_REVIEW_GH_FIXTURES: manifestFile }),
+  });
+  ok(
+    probe.status === 0 && probe.stdout.trim() === 'ok',
+    'подставной gh отвечает по манифесту',
+    JSON.stringify(probe.stdout)
+  );
+  const missProbe = spawnSync(process.execPath, [FIXTURE_GH, 'nope'], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { LOCAL_REVIEW_GH_FIXTURES: manifestFile }),
+  });
+  ok(missProbe.status === 98, 'незаписанный сценарий -> явная ошибка фикстуры, а не тишина');
+
+  // ------------------------------------- инвариант 9: читаемые ошибки gh
+  console.log('\ngh: статус и классификация ошибок');
+  ghFixtures(
+    {
+      'auth status': {
+        code: 0,
+        stdout: 'github.com\n  Logged in to github.com account octocat (keyring)\n',
+      },
+    },
+    home
+  );
+  const st1 = await call('/api/gh/status');
+  ok(
+    st1.status === 200 && st1.body.installed === true && st1.body.authenticated === true,
+    'gh залогинен -> installed:true, authenticated:true',
+    JSON.stringify(st1.body)
+  );
+  eq(st1.body.login, 'octocat', 'логин вытащен из вывода gh auth status');
+
+  ghFixtures(
+    {
+      'auth status': {
+        code: 1,
+        stderr: 'You are not logged into any GitHub hosts. Run gh auth login\n',
+      },
+    },
+    home
+  );
+  const st2 = await call('/api/gh/status');
+  ok(
+    st2.status === 200 && st2.body.authenticated === false && /не залогинен/i.test(st2.body.message),
+    'нет логина -> читаемое сообщение',
+    JSON.stringify(st2.body)
+  );
+
+  noGh();
+  const st3 = await call('/api/gh/status');
+  ok(
+    st3.status === 200 && st3.body.installed === false && /не установлен/i.test(st3.body.message),
+    'gh не установлен -> читаемое сообщение, а не ENOENT-стек',
+    JSON.stringify(st3.body)
+  );
+  ok(!/\n\s+at\s/.test(JSON.stringify(st3.body)), 'в ответе нет stack trace');
+
+  const { classifyGhError } = require('./lib/gh');
+  eq(
+    classifyGhError({ code: 1, stderr: Buffer.from('API rate limit exceeded for user') }, [])
+      .ghReason,
+    'rate-limit',
+    'rate limit классифицируется'
+  );
+  eq(
+    classifyGhError(
+      { code: 1, stderr: Buffer.from('dial tcp: lookup api.github.com: no such host') },
+      []
+    ).ghReason,
+    'network',
+    'сетевая ошибка классифицируется'
+  );
+
+  // ------------------------------------------------------------ поиск PR-ов
+  console.log('\nпоиск PR-ов');
+  const listKey =
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
+  const searchKey =
+    'search prs --author=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
+  ghFixtures(
+    {
+      [listKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          {
+            number: 25,
+            title: 'Правка кириллицей',
+            author: { login: 'octocat' },
+            headRefName: 'feat/пробел и слеш',
+            baseRefName: 'main',
+            state: 'OPEN',
+            isDraft: false,
+            updatedAt: '2026-09-01T10:00:00Z',
+            url: 'https://github.com/o/r/pull/25',
+          },
+        ]),
+      },
+      [searchKey]: { code: 0, stdout: '[]' },
+    },
+    home
+  );
+
+  const found = await call('/api/pr/search?repo=o/r&state=open');
+  ok(
+    found.status === 200 && found.body.items.length === 1,
+    'поиск по репозиторию отдаёт PR',
+    JSON.stringify(found.body)
+  );
+  eq(
+    found.body.items[0].headRefName,
+    'feat/пробел и слеш',
+    'ветка с пробелом и кириллицей доезжает целиком'
+  );
+  eq(found.body.mode, 'repo', 'режим поиска — repo');
+
+  const globalSearch = await call('/api/pr/search?state=open');
+  eq(
+    globalSearch.body.items.length,
+    0,
+    'пустой результат глобального поиска -> пустой список, не ошибка'
+  );
+  eq(globalSearch.body.mode, 'global', 'режим поиска — global');
+
+  const badRepo = await call('/api/pr/search?repo=просто-строка');
+  ok(
+    badRepo.status === 400 && /owner\/repo/.test(badRepo.body.error),
+    'некорректный репозиторий -> 400 с подсказкой',
+    JSON.stringify(badRepo.body)
+  );
+
+  // -------------------------------------------------------- метаданные PR-а
+  console.log('\nметаданные PR-а');
+  const viewKey =
+    'pr view 25 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url';
+  ghFixtures(
+    {
+      [viewKey]: {
+        code: 0,
+        stdout: JSON.stringify({
+          number: 25,
+          title: 'Заголовок PR-а',
+          author: { login: 'octocat' },
+          state: 'OPEN',
+          isDraft: false,
+          headRefName: 'feat/x',
+          baseRefName: 'main',
+          headRefOid: 'abc123',
+          url: 'https://github.com/o/r/pull/25',
+        }),
+      },
+      'pr view 999 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url':
+        {
+          code: 1,
+          stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 999.\n',
+        },
+    },
+    home
+  );
+
+  const meta = await call('/api/pr/resolve?source=pr&host=github.com&owner=o&repo=r&number=25');
+  ok(
+    meta.status === 200 && meta.body.headRefName === 'feat/x' && meta.body.headSha === 'abc123',
+    'метаданные PR-а разрешаются',
+    JSON.stringify(meta.body)
+  );
+  const gone = await call('/api/pr/resolve?source=pr&host=github.com&owner=o&repo=r&number=999');
+  ok(
+    gone.status === 404 && /не найден/i.test(gone.body.error),
+    'несуществующий PR -> 404 с читаемым текстом',
+    JSON.stringify(gone.body)
+  );
+  const notPr = await call('/api/pr/resolve?source=local&root=' + encodeURIComponent(repo));
+  ok(notPr.status === 400, 'локальный дескриптор в /api/pr/resolve -> 400');
+
+  // ------------------------------------------------------- PR: дифф из gh
+  console.log('\nPR: дифф из gh');
+  const PR_DIFF = [
+    'diff --git a/src/app.js b/src/app.js',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.js',
+    '+++ b/src/app.js',
+    '@@ -10,3 +10,4 @@ function x() {',
+    ' context 10',
+    '+добавленная строка',
+    ' context 11',
+    ' context 12',
+    'diff --git a/old name.txt b/новое имя.txt',
+    'similarity index 90%',
+    'rename from old name.txt',
+    'rename to новое имя.txt',
+    'diff --git a/assets/logo.bin b/assets/logo.bin',
+    'index 3333333..4444444 100644',
+    'Binary files a/assets/logo.bin and b/assets/logo.bin differ',
+    'diff --git a/created.txt b/created.txt',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/created.txt',
+    '@@ -0,0 +1,2 @@',
+    '+first',
+    '+second',
+    'diff --git a/gone.txt b/gone.txt',
+    'deleted file mode 100644',
+    '--- a/gone.txt',
+    '+++ /dev/null',
+    '@@ -1,1 +0,0 @@',
+    '-was here',
+    '',
+  ].join('\r\n');
+
+  const prView = (n) => ({
+    code: 0,
+    stdout: JSON.stringify({
+      number: n,
+      title: 'Заголовок PR-а',
+      author: { login: 'octocat' },
+      state: 'OPEN',
+      isDraft: false,
+      headRefName: 'feat/x',
+      baseRefName: 'main',
+      headRefOid: 'abc123',
+      url: `https://github.com/o/r/pull/${n}`,
+    }),
+  });
+  const viewKeyFor = (n) =>
+    `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url`;
+
+  ghFixtures(
+    {
+      [viewKeyFor(25)]: prView(25),
+      [viewKeyFor(26)]: prView(26),
+      [viewKeyFor(27)]: prView(27),
+      'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
+      'pr diff 26 --repo o/r': { code: 0, stdout: '' },
+      'pr diff 27 --repo o/r': {
+        code: 1,
+        stderr: 'HTTP 406: Sorry, this diff is taking too long to generate.\n',
+      },
+    },
+    home
+  );
+
+  const prQuery = 'source=pr&host=github.com&owner=o&repo=r&number=25&fresh=1';
+  const prState = await call(`/api/state?${prQuery}`);
+  ok(
+    prState.status === 200,
+    'PR-дескриптор -> /api/state 200',
+    JSON.stringify(prState.body).slice(0, 300)
+  );
+  const prPaths = prState.body.files.map((f) => f.path).sort();
+  eq(
+    prPaths,
+    ['assets/logo.bin', 'created.txt', 'gone.txt', 'новое имя.txt', 'src/app.js'].sort(),
+    'все пять файлов PR-а разобраны, включая кириллицу с пробелом'
+  );
+  eq(
+    prState.body.files.find((f) => f.path === 'новое имя.txt').kind,
+    'R',
+    'переименование помечено R'
+  );
+  eq(
+    prState.body.files.find((f) => f.path === 'новое имя.txt').oldPath,
+    'old name.txt',
+    'у переименования сохранён oldPath'
+  );
+  eq(prState.body.files.find((f) => f.path === 'created.txt').kind, 'A', 'новый файл помечен A');
+  eq(prState.body.files.find((f) => f.path === 'gone.txt').kind, 'D', 'удалённый файл помечен D');
+  eq(prState.body.pr.title, 'Заголовок PR-а', 'шапка PR-а приехала в /api/state');
+  eq(prState.body.repoRoot, null, 'у PR-а нет локального корня');
+
+  const prBin = await call(`/api/diff?file=${encodeURIComponent('assets/logo.bin')}&${prQuery}`);
+  ok(prBin.body.binary === true, 'бинарный файл PR-а помечен binary', JSON.stringify(prBin.body));
+
+  const prApp = await call(`/api/diff?file=${encodeURIComponent('src/app.js')}&${prQuery}`);
+  const prAdded = prApp.body.hunks.flatMap((h) => h.lines).filter((l) => l.type === 'add');
+  eq(prAdded.length, 1, 'в диффе PR-а одна добавленная строка');
+  eq(
+    prAdded[0].newLine,
+    11,
+    'номер строки из PR-диффа = 11 (@@ -10,3 +10,4 @@, после одного контекста)'
+  );
+  ok(!prAdded[0].text.includes('\r'), 'CRLF из ответа gh не попадает в текст строки');
+
+  const prEmpty = await call(
+    '/api/state?source=pr&host=github.com&owner=o&repo=r&number=26&fresh=1'
+  );
+  eq(prEmpty.body.files.length, 0, 'PR без изменённых файлов -> пустой список, не падение');
+
+  const prRefused = await call(
+    '/api/state?source=pr&host=github.com&owner=o&repo=r&number=27&fresh=1'
+  );
+  // 502 on purpose: GitHub refused, the tool did not break. What the invariant
+  // demands is a sentence a human can read, never a stack trace.
+  ok(
+    prRefused.status >= 400 &&
+      typeof prRefused.body.error === 'string' &&
+      prRefused.body.error.length > 0 &&
+      !/\n\s+at\s/.test(prRefused.body.error) &&
+      !/ at .*\.js:\d+/.test(prRefused.body.error),
+    'GitHub не отдал дифф -> читаемое сообщение без стека',
+    JSON.stringify(prRefused.body)
+  );
+
   // ----------------------------------- clear-all with confirm actually clears
   console.log('\nclear-all с подтверждением');
   const cleared = await call('/api/comments/clear-all', json('POST', { confirm: true }));
@@ -458,6 +957,279 @@ async function main() {
     'в файле хранилища тоже пусто'
   );
 
+  // =====================================================================
+  //            проверка девяти инвариантов раздела 5 спека
+  // =====================================================================
+
+  const prQ = 'source=pr&host=github.com&owner=o&repo=r&number=25';
+  const prStorePath = path.join(home, 'pr', 'github.com__o__r__25.json');
+
+  ghFixtures(
+    {
+      [viewKeyFor(25)]: prView(25),
+      'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
+    },
+    home
+  );
+
+  // ---------------------------------------------- инвариант 5: изоляция
+  console.log('\nинвариант 5: стораджи не пересекаются');
+  await call(
+    '/api/comments',
+    json('POST', { file: 'src/app.js', startLine: 3, endLine: 3, text: 'ЛОКАЛЬНЫЙ-МАРКЕР' })
+  );
+  await call(
+    `/api/comments?${prQ}`,
+    json('POST', { file: 'src/app.js', startLine: 11, endLine: 11, text: 'PR-МАРКЕР' })
+  );
+
+  const localOnDisk = fs.readFileSync(path.join(repo, '.local-review', 'comments.json'), 'utf8');
+  const prOnDisk = fs.readFileSync(prStorePath, 'utf8');
+
+  ok(
+    localOnDisk.includes('ЛОКАЛЬНЫЙ-МАРКЕР') && !localOnDisk.includes('PR-МАРКЕР'),
+    'инвариант 5: в локальном файле нет комментариев PR-а'
+  );
+  ok(
+    prOnDisk.includes('PR-МАРКЕР') && !prOnDisk.includes('ЛОКАЛЬНЫЙ-МАРКЕР'),
+    'инвариант 5: в PR-файле нет локальных комментариев'
+  );
+  ok(
+    !fs.existsSync(path.join(repo, 'pr')),
+    'инвариант 5: PR-сторадж не создаётся внутри репозитория'
+  );
+  ok(
+    (await call(`/api/comments?${prQ}`)).body.comments.every((c) => c.text !== 'ЛОКАЛЬНЫЙ-МАРКЕР'),
+    'инвариант 5: API PR-дескриптора не отдаёт локальные комментарии'
+  );
+  ok(
+    (await call('/api/comments')).body.comments.every((c) => c.text !== 'PR-МАРКЕР'),
+    'инвариант 5: API локального дескриптора не отдаёт комментарии PR-а'
+  );
+  const prCount = (await call(`/api/state?${prQ}`)).body.totalComments;
+  const localCount = (await call('/api/state')).body.totalComments;
+  ok(
+    prCount === 1 && localCount === 1,
+    'инвариант 5: счётчики двух режимов считаются раздельно',
+    `PR ${prCount} / локальный ${localCount}`
+  );
+
+  // -------------------------------- инвариант 1 (PR): экспорт не меняет
+  console.log('\nинвариант 1 (PR): экспорт не меняет комментарии');
+  const prBefore = (await call(`/api/comments?${prQ}`)).body.comments;
+  await call(`/api/export/text?${prQ}`);
+  const prFile1 = await call(`/api/export/file?${prQ}`, { method: 'POST' });
+  await call(`/api/export/text?${prQ}`);
+  await call(`/api/export/file?${prQ}`, { method: 'POST' });
+  const prAfter = (await call(`/api/comments?${prQ}`)).body.comments;
+  eq(
+    prAfter.map((c) => c.id).sort(),
+    prBefore.map((c) => c.id).sort(),
+    'инвариант 1: после 4 экспортов в PR-режиме те же id'
+  );
+  eq(
+    path.dirname(prFile1.body.path),
+    path.join(home, 'exports'),
+    'инвариант 1: .md PR-режима записан в <home>/exports'
+  );
+  // The local export earlier in this suite may share the same minute stamp, so
+  // a name collision proves nothing — the destination path is what matters.
+  ok(
+    !path.resolve(prFile1.body.path).startsWith(path.resolve(repo)),
+    'инвариант 1: .md PR-режима записан вне репозитория',
+    prFile1.body.path
+  );
+
+  // ------------------------- инвариант 4 (PR): реальные номера строк
+  const prMd = await call(`/api/export/text?${prQ}`);
+  ok(
+    prMd.body.includes('src/app.js:L11'),
+    'инвариант 4: якорь в экспорте PR-режима — реальный номер строки файла',
+    prMd.body
+  );
+
+  // ------------------- инвариант 2 (PR): массовое удаление с confirm
+  console.log('\nинвариант 2 (PR): массовое удаление только с подтверждением');
+  for (const body of [{}, { confirm: false }, { confirm: 'true' }]) {
+    const res = await call(`/api/comments/clear-all?${prQ}`, json('POST', body));
+    ok(
+      res.status === 400,
+      `инвариант 2 (PR): clear-all с ${JSON.stringify(body)} -> 400`,
+      JSON.stringify(res.body)
+    );
+  }
+  eq(
+    (await call(`/api/comments?${prQ}`)).body.comments.length,
+    1,
+    'инвариант 2 (PR): после отклонённых clear-all комментарий на месте'
+  );
+
+  // ---------------- инвариант 3 (PR): переживают перезапуск сервера
+  console.log('\nинвариант 3 (PR): комментарии переживают перезапуск');
+  const prIdsBefore = (await call(`/api/comments?${prQ}`)).body.comments.map((c) => c.id);
+  await new Promise((resolve) => server.server.close(resolve));
+  server = await start({
+    cwd: repo,
+    mode: 'working',
+    base: 'origin/main',
+    port: 0,
+    host: '127.0.0.1',
+    open: false,
+  });
+  call = makeClient(server.port);
+  const prIdsAfter = (await call(`/api/comments?${prQ}`)).body.comments.map((c) => c.id);
+  eq(prIdsAfter, prIdsBefore, 'инвариант 3 (PR): те же id после рестарта');
+  eq(
+    JSON.parse(fs.readFileSync(prStorePath, 'utf8')).comments.length,
+    1,
+    'инвариант 3 (PR): в файле хранилища тот же комментарий'
+  );
+
+  // ---------------------- инвариант 6: ничего не пишем в репозиторий
+  console.log('\nинвариант 6: тула не пишет в репозиторий');
+  eq(git(['rev-parse', 'HEAD'], repo).trim(), headBefore, 'инвариант 6: HEAD не двигался');
+  eq(
+    git(['reflog', '--format=%H'], repo).split('\n').length,
+    reflogBefore,
+    'инвариант 6: reflog не пополнился — ни одной пишущей git-команды'
+  );
+  // The fixture worktree is dirty on purpose, so compare against the snapshot
+  // taken before the server started, not against an empty list.
+  const statusNow = gitStatusOfProject(repo);
+  eq(
+    statusNow,
+    statusBefore,
+    'инвариант 6: тула не изменила ни одного файла проекта',
+    `${statusBefore.join(' | ')}  ->  ${statusNow.join(' | ')}`
+  );
+  const gitSource = fs.readFileSync(path.join(__dirname, 'lib', 'git.js'), 'utf8');
+  ok(
+    !/'(add|commit|checkout|reset|clean|rm|mv|push|stash|apply|restore)'/.test(gitSource),
+    'инвариант 6: в lib/git.js нет пишущих git-команд'
+  );
+
+  // --------------------------------- инвариант 7: ноль зависимостей
+  console.log('\nинвариант 7: ноль npm-зависимостей');
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')
+  );
+  for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    ok(
+      !pkg[key] || Object.keys(pkg[key]).length === 0,
+      `инвариант 7: ${key} пуст`,
+      JSON.stringify(pkg[key])
+    );
+  }
+  const sources = [];
+  (function walk(dir) {
+    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, d.name);
+      if (d.isDirectory() && d.name !== 'node_modules') walk(abs);
+      else if (d.isFile() && abs.endsWith('.js')) sources.push(abs);
+    }
+  })(__dirname);
+  const badRequire = [];
+  for (const file of sources) {
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      const id = m[1];
+      if (!id.startsWith('node:') && !id.startsWith('.') && !id.startsWith('/')) {
+        badRequire.push(`${file}: ${id}`);
+      }
+    }
+  }
+  eq(badRequire, [], 'инвариант 7: ни одного require внешнего пакета', badRequire.join(' | '));
+  const httpCalls = [];
+  for (const file of sources.filter((f) => f.includes('lib'))) {
+    const text = fs.readFileSync(file, 'utf8');
+    if (/api\.github\.com|require\(\s*'node:https'\s*\)|\bfetch\(/.test(text)) httpCalls.push(file);
+  }
+  eq(httpCalls, [], 'инвариант 7: доступ к GitHub только через gh, без прямого HTTP', httpCalls.join(' | '));
+
+  // ---------------------------- инвариант 8: обзор каталогов (добор)
+  console.log('\nинвариант 8: обзор каталогов (дополнительно)');
+  const browseAgain = await call('/api/browse?path=' + encodeURIComponent(repo));
+  ok(
+    !('content' in browseAgain.body) && !browseAgain.body.entries.some((e) => 'content' in e),
+    'инвариант 8: в выдаче нет поля с содержимым'
+  );
+  const climb = await call('/api/browse');
+  ok(
+    climb.body.path === null && Array.isArray(climb.body.entries),
+    'инвариант 8: без path сервер отдаёт стартовый набор, а не сканирует корень диска',
+    JSON.stringify(climb.body).slice(0, 200)
+  );
+
+  // ------------------------- инвариант 9: читаемые сообщения об отказах
+  console.log('\nинвариант 9: отказы gh дают читаемое сообщение');
+  const SEARCH_KEY =
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
+  const stderrFor = (text) => ({ [SEARCH_KEY]: { code: 1, stderr: text } });
+
+  const ghCases = [
+    {
+      name: 'gh не установлен',
+      status: [200],
+      setup: noGh,
+      url: '/api/gh/status',
+      expect: /не установлен/i,
+      viaStatus: true,
+    },
+    {
+      name: 'нет логина',
+      status: [401],
+      fixture: {
+        [SEARCH_KEY]: {
+          code: 4,
+          stderr: 'gh auth login required: You are not logged into any GitHub hosts\n',
+        },
+      },
+      url: '/api/pr/search?repo=o/r',
+      expect: /не залогинен/i,
+    },
+    {
+      name: 'лимит API',
+      status: [429],
+      fixture: stderrFor('API rate limit exceeded for user ID 1\n'),
+      url: '/api/pr/search?repo=o/r',
+      expect: /лимит/i,
+    },
+    {
+      name: 'нет сети',
+      status: [502],
+      fixture: stderrFor('dial tcp: lookup api.github.com: no such host\n'),
+      url: '/api/pr/search?repo=o/r',
+      expect: /связи с GitHub/i,
+    },
+    {
+      name: '404',
+      status: [404],
+      fixture: stderrFor('HTTP 404: Not Found (https://api.github.com/repos/o/r)\n'),
+      url: '/api/pr/search?repo=o/r',
+      expect: /не найден/i,
+    },
+  ];
+
+  for (const c of ghCases) {
+    if (c.setup) c.setup();
+    else ghFixtures(c.fixture, home);
+    const res = await call(c.url);
+    const text = JSON.stringify(res.body);
+    // A gh refusal is an upstream problem, never a crash. 200 for the status
+    // screen; 4xx when the caller can fix it (log in, wait the limit out, ask
+    // for a repo that exists); 502 when GitHub itself did not answer.
+    ok(
+      c.status.includes(res.status),
+      `инвариант 9 (${c.name}): ожидаемый статус, не поломка сервера`,
+      `${res.status} ${text}`
+    );
+    ok(c.expect.test(text), `инвариант 9 (${c.name}): читаемое сообщение`, text);
+    ok(
+      !/\\n\s+at\s|Error:\s+\w+Error/.test(text),
+      `инвариант 9 (${c.name}): без stack trace`,
+      text
+    );
+  }
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);
@@ -468,6 +1240,8 @@ async function main() {
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(clean, { recursive: true, force: true });
   fs.rmSync(notRepo, { recursive: true, force: true });
+  fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
   console.log('\nвсе проверки зелёные\n');
   process.exit(0);
 }

@@ -8,10 +8,14 @@ const STORE_DIR = '.local-review';
 const STORE_FILE = 'comments.json';
 
 class CommentStore {
-  constructor(repoRoot) {
-    this.repoRoot = repoRoot;
-    this.dir = path.join(repoRoot, STORE_DIR);
-    this.file = path.join(this.dir, STORE_FILE);
+  /**
+   * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
+   * disk and deliberately knows nothing about local repos vs pull requests —
+   * that mapping lives in lib/stores/factory.js and nowhere else.
+   */
+  constructor(filePath) {
+    this.file = filePath;
+    this.dir = path.dirname(filePath);
     this.data = { version: 1, comments: [] };
     this.load();
   }

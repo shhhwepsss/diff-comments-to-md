@@ -4,6 +4,7 @@
   "private": true,
   "description": "Локальный просмотр git-диффа с комментариями к строкам и экспортом в .md",
   "engines": { "node": ">=20" },
+  "bin": { "review": "review.js" },
   "scripts": {
     "review": "node review.js",
     "review:staged": "node review.js --staged",
