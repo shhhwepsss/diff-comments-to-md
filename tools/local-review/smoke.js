@@ -215,6 +215,25 @@ async function main() {
   );
   eq(indexBody, staticIndexHtml, 'GET / отдаёт index.html из LOCAL_REVIEW_STATIC_DIR');
 
+  // Vite copies web/public/favicon.svg to the build root; index.html links it.
+  const webDir = path.join(__dirname, 'web');
+  ok(
+    fs.readFileSync(path.join(webDir, 'index.html'), 'utf8').includes('href="/favicon.svg"'),
+    'web/index.html ссылается на /favicon.svg'
+  );
+  fs.copyFileSync(path.join(webDir, 'public', 'favicon.svg'), path.join(staticDir, 'favicon.svg'));
+  const faviconRes = await fetch(`http://127.0.0.1:${server.port}/favicon.svg`);
+  await faviconRes.arrayBuffer();
+  ok(faviconRes.status === 200, 'GET /favicon.svg -> 200', String(faviconRes.status));
+  eq(faviconRes.headers.get('content-type'), 'image/svg+xml', 'GET /favicon.svg -> image/svg+xml');
+  const icoRes = await fetch(`http://127.0.0.1:${server.port}/favicon.ico`);
+  await icoRes.arrayBuffer();
+  ok(
+    icoRes.status === 404 && !(icoRes.headers.get('content-type') || '').includes('text/html'),
+    'GET /favicon.ico -> 404 без HTML',
+    `${icoRes.status} ${icoRes.headers.get('content-type')}`
+  );
+
   // ---------------------------------------------------------------- state
   console.log('state / diff');
   const state = await call('/api/state');
