@@ -16,7 +16,14 @@ async function list(req, res, ctx, url) {
 async function create(req, res, ctx, url) {
   const store = storeOf(ctx, url);
   const body = await readJsonBody(req);
-  if (!body.file || typeof body.file !== 'string') {
+  // Only a literal `general: true` makes a general comment, so a client that
+  // merely forgot `file` still gets a 400 instead of a silent general comment.
+  const general = body.general === true;
+  if (general && body.file !== undefined && body.file !== null) {
+    sendJson(res, 400, { error: 'Общий комментарий не привязан к файлу: передай либо general, либо file' });
+    return;
+  }
+  if (!general && (!body.file || typeof body.file !== 'string')) {
     sendJson(res, 400, { error: 'file обязателен' });
     return;
   }
@@ -24,12 +31,14 @@ async function create(req, res, ctx, url) {
     sendJson(res, 400, { error: 'Пустой комментарий' });
     return;
   }
-  const comment = store.add({
-    file: body.file,
-    startLine: body.startLine === undefined ? null : body.startLine,
-    endLine: body.endLine === undefined ? null : body.endLine,
-    text: String(body.text).trim(),
-  });
+  const comment = general
+    ? store.add({ file: null, startLine: null, endLine: null, text: String(body.text).trim() })
+    : store.add({
+        file: body.file,
+        startLine: body.startLine === undefined ? null : body.startLine,
+        endLine: body.endLine === undefined ? null : body.endLine,
+        text: String(body.text).trim(),
+      });
   sendJson(res, 201, { comment });
 }
 

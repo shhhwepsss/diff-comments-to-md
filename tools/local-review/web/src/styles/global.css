@@ -46,3 +46,9 @@ body,
 .rv-main:has(> .rv-diff-screen) {
   overflow: hidden;
 }
+
+/* Primer portals (dialogs, side sheets) must cover the sticky file header,
+   which sits at z-index 5 inside the diff. */
+#__primerPortalRoot__ {
+  z-index: 100;
+}

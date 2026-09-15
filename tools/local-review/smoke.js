@@ -215,6 +215,25 @@ async function main() {
   );
   eq(indexBody, staticIndexHtml, 'GET / отдаёт index.html из LOCAL_REVIEW_STATIC_DIR');
 
+  // Vite copies web/public/favicon.svg to the build root; index.html links it.
+  const webDir = path.join(__dirname, 'web');
+  ok(
+    fs.readFileSync(path.join(webDir, 'index.html'), 'utf8').includes('href="/favicon.svg"'),
+    'web/index.html ссылается на /favicon.svg'
+  );
+  fs.copyFileSync(path.join(webDir, 'public', 'favicon.svg'), path.join(staticDir, 'favicon.svg'));
+  const faviconRes = await fetch(`http://127.0.0.1:${server.port}/favicon.svg`);
+  await faviconRes.arrayBuffer();
+  ok(faviconRes.status === 200, 'GET /favicon.svg -> 200', String(faviconRes.status));
+  eq(faviconRes.headers.get('content-type'), 'image/svg+xml', 'GET /favicon.svg -> image/svg+xml');
+  const icoRes = await fetch(`http://127.0.0.1:${server.port}/favicon.ico`);
+  await icoRes.arrayBuffer();
+  ok(
+    icoRes.status === 404 && !(icoRes.headers.get('content-type') || '').includes('text/html'),
+    'GET /favicon.ico -> 404 без HTML',
+    `${icoRes.status} ${icoRes.headers.get('content-type')}`
+  );
+
   // ---------------------------------------------------------------- state
   console.log('state / diff');
   const state = await call('/api/state');
@@ -1489,6 +1508,132 @@ async function main() {
       text
     );
   }
+
+  // ------------------------------------------------- общие комментарии
+  console.log('\nобщие комментарии (не к строке, а ко всему ревью)');
+  const cleanQ = `source=local&root=${encodeURIComponent(clean)}&mode=working`;
+  const cleanStoreFile = path.join(clean, '.local-review', 'comments.json');
+
+  // A store written before general comments existed must load untouched and
+  // export byte-for-byte the way it always has.
+  const legacyStore = {
+    version: 1,
+    comments: [
+      {
+        id: 'legacy-2',
+        file: 'a.txt',
+        startLine: null,
+        endLine: null,
+        text: 'к файлу целиком',
+        createdAt: '2026-09-01T10:00:01.000Z',
+        updatedAt: '2026-09-01T10:00:01.000Z',
+      },
+      {
+        id: 'legacy-1',
+        file: 'a.txt',
+        startLine: 1,
+        endLine: 1,
+        text: 'к строке',
+        createdAt: '2026-09-01T10:00:00.000Z',
+        updatedAt: '2026-09-01T10:00:00.000Z',
+      },
+    ],
+  };
+  const legacyRaw = JSON.stringify(legacyStore, null, 2);
+  fs.mkdirSync(path.dirname(cleanStoreFile), { recursive: true });
+  fs.writeFileSync(cleanStoreFile, legacyRaw, 'utf8');
+  const LEGACY_EXPORT = 'a.txt\nк файлу целиком\n\na.txt:L1\nк строке\n';
+
+  eq(
+    (await call(`/api/comments?${cleanQ}`)).body.comments,
+    legacyStore.comments,
+    'старый файл хранилища без общих комментариев читается как есть'
+  );
+  eq((await call(`/api/export/text?${cleanQ}`)).body, LEGACY_EXPORT, 'экспорт старого хранилища байт в байт прежний');
+  eq(fs.readFileSync(cleanStoreFile, 'utf8'), legacyRaw, 'чтение и экспорт не переписали старый файл');
+
+  const g1 = await call(`/api/comments?${cleanQ}`, json('POST', { general: true, text: '  Первый общий  ' }));
+  ok(g1.status === 201, 'POST общего комментария -> 201', JSON.stringify(g1.body));
+  eq(
+    g1.body.comment && [g1.body.comment.file, g1.body.comment.startLine, g1.body.comment.endLine, g1.body.comment.text],
+    [null, null, null, 'Первый общий'],
+    'у общего комментария нет файла и строк, текст обрезан'
+  );
+  const g2 = await call(`/api/comments?${cleanQ}`, json('POST', { general: true, text: 'Второй общий\n\nв два абзаца' }));
+  const g3 = await call(`/api/comments?${cleanQ}`, json('POST', { general: true, text: 'Третий, будет удалён' }));
+  ok(g2.status === 201 && g3.status === 201, 'можно оставить несколько общих комментариев');
+
+  const gEmpty = await call(`/api/comments?${cleanQ}`, json('POST', { general: true, text: '  ' }));
+  ok(gEmpty.status === 400, 'пустой общий комментарий отклоняется', JSON.stringify(gEmpty.body));
+  const gWithFile = await call(`/api/comments?${cleanQ}`, json('POST', { general: true, file: 'a.txt', text: 'x' }));
+  ok(gWithFile.status === 400, 'общий комментарий с file -> 400 (или файл, или общий)', JSON.stringify(gWithFile.body));
+  const gTruthy = await call(`/api/comments?${cleanQ}`, json('POST', { general: 'true', text: 'x' }));
+  ok(gTruthy.status === 400, 'general:"true" (строка) не делает комментарий общим -> 400 без file');
+
+  const gEdit = await call(`/api/comments/${g1.body.comment.id}?${cleanQ}`, json('PUT', { text: 'Первый общий, исправлен' }));
+  ok(gEdit.status === 200 && gEdit.body.comment.file === null, 'PUT общего комментария -> 200, остаётся общим');
+  const gDel = await call(`/api/comments/${g3.body.comment.id}?${cleanQ}`, { method: 'DELETE' });
+  ok(gDel.status === 200, 'DELETE общего комментария -> 200');
+
+  const gList = (await call(`/api/comments?${cleanQ}`)).body.comments;
+  eq(gList.length, 4, 'после правок: 2 старых + 2 общих');
+  const gState = await call(`/api/state?${cleanQ}`);
+  eq(gState.body.totalComments, 4, 'общие комментарии входят в общий счётчик');
+  eq(gState.body.orphanFiles, [{ path: 'a.txt', comments: 2, orphan: true }], 'общий комментарий не становится «файлом вне диффа»');
+
+  const onDiskGeneral = JSON.parse(fs.readFileSync(cleanStoreFile, 'utf8'));
+  eq(onDiskGeneral.version, 1, 'версия формата хранилища не менялась');
+  eq(
+    onDiskGeneral.comments.filter((c) => c.file === null).map((c) => c.text),
+    ['Первый общий, исправлен', 'Второй общий\n\nв два абзаца'],
+    'общие комментарии лежат в том же файле хранилища'
+  );
+
+  const gIdsBefore = gList.map((c) => c.id).sort();
+  const gText1 = await call(`/api/export/text?${cleanQ}`);
+  const gFile = await call(`/api/export/file?${cleanQ}`, { method: 'POST' });
+  const gText2 = await call(`/api/export/text?${cleanQ}`);
+  eq(
+    (await call(`/api/comments?${cleanQ}`)).body.comments.map((c) => c.id).sort(),
+    gIdsBefore,
+    'инвариант 1: экспорт с общими комментариями их не меняет'
+  );
+  eq(gFile.body.count, 4, 'экспорт в файл считает и общие комментарии');
+  const GENERAL_EXPORT =
+    '## Общие комментарии\n\n' +
+    'Первый общий, исправлен\n\n' +
+    'Второй общий\n\nв два абзаца\n\n' +
+    '## Комментарии к коду\n\n' +
+    LEGACY_EXPORT;
+  eq(gText1.body, GENERAL_EXPORT, 'экспорт: общие комментарии первыми, под своим заголовком');
+  eq(gText2.body, gText1.body, 'повторный экспорт даёт тот же текст');
+  eq(fs.readFileSync(gFile.body.path, 'utf8'), gText1.body, '.md и буфер совпадают и с общими комментариями');
+  fs.rmSync(gFile.body.path, { force: true });
+
+  const { renderMarkdown } = require('./lib/export');
+  eq(
+    renderMarkdown([{ id: 'g', file: null, startLine: null, endLine: null, text: 'Только общий', createdAt: 'x' }]),
+    '## Общие комментарии\n\nТолько общий\n',
+    'экспорт только с общими комментариями — без пустого раздела кода'
+  );
+  eq(renderMarkdown([]), '', 'пустое хранилище по-прежнему экспортируется в пустую строку');
+
+  // PR mode: same store, same endpoints, only the descriptor differs.
+  const prGeneralQ = 'source=pr&host=github.com&owner=o&repo=r&number=26';
+  const prGeneral = await call(`/api/comments?${prGeneralQ}`, json('POST', { general: true, text: 'Общий к PR-у' }));
+  ok(prGeneral.status === 201, 'PR: общий комментарий создаётся', JSON.stringify(prGeneral.body));
+  eq(
+    (await call(`/api/export/text?${prGeneralQ}`)).body,
+    '## Общие комментарии\n\nОбщий к PR-у\n',
+    'PR: общий комментарий попадает в экспорт'
+  );
+  ok(
+    JSON.parse(fs.readFileSync(path.join(home, 'pr', 'github.com__o__r__26.json'), 'utf8')).comments[0].file === null,
+    'PR: общий комментарий лежит в PR-хранилище'
+  );
+
+  const gCleared = await call(`/api/comments/clear-all?${cleanQ}`, json('POST', { confirm: true }));
+  eq(gCleared.body.removed, 4, '«Очистить всё» удаляет и общие комментарии');
 
   await new Promise((resolve) => server.server.close(resolve));
 

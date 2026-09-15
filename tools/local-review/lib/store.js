@@ -7,6 +7,15 @@ const crypto = require('node:crypto');
 const STORE_DIR = '.local-review';
 const STORE_FILE = 'comments.json';
 
+/**
+ * A general comment is about the review as a whole, like GitHub's review
+ * summary: it lives in the same `comments` array, with `file: null` and no
+ * lines. Files written before general comments existed simply have none.
+ */
+function isGeneralComment(comment) {
+  return comment.file === null;
+}
+
 class CommentStore {
   /**
    * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
@@ -53,7 +62,10 @@ class CommentStore {
 
   countsByFile() {
     const counts = {};
-    for (const c of this.data.comments) counts[c.file] = (counts[c.file] || 0) + 1;
+    for (const c of this.data.comments) {
+      if (isGeneralComment(c)) continue;
+      counts[c.file] = (counts[c.file] || 0) + 1;
+    }
     return counts;
   }
 
@@ -109,4 +121,4 @@ class CommentStore {
   }
 }
 
-module.exports = { CommentStore, STORE_DIR, STORE_FILE };
+module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment };

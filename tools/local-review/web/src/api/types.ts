@@ -84,7 +84,8 @@ export type DiffResponse = {
 
 export type Comment = {
   id: string;
-  file: string;
+  /** null for a general comment about the whole review, not tied to a file. */
+  file: string | null;
   startLine: number | null;
   endLine: number | null;
   text: string;

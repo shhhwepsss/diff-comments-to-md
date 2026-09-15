@@ -84,9 +84,12 @@ type CardProps = {
   onCancelEdit: () => void;
   onSave: (text: string) => Promise<boolean>;
   onDelete: () => void;
+  /** Unsaved edit text to resume from instead of the saved text. */
+  draft?: string;
+  onDraftChange?: (text: string) => void;
 };
 
-export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, onDelete }: CardProps) {
+export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, onDelete, draft, onDraftChange }: CardProps) {
   return (
     <div className="rv-comment">
       <div className="rv-comment__head">
@@ -102,7 +105,13 @@ export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, on
         )}
       </div>
       {editing ? (
-        <CommentForm initial={comment.text} submitLabel="Сохранить" onSubmit={onSave} onCancel={onCancelEdit} />
+        <CommentForm
+          initial={draft ?? comment.text}
+          submitLabel="Сохранить"
+          onSubmit={onSave}
+          onCancel={onCancelEdit}
+          onChange={onDraftChange}
+        />
       ) : (
         <div className="rv-comment__body">{comment.text}</div>
       )}

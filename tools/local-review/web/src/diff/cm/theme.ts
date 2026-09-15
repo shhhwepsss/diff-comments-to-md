@@ -78,7 +78,12 @@ export const githubTheme = EditorView.theme({
     textAlign: 'right',
     cursor: 'pointer',
   },
-  '.cm-lineNumbers .cm-gutterElement': { position: 'relative' },
+  // The base theme clips every gutter; this one lets the "+" button below
+  // hang over the content edge instead of being cut in half.
+  '.cm-gutter.cm-lineNumbers': { overflow: 'visible' },
+  // 4px more on the right than the old numbers: room for that button between
+  // the number and the sign column without touching either.
+  '.cm-lineNumbers .cm-gutterElement': { position: 'relative', paddingRight: '14px !important' },
   '.cm-gutterElement.rv-gutter-add': {
     backgroundColor: 'var(--diffBlob-additionNum-bgColor)',
     color: 'var(--diffBlob-additionNum-fgColor, var(--fgColor-default))',
@@ -89,11 +94,12 @@ export const githubTheme = EditorView.theme({
     cursor: 'default',
   },
   '.rv-deleted-numbers': { display: 'flex', flexDirection: 'column' },
-  // GitHub's blue "+" next to the number under the pointer.
+  // GitHub's blue "+" next to the number under the pointer. It straddles the
+  // gutter edge and stops short of the +/- sign column (`.cm-line::before`).
   '.cm-lineNumbers .cm-gutterElement:not(.rv-gutter-del):hover::after': {
     content: '"+"',
     position: 'absolute',
-    right: '-10px',
+    right: '-6px',
     top: '1px',
     width: '18px',
     height: '18px',

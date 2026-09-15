@@ -28,7 +28,7 @@ export function FileSidebar() {
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const c of comments) m.set(c.file, (m.get(c.file) || 0) + 1);
+    for (const c of comments) if (c.file !== null) m.set(c.file, (m.get(c.file) || 0) + 1);
     return m;
   }, [comments]);
 
