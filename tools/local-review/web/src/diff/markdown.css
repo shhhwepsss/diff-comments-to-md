@@ -186,15 +186,38 @@
   max-width: 100%;
   box-sizing: content-box;
 }
-/* Image with a relative path: shows its alt text instead of a broken fetch. */
-.rv-markdown img.rv-md-unresolved {
-  display: inline-block;
-  padding: 0 var(--base-size-4);
+/* Image not loaded (remote before opt-in, or relative): alt text + URL as text. */
+.rv-markdown .rv-md-image {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--base-size-8);
+  max-width: 100%;
+  padding: 0 var(--base-size-8);
   font-size: var(--text-body-size-small);
-  font-style: italic;
+  line-height: 1.6;
   color: var(--fgColor-muted);
+  vertical-align: middle;
   border: var(--borderWidth-thin) dashed var(--borderColor-default);
-  border-radius: var(--borderRadius-small, 3px);
+  border-radius: var(--borderRadius-medium);
+}
+.rv-markdown .rv-md-image__alt {
+  font-style: italic;
+  color: var(--fgColor-default);
+}
+.rv-markdown .rv-md-image__url {
+  font-family: var(--fontStack-monospace);
+  overflow-wrap: anywhere;
+}
+
+.rv-markdown-external {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-8) var(--base-size-12);
+  padding: var(--base-size-8) var(--base-size-16);
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
 }
 
 .rv-markdown details summary {

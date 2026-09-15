@@ -11,10 +11,12 @@ type FormProps = {
   submitLabel: string;
   onSubmit: (text: string) => Promise<boolean>;
   onCancel: () => void;
+  /** Every keystroke, for callers that keep the unsaved text somewhere. */
+  onChange?: (text: string) => void;
 };
 
 /** Textarea + Save/Cancel. Ctrl/Cmd+Enter saves, Esc cancels. */
-export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCancel }: FormProps) {
+export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCancel, onChange }: FormProps) {
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -47,7 +49,10 @@ export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCanc
         rows={3}
         placeholder="Комментарий…"
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange?.(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, CodeIcon, CommentIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
@@ -83,6 +83,15 @@ export function DiffPane() {
   const [wrap, setWrap] = useState(readWrap);
   // Source diff or rendered markdown, per file path; source is the default.
   const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
+  // Files whose remote images the reviewer chose to load (not persisted).
+  const [externalImageFiles, setExternalImageFiles] = useState<Record<string, boolean>>({});
+  // Unsaved text of the open new-comment form. Switching Код/Просмотр remounts
+  // the form; it resumes from here. Gone once the form closes (save, cancel,
+  // another file), and on reload.
+  const draft = useRef('');
+  useEffect(() => {
+    if (!editor) draft.current = '';
+  }, [editor]);
 
   const toggleWrap = (next: boolean) => {
     setWrap(next);
@@ -148,9 +157,13 @@ export function DiffPane() {
       <CommentForm
         key="editor"
         label={editorLabel(editorHere.file, selected?.from ?? editorHere.start, selected?.to ?? editorHere.end)}
+        initial={draft.current}
         submitLabel="Сохранить"
         onSubmit={review.createComment}
         onCancel={review.closeEditor}
+        onChange={(text) => {
+          draft.current = text;
+        }}
       />
     ) : null;
 
@@ -280,7 +293,11 @@ export function DiffPane() {
                 </div>
               }
             >
-              <MarkdownPreview text={markdown.text} />
+              <MarkdownPreview
+                text={markdown.text}
+                loadExternalImages={Boolean(externalImageFiles[activeFile])}
+                onLoadExternalImages={() => setExternalImageFiles((prev) => ({ ...prev, [activeFile]: true }))}
+              />
             </Suspense>
           </div>
         </>
