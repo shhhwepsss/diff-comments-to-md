@@ -67,6 +67,8 @@ export const api = {
   comments: (d: Descriptor) => request<{ comments: Comment[] }>(`/api/comments?${descriptorQuery(d)}`),
   createComment: (d: Descriptor, body: { file: string; startLine: number | null; endLine: number | null; text: string }) =>
     request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  createGeneralComment: (d: Descriptor, text: string) =>
+    request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', { general: true, text })),
   updateComment: (d: Descriptor, id: string, text: string) =>
     request<{ comment: Comment }>(`/api/comments/${encodeURIComponent(id)}?${descriptorQuery(d)}`, jsonBody('PUT', { text })),
   deleteComment: (d: Descriptor, id: string) =>

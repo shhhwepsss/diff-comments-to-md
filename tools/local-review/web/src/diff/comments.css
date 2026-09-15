@@ -80,3 +80,15 @@
 .rv-comment-form__actions .rv-hint {
   margin-right: auto;
 }
+
+/* General comments side sheet: cards and the new-comment form stacked. */
+.rv-general {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+
+.rv-general .rv-comment + .rv-comment,
+.rv-general .rv-comment + .rv-comment-form {
+  margin-top: 0;
+}

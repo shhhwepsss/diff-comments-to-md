@@ -33,6 +33,8 @@ export type Review = {
   startEdit: (id: string) => void;
   cancelEdit: () => void;
   createComment: (text: string) => Promise<boolean>;
+  /** A comment about the whole review; needs no editor anchor. */
+  createGeneralComment: (text: string) => Promise<boolean>;
   updateComment: (id: string, text: string) => Promise<boolean>;
   deleteComment: (id: string) => Promise<void>;
   copyAll: () => Promise<void>;
@@ -249,6 +251,25 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     [descriptor, editor, fail, refreshComments, toast],
   );
 
+  const createGeneralComment = useCallback(
+    async (text: string) => {
+      const value = text.trim();
+      if (!value) {
+        toast('Пустой комментарий не сохраняю', true);
+        return false;
+      }
+      try {
+        await api.createGeneralComment(descriptor, value);
+        await refreshComments();
+        return true;
+      } catch (e) {
+        fail(e);
+        return false;
+      }
+    },
+    [descriptor, fail, refreshComments, toast],
+  );
+
   const updateComment = useCallback(
     async (id: string, text: string) => {
       const value = text.trim();
@@ -345,6 +366,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       startEdit,
       cancelEdit,
       createComment,
+      createGeneralComment,
       updateComment,
       deleteComment,
       copyAll,
@@ -370,6 +392,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       startEdit,
       cancelEdit,
       createComment,
+      createGeneralComment,
       updateComment,
       deleteComment,
       copyAll,
