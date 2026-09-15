@@ -81,7 +81,9 @@ export const githubTheme = EditorView.theme({
   // The base theme clips every gutter; this one lets the "+" button below
   // hang over the content edge instead of being cut in half.
   '.cm-gutter.cm-lineNumbers': { overflow: 'visible' },
-  '.cm-lineNumbers .cm-gutterElement': { position: 'relative' },
+  // 4px more on the right than the old numbers: room for that button between
+  // the number and the sign column without touching either.
+  '.cm-lineNumbers .cm-gutterElement': { position: 'relative', paddingRight: '14px !important' },
   '.cm-gutterElement.rv-gutter-add': {
     backgroundColor: 'var(--diffBlob-additionNum-bgColor)',
     color: 'var(--diffBlob-additionNum-fgColor, var(--fgColor-default))',
