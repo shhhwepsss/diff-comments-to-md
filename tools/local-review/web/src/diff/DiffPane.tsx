@@ -1,16 +1,20 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Button, CounterLabel, Spinner, ToggleSwitch } from '@primer/react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Button, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, CommentIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
+import { AlertIcon, CodeIcon, CommentIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import type { Comment, DiffResponse } from '../api/types';
 import { DiffEditor } from './DiffEditor';
 import { CommentCard, CommentForm } from './CommentCard';
 import type { Block } from './cm/blocks';
 import { stripFinalNewline, type LineRange } from './lineMap';
+import { markdownToRender } from './markdownFile';
 import './diff.css';
 
 const WRAP_KEY = 'local-review:wrap';
+
+// marked + DOMPurify + markdown styles load only when a file is first rendered.
+const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 
 function readWrap(): boolean {
   try {
@@ -77,6 +81,17 @@ export function DiffPane() {
   const review = useReview();
   const { activeFile, activeDiff, comments, editor, editingId, state } = review;
   const [wrap, setWrap] = useState(readWrap);
+  // Source diff or rendered markdown, per file path; source is the default.
+  const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
+  // Files whose remote images the reviewer chose to load (not persisted).
+  const [externalImageFiles, setExternalImageFiles] = useState<Record<string, boolean>>({});
+  // Unsaved text of the open new-comment form. Switching Код/Просмотр remounts
+  // the form; it resumes from here. Gone once the form closes (save, cancel,
+  // another file), and on reload.
+  const draft = useRef('');
+  useEffect(() => {
+    if (!editor) draft.current = '';
+  }, [editor]);
 
   const toggleWrap = (next: boolean) => {
     setWrap(next);
@@ -92,6 +107,8 @@ export function DiffPane() {
   const reason = diff ? unavailableReason(diff) : null;
   const showsEditor = Boolean(diff && !reason);
   const docLines = showsEditor && diff ? lineCount(diff.newText ?? '') : 0;
+  const markdown = diff && activeFile ? markdownToRender(activeFile, diff) : null;
+  const rendered = Boolean(markdown && activeFile && renderedFiles[activeFile]);
 
   // Comments whose line is not in the document go above it, with file-level ones.
   const { anchored, unanchored } = useMemo(() => {
@@ -106,7 +123,8 @@ export function DiffPane() {
 
   const editorHere = editor && editor.file === activeFile ? editor : null;
   const editorLine = editorHere && editorHere.start !== null && editorHere.end !== null ? Math.max(editorHere.start, editorHere.end) : null;
-  const editorInDoc = editorLine !== null && showsEditor && editorLine <= docLines;
+  // The rendered view has no lines, so an open line-comment form moves above it.
+  const editorInDoc = editorLine !== null && showsEditor && !rendered && editorLine <= docLines;
 
   const blocks = useMemo<Block[]>(() => {
     const out: Block[] = anchored.map((c) => ({ key: `c:${c.id}`, line: c.endLine as number }));
@@ -139,9 +157,13 @@ export function DiffPane() {
       <CommentForm
         key="editor"
         label={editorLabel(editorHere.file, selected?.from ?? editorHere.start, selected?.to ?? editorHere.end)}
+        initial={draft.current}
         submitLabel="Сохранить"
         onSubmit={review.createComment}
         onCancel={review.closeEditor}
+        onChange={(text) => {
+          draft.current = text;
+        }}
       />
     ) : null;
 
@@ -202,7 +224,21 @@ export function DiffPane() {
           </span>
         )}
         <div className="rv-file-header__spacer" />
-        {showsEditor && (
+        {markdown && (
+          <SegmentedControl
+            aria-label="Вид файла"
+            size="small"
+            onChange={(i) => setRenderedFiles((prev) => ({ ...prev, [activeFile]: i === 1 }))}
+          >
+            <SegmentedControl.Button selected={!rendered} leadingVisual={CodeIcon}>
+              Код
+            </SegmentedControl.Button>
+            <SegmentedControl.Button selected={rendered} leadingVisual={EyeIcon}>
+              Просмотр
+            </SegmentedControl.Button>
+          </SegmentedControl>
+        )}
+        {showsEditor && !rendered && (
           <span className="rv-file-header__wrap">
             <span id="rv-wrap-label" className="rv-hint">
               Перенос строк
@@ -242,12 +278,36 @@ export function DiffPane() {
           {activeDiff.message}
         </Empty>
       )}
-      {diff && reason && (
+      {rendered && markdown && (
+        <>
+          <div className="rv-hint rv-diff-hint">
+            {markdown.side === 'old' ? 'Файл удалён — показана прежняя версия. ' : ''}
+            Только просмотр: комментарии к строкам — в режиме «Код»
+            {anchored.length > 0 ? ` (${anchored.length})` : ''}.
+          </div>
+          <div className="rv-diff-frame">
+            <Suspense
+              fallback={
+                <div className="rv-diff-loading">
+                  <Spinner size="medium" />
+                </div>
+              }
+            >
+              <MarkdownPreview
+                text={markdown.text}
+                loadExternalImages={Boolean(externalImageFiles[activeFile])}
+                onLoadExternalImages={() => setExternalImageFiles((prev) => ({ ...prev, [activeFile]: true }))}
+              />
+            </Suspense>
+          </div>
+        </>
+      )}
+      {diff && reason && !rendered && (
         <Empty icon={reason.icon} title={reason.title}>
           {reason.text}
         </Empty>
       )}
-      {diff && !reason && (
+      {diff && !reason && !rendered && (
         <>
           <div className="rv-hint rv-diff-hint">
             По номерам строк: клик — строка, протяжка или Shift+клик — диапазон.
