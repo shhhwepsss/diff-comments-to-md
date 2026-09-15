@@ -16,6 +16,7 @@ import type { Mode } from '../api/types';
 import type { Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
 import { useOptionalReview } from '../review/ReviewContext';
+import { GeneralComments } from './GeneralComments';
 import './header.css';
 
 const MODES: { value: Mode; label: string }[] = [
@@ -100,6 +101,7 @@ export function AppHeader({ route, theme, onTheme }: Props) {
             <span className="rv-header__count" title="Комментариев всего">
               Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
             </span>
+            <GeneralComments review={review} />
             <Button size="small" leadingVisual={CopyIcon} disabled={noComments} onClick={() => void review.copyAll()}>
               Скопировать всё
             </Button>

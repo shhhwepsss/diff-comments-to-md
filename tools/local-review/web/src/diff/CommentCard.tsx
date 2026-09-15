@@ -11,10 +11,12 @@ type FormProps = {
   submitLabel: string;
   onSubmit: (text: string) => Promise<boolean>;
   onCancel: () => void;
+  /** Every keystroke, for callers that keep the unsaved text somewhere. */
+  onChange?: (text: string) => void;
 };
 
 /** Textarea + Save/Cancel. Ctrl/Cmd+Enter saves, Esc cancels. */
-export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCancel }: FormProps) {
+export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCancel, onChange }: FormProps) {
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -47,7 +49,10 @@ export function CommentForm({ label, initial = '', submitLabel, onSubmit, onCanc
         rows={3}
         placeholder="Комментарий…"
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange?.(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -79,9 +84,12 @@ type CardProps = {
   onCancelEdit: () => void;
   onSave: (text: string) => Promise<boolean>;
   onDelete: () => void;
+  /** Unsaved edit text to resume from instead of the saved text. */
+  draft?: string;
+  onDraftChange?: (text: string) => void;
 };
 
-export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, onDelete }: CardProps) {
+export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, onDelete, draft, onDraftChange }: CardProps) {
   return (
     <div className="rv-comment">
       <div className="rv-comment__head">
@@ -97,7 +105,13 @@ export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, on
         )}
       </div>
       {editing ? (
-        <CommentForm initial={comment.text} submitLabel="Сохранить" onSubmit={onSave} onCancel={onCancelEdit} />
+        <CommentForm
+          initial={draft ?? comment.text}
+          submitLabel="Сохранить"
+          onSubmit={onSave}
+          onCancel={onCancelEdit}
+          onChange={onDraftChange}
+        />
       ) : (
         <div className="rv-comment__body">{comment.text}</div>
       )}

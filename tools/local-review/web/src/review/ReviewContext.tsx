@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Comment, Descriptor, DiffResponse, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
+import { createDraftStore, type DraftStore } from './drafts';
 
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
@@ -23,6 +24,8 @@ export type Review = {
   activeDiff: ActiveDiff | null;
   editor: EditorAnchor | null;
   editingId: string | null;
+  /** Unsaved general-comment text; survives closing the panel, not a reload. */
+  drafts: DraftStore;
 
   reload: () => void;
   setMode: (mode: Mode) => void;
@@ -33,6 +36,8 @@ export type Review = {
   startEdit: (id: string) => void;
   cancelEdit: () => void;
   createComment: (text: string) => Promise<boolean>;
+  /** A comment about the whole review; needs no editor anchor. */
+  createGeneralComment: (text: string) => Promise<boolean>;
   updateComment: (id: string, text: string) => Promise<boolean>;
   deleteComment: (id: string) => Promise<void>;
   copyAll: () => Promise<void>;
@@ -91,6 +96,8 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   const [activeDiff, setActiveDiff] = useState<ActiveDiff | null>(null);
   const [editor, setEditor] = useState<EditorAnchor | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // One store for the life of this review; the provider remounts per descriptor.
+  const [drafts] = useState(createDraftStore);
 
   // Responses for a file or descriptor the user already left must not land.
   const diffSeq = useRef(0);
@@ -249,6 +256,25 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     [descriptor, editor, fail, refreshComments, toast],
   );
 
+  const createGeneralComment = useCallback(
+    async (text: string) => {
+      const value = text.trim();
+      if (!value) {
+        toast('Пустой комментарий не сохраняю', true);
+        return false;
+      }
+      try {
+        await api.createGeneralComment(descriptor, value);
+        await refreshComments();
+        return true;
+      } catch (e) {
+        fail(e);
+        return false;
+      }
+    },
+    [descriptor, fail, refreshComments, toast],
+  );
+
   const updateComment = useCallback(
     async (id: string, text: string) => {
       const value = text.trim();
@@ -336,6 +362,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       activeDiff,
       editor,
       editingId,
+      drafts,
       reload,
       setMode,
       setBase,
@@ -345,6 +372,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       startEdit,
       cancelEdit,
       createComment,
+      createGeneralComment,
       updateComment,
       deleteComment,
       copyAll,
@@ -361,6 +389,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       activeDiff,
       editor,
       editingId,
+      drafts,
       reload,
       setMode,
       setBase,
@@ -370,6 +399,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       startEdit,
       cancelEdit,
       createComment,
+      createGeneralComment,
       updateComment,
       deleteComment,
       copyAll,
