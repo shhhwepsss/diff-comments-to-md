@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Comment, Descriptor, DiffResponse, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
+import { createDraftStore, type DraftStore } from './drafts';
 
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
@@ -23,6 +24,8 @@ export type Review = {
   activeDiff: ActiveDiff | null;
   editor: EditorAnchor | null;
   editingId: string | null;
+  /** Unsaved general-comment text; survives closing the panel, not a reload. */
+  drafts: DraftStore;
 
   reload: () => void;
   setMode: (mode: Mode) => void;
@@ -93,6 +96,8 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   const [activeDiff, setActiveDiff] = useState<ActiveDiff | null>(null);
   const [editor, setEditor] = useState<EditorAnchor | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // One store for the life of this review; the provider remounts per descriptor.
+  const [drafts] = useState(createDraftStore);
 
   // Responses for a file or descriptor the user already left must not land.
   const diffSeq = useRef(0);
@@ -357,6 +362,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       activeDiff,
       editor,
       editingId,
+      drafts,
       reload,
       setMode,
       setBase,
@@ -383,6 +389,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       activeDiff,
       editor,
       editingId,
+      drafts,
       reload,
       setMode,
       setBase,
