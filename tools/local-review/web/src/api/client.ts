@@ -6,6 +6,7 @@ import type {
   Descriptor,
   DiffResponse,
   GhStatus,
+  Gitignore,
   PrSearchResponse,
   SessionResponse,
   Settings,
@@ -156,7 +157,7 @@ export const api = {
 
   session: () => request<SessionResponse>('/api/session'),
   saveSession: (descriptor: Descriptor) =>
-    request<{ ok: true; gitignore?: { changed: boolean } }>('/api/session', jsonBody('POST', { descriptor })),
+    request<{ ok: true; gitignore?: Gitignore }>('/api/session', jsonBody('POST', { descriptor })),
 
   settings: () => request<Settings>('/api/settings'),
   saveSettings: (patch: Partial<Settings>) => request<Settings>('/api/settings', jsonBody('PUT', patch)),

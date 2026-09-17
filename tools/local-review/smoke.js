@@ -175,6 +175,14 @@ async function main() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-home-'));
   process.env.LOCAL_REVIEW_HOME = home;
 
+  // Never touch the real git config either: the "global ignore" target reads
+  // core.excludesFile and may write it, so both the global config and the XDG
+  // config home are throwaway directories for the duration of the test.
+  const gitHome = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-gitconfig-'));
+  process.env.GIT_CONFIG_GLOBAL = path.join(gitHome, '.gitconfig');
+  process.env.GIT_CONFIG_SYSTEM = path.join(gitHome, 'system.gitconfig');
+  process.env.XDG_CONFIG_HOME = path.join(gitHome, 'xdg');
+
   // Points every `start()` call in this suite at a throwaway static dir
   // instead of the real dist/ (which may not be built in this checkout).
   // Also doubles as the assertion fixture for the "GET / serves the
@@ -742,6 +750,129 @@ async function main() {
     fs.readFileSync(path.join(clean, '.gitignore'), 'utf8'),
     gitignoreBeforeBrowse,
     'обзор каталога НЕ пишет в .gitignore'
+  );
+
+  // The line always lands in the repository's top-level .gitignore, even when
+  // the chosen root is a subfolder (e.g. a hand-edited #hash or a stale recent).
+  const nestedRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-nested-'));
+  git(['init', '-q', '-b', 'main'], nestedRepo);
+  write(nestedRepo, 'packages/app/index.js', 'x\n');
+  const nestedDir = path.join(nestedRepo, 'packages', 'app');
+  const pickedNested = await call(
+    '/api/session',
+    json('POST', {
+      descriptor: { source: 'local', root: nestedDir, mode: 'working', base: 'origin/main' },
+    })
+  );
+  ok(
+    pickedNested.status === 200 && pickedNested.body.gitignore.changed === true,
+    'выбор подкаталога репозитория -> gitignore.changed',
+    JSON.stringify(pickedNested.body)
+  );
+  ok(!fs.existsSync(path.join(nestedDir, '.gitignore')), 'вложенный .gitignore в подкаталоге НЕ создаётся');
+  eq(
+    fs.readFileSync(path.join(nestedRepo, '.gitignore'), 'utf8'),
+    '.local-review/\n',
+    'строка записана в корневой .gitignore репозитория'
+  );
+
+  const { ensureGitignore } = require('./review');
+  const notRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-nogit-'));
+  eq(
+    (await ensureGitignore(notRepoDir)).changed,
+    false,
+    'вне git-репозитория ensureGitignore ничего не пишет'
+  );
+  ok(!fs.existsSync(path.join(notRepoDir, '.gitignore')), 'вне git-репозитория .gitignore не создаётся');
+
+  const gitignoreCases = [
+    ['node_modules', 'node_modules\n.local-review/\n', 'без перевода строки в конце -> дописывает с новой строки'],
+    ['node_modules\r\n', 'node_modules\r\n.local-review/\r\n', 'CRLF сохраняется'],
+    ['/.local-review\n', '/.local-review\n', '/.local-review уже игнорирует -> без дубля'],
+    ['**/.local-review/\n', '**/.local-review/\n', '**/.local-review/ уже игнорирует -> без дубля'],
+  ];
+  for (const [before, after, label] of gitignoreCases) {
+    const r = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-gi-'));
+    git(['init', '-q', '-b', 'main'], r);
+    fs.writeFileSync(path.join(r, '.gitignore'), before);
+    await ensureGitignore(r);
+    await ensureGitignore(r); // a second run must not duplicate the line
+    eq(fs.readFileSync(path.join(r, '.gitignore'), 'utf8'), after, `.gitignore: ${label}`);
+  }
+
+  // ------------------------------------------- куда писать игнор (#26)
+  console.log('\nнастройка: проектный или глобальный игнор');
+  const ignoreSettings0 = await call('/api/settings');
+  eq(ignoreSettings0.body.gitignoreTarget, 'project', 'GET /api/settings: по умолчанию project');
+  eq((await call('/api/settings', json('PUT', { gitignoreTarget: 'нет' }))).status, 400,
+    'PUT /api/settings: чужое значение -> 400');
+  eq((await call('/api/settings', json('PUT', {}))).status, 400,
+    'PUT /api/settings без gitignoreTarget -> 400');
+
+  const toGlobal = await call('/api/settings', json('PUT', { gitignoreTarget: 'global' }));
+  eq(toGlobal.body.gitignoreTarget, 'global', 'PUT /api/settings: global сохранён');
+  ok(fs.existsSync(path.join(home, 'settings.json')), 'настройка лежит в <home>/settings.json');
+
+  // core.excludesFile не задан -> git-овский дефолт $XDG_CONFIG_HOME/git/ignore,
+  // и тула прописывает его в глобальный конфиг.
+  const xdgIgnore = path.join(process.env.XDG_CONFIG_HOME, 'git', 'ignore');
+  const globalRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-global-'));
+  git(['init', '-q', '-b', 'main'], globalRepo);
+  const pickedGlobal = await call(
+    '/api/session',
+    json('POST', {
+      descriptor: { source: 'local', root: globalRepo, mode: 'working', base: 'origin/main' },
+    })
+  );
+  ok(
+    pickedGlobal.status === 200 && pickedGlobal.body.gitignore.changed === true &&
+      pickedGlobal.body.gitignore.target === 'global',
+    'режим global: запись в глобальный игнор, а не в репозиторий',
+    JSON.stringify(pickedGlobal.body)
+  );
+  eq(fs.readFileSync(xdgIgnore, 'utf8'), '.local-review/\n', 'строка в $XDG_CONFIG_HOME/git/ignore');
+  ok(!fs.existsSync(path.join(globalRepo, '.gitignore')), 'режим global: .gitignore репозитория не создаётся');
+  eq(
+    path.resolve(git(['config', '--global', '--get', 'core.excludesFile'], globalRepo).trim()),
+    path.resolve(xdgIgnore),
+    'незаданный core.excludesFile прописывается в глобальный git config'
+  );
+  eq((await ensureGitignore(globalRepo)).changed, false, 'режим global: повторный запуск не дублирует строку');
+  eq(fs.readFileSync(xdgIgnore, 'utf8'), '.local-review/\n', 'глобальный игнор остался в одну строку');
+
+  // core.excludesFile задан -> пишем ровно туда, конфиг не трогаем.
+  const customIgnore = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-excl-')), 'ignore');
+  fs.writeFileSync(customIgnore, '*.log\r\n*.tmp', 'utf8');
+  git(['config', '--global', 'core.excludesFile', customIgnore], globalRepo);
+  eq((await ensureGitignore(globalRepo)).file, customIgnore, 'заданный core.excludesFile выигрывает');
+  eq(
+    fs.readFileSync(customIgnore, 'utf8'),
+    '*.log\r\n*.tmp\r\n.local-review/\r\n',
+    'глобальный игнор: CRLF и недостающий перевод строки'
+  );
+
+  // `~` в core.excludesFile — это домашний каталог по-гитовски.
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-home-tilde-'));
+  const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
+  git(['config', '--global', 'core.excludesFile', '~/ignore-me'], globalRepo);
+  await ensureGitignore(globalRepo);
+  ok(
+    fs.existsSync(path.join(fakeHome, 'ignore-me')) &&
+      fs.readFileSync(path.join(fakeHome, 'ignore-me'), 'utf8') === '.local-review/\n',
+    '~ в core.excludesFile разворачивается в домашний каталог'
+  );
+  process.env.HOME = realHome.HOME;
+  process.env.USERPROFILE = realHome.USERPROFILE;
+  git(['config', '--global', '--unset', 'core.excludesFile'], globalRepo);
+
+  // Обратно в project: следующая папка снова получает свой .gitignore.
+  await call('/api/settings', json('PUT', { gitignoreTarget: 'project' }));
+  eq(
+    (await call('/api/settings')).body.gitignoreTarget,
+    'project',
+    'настройка переживает запись сессии (state.json её не затирает)'
   );
 
   const noGitignoreRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-pick-'));

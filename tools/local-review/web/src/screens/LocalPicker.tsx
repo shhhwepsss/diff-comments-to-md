@@ -83,7 +83,13 @@ export function LocalPicker() {
       // Empty base: the server resolves the repository's default branch.
       const descriptor = { source: 'local' as const, root: v.repoRoot, mode: 'working' as const, base: '' };
       const saved = await api.saveSession(descriptor);
-      if (saved.gitignore && saved.gitignore.changed) toast('В .gitignore добавлено .local-review/');
+      if (saved.gitignore && saved.gitignore.changed) {
+        toast(
+          saved.gitignore.target === 'global'
+            ? `В глобальный игнор (${saved.gitignore.file}) добавлено .local-review/`
+            : 'В .gitignore репозитория добавлено .local-review/',
+        );
+      }
       window.location.hash = hashFor(descriptor);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);

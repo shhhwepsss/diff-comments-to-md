@@ -158,10 +158,20 @@ export type SessionResponse = {
   storedPrs: number;
 };
 
+/** What POST /api/session reports about the ignore line it wrote (or did not). */
+export type Gitignore = {
+  changed: boolean;
+  target?: 'project' | 'global';
+  file?: string | null;
+  error?: string;
+};
+
 /** ~/.local-review/settings.json. */
 export type Settings = {
   /** Appended after the comments in both exports; empty = comments alone. */
   copyPrompt: string;
+  /** Where the `.local-review/` ignore line goes: repo root .gitignore or the machine-wide one. */
+  gitignoreTarget: 'project' | 'global';
 };
 
 export type GhStatus = {

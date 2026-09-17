@@ -47,3 +47,14 @@
 .rv-settings__actions .rv-hint {
   margin-right: auto;
 }
+
+/* The page-level save: one row under the sections, stuck to the bottom so it
+   is reachable without scrolling back up. */
+.rv-settings__actions--page {
+  position: sticky;
+  bottom: 0;
+  padding: var(--base-size-12) var(--base-size-16);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-inset);
+}

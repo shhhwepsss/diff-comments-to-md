@@ -32,8 +32,10 @@ async function post(req, res) {
     }
     // The .gitignore line is written here and nowhere else during browsing:
     // only a confirmed folder selection touches the user's repository.
-    // Required lazily so the review.js <-> routes cycle resolves at call time.
-    gitignore = require('../../review').ensureGitignore(d.root);
+    // It lands in the repository's top-level .gitignore even when d.root is a
+    // subfolder. Required lazily so the review.js <-> routes cycle resolves at
+    // call time.
+    gitignore = await require('../../review').ensureGitignore(d.root);
     config.addRecent(d.root);
   }
   config.setLast(d);
