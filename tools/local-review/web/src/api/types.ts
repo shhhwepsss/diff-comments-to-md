@@ -32,6 +32,10 @@ export type FileEntry = {
   kind: string;
   untracked: boolean;
   comments: number;
+  /** Identity of this file's current diff; a viewed mark only holds while it is unchanged. */
+  fingerprint: string | null;
+  /** Marked viewed against exactly this fingerprint. */
+  viewed: boolean;
 };
 
 export type OrphanFile = { path: string; comments: number; orphan: true };

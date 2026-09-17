@@ -6,6 +6,7 @@ import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
+import { withViewed } from './viewed';
 import {
   clampIndex,
   commitContextFor,
@@ -77,6 +78,8 @@ export type Review = {
   expandSelectionToOutside: () => void;
   dismissDirtyNotice: () => void;
   selectFile: (path: string) => void;
+  /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
+  setFileViewed: (path: string, viewed: boolean) => Promise<void>;
   openEditor: (anchor: EditorAnchor) => void;
   closeEditor: () => void;
   startEdit: (id: string) => void;
@@ -438,6 +441,25 @@ export function ReviewProvider({
     [descriptor, openFile],
   );
 
+  const setFileViewed = useCallback(
+    async (path: string, viewed: boolean) => {
+      // The fingerprint and the view must be the ones on screen right now: an
+      // address step (see `restore` below) can have changed both since this
+      // callback was created.
+      const entry = stateRef.current?.files.find((f) => f.path === path);
+      if (!entry || (viewed && !entry.fingerprint)) return;
+      // Flip first: the checkbox must answer the click, not the network.
+      setState((s) => (s ? withViewed(s, path, viewed) : s));
+      try {
+        await api.setViewed(descriptorRef.current, path, entry.fingerprint, viewed);
+      } catch (e) {
+        setState((s) => (s ? withViewed(s, path, !viewed) : s));
+        toast(failureMessage(viewed ? 'Не удалось отметить файл просмотренным' : 'Не удалось снять отметку', e), true);
+      }
+    },
+    [toast],
+  );
+
   /**
    * Back/Forward (and a hand-edited address) re-open what the address names.
    * Another review is App's business: the route changes, so it remounts us.
@@ -645,6 +667,7 @@ export function ReviewProvider({
       expandSelectionToOutside,
       dismissDirtyNotice,
       selectFile,
+      setFileViewed,
       openEditor,
       closeEditor,
       startEdit,
@@ -687,6 +710,7 @@ export function ReviewProvider({
       expandSelectionToOutside,
       dismissDirtyNotice,
       selectFile,
+      setFileViewed,
       openEditor,
       closeEditor,
       startEdit,

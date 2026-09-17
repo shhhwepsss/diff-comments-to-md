@@ -5,6 +5,7 @@ const { parsePatch, MAX_TEXT_BYTES, TEXT_TOO_BIG_MESSAGE } = require('../diff');
 const { descriptorKey } = require('../descriptor');
 const { resolvePr } = require('../pr-search');
 const { rangeLabel } = require('../commits');
+const { fingerprintOf } = require('../viewed');
 
 const CACHE = new Map(); // descriptorKey -> { at, files }
 const TTL_MS = 120000;
@@ -238,7 +239,10 @@ function splitPrDiff(text) {
         .concat(block.body)
         .join('\n');
 
-      return { path: newPath, oldPath, status, kind, body };
+      // The whole block, header included: its `index <old>..<new>` line
+      // changes with either blob, even for a binary file whose body is empty.
+      const fingerprint = fingerprintOf([kind, oldPath, newPath, block.header, block.body]);
+      return { path: newPath, oldPath, status, kind, body, fingerprint };
     })
     .filter((f) => f.path);
 }
@@ -268,6 +272,7 @@ async function loadFiles(descriptor, fresh) {
         binary: parsed.binary,
         additions: parsed.additions,
         deletions: parsed.deletions,
+        fingerprint: f.fingerprint,
       };
     })
     .sort((a, b) => a.path.localeCompare(b.path));
@@ -324,6 +329,9 @@ function mapCompareFile(f) {
     binary: f.patch ? parsed.binary : binary,
     additions: f.patch ? parsed.additions : additions,
     deletions: f.patch ? parsed.deletions : deletions,
+    // The compare API has no old blob id; the patch covers the old side of a
+    // text file, and `sha` (the new blob) the rest.
+    fingerprint: fingerprintOf([status, f.previous_filename || null, f.filename, f.sha || null, f.patch || null]),
   };
 }
 
@@ -378,6 +386,7 @@ function createPrSource(descriptor) {
             kind: f.kind,
             additions: f.additions,
             deletions: f.deletions,
+            fingerprint: f.fingerprint,
           })),
           range: { label: rangeLabel(descriptor.from, descriptor.to) },
         };
@@ -391,6 +400,7 @@ function createPrSource(descriptor) {
           kind: f.kind,
           additions: f.additions,
           deletions: f.deletions,
+          fingerprint: f.fingerprint,
         })),
         range: { label: `${descriptor.owner}/${descriptor.repo}#${descriptor.number}` },
       };

@@ -160,7 +160,7 @@ async function listCommitFiles(repoRoot, from, to) {
   if (to !== from) await assertCommit(repoRoot, to);
 
   const { args } = await rangeArgs(repoRoot, from, to);
-  const raw = await git(args.concat(['--raw', '-z', '-M', '--no-color']), repoRoot);
+  const raw = await git(args.concat(['--raw', '-z', '-M', '--no-color', '--no-abbrev']), repoRoot);
   const files = parseRawZ(splitZ(raw));
   files.sort((a, b) => a.path.localeCompare(b.path));
   return { files };

@@ -5,6 +5,7 @@ const { parseDescriptor, MODES } = require('../descriptor');
 const { defaultBase } = require('../git');
 const { createSource } = require('../sources/factory');
 const { storeFor } = require('../stores/factory');
+const { isViewed, modeKeyOf } = require('../viewed');
 
 function isFresh(url) {
   return url.searchParams.get('fresh') === '1';
@@ -20,6 +21,7 @@ async function getState(req, res, ctx, url) {
   // JSON error instead of an empty screen.
   const pr = descriptor.source === 'pr' ? await source.meta() : null;
   const counts = store.countsByFile();
+  const viewed = store.viewedFiles();
 
   // The client may send no base at all; answer with the revision Base mode
   // would actually use, so the header shows `origin/production` and not a
@@ -33,6 +35,10 @@ async function getState(req, res, ctx, url) {
   // its own label ("коммит <sha>" / "коммиты <a>..<b>", built by the source
   // above); the PR-branch label only applies when no such range is selected.
   const commitsSelected = descriptor.source === 'local' ? descriptor.mode === 'commits' : Boolean(descriptor.from && descriptor.to);
+
+  // The same revision the header shows is the one the `base` view keys by,
+  // so an empty base and its explicit spelling share one key.
+  const modeKey = modeKeyOf(descriptor, base);
 
   sendJson(res, 200, {
     repoRoot: descriptor.source === 'local' ? descriptor.root : null,
@@ -52,6 +58,9 @@ async function getState(req, res, ctx, url) {
       kind: f.kind,
       untracked: Boolean(f.untracked),
       comments: counts[f.path] || 0,
+      fingerprint: f.fingerprint || null,
+      // A mark made against another version of this file's diff no longer counts.
+      viewed: isViewed(viewed[f.path], modeKey, f.fingerprint),
     })),
     // Comments can outlive the diff they were written against; surface them
     // so nothing silently disappears from the UI.

@@ -1882,6 +1882,279 @@ async function main() {
   const gCleared = await call(`/api/comments/clear-all?${cleanQ}`, json('POST', { confirm: true }));
   eq(gCleared.body.removed, 4, '«Очистить всё» удаляет и общие комментарии');
 
+  // ------------------------------------------------ просмотренные файлы
+  console.log('\nпросмотренные файлы: отметка живёт, пока не изменился дифф файла');
+  const viewedRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-viewed-'));
+  git(['init', '-q', '-b', 'main'], viewedRepo);
+  git(['config', 'user.email', 'smoke@example.com'], viewedRepo);
+  git(['config', 'user.name', 'Smoke Test'], viewedRepo);
+  git(['config', 'commit.gpgsign', 'false'], viewedRepo);
+  git(['config', 'core.autocrlf', 'false'], viewedRepo);
+  write(viewedRepo, '.gitignore', '.local-review/\n');
+  write(viewedRepo, 'one.txt', 'one\n');
+  write(viewedRepo, 'two.txt', 'two\n');
+  write(viewedRepo, 'gone.txt', 'gone\n');
+  git(['add', '-A'], viewedRepo);
+  git(['commit', '-q', '-m', 'init'], viewedRepo);
+  write(viewedRepo, 'one.txt', 'one\nedited\n');
+  write(viewedRepo, 'two.txt', 'two\nedited\n');
+  write(viewedRepo, 'new file.txt', 'новый\n');
+  fs.unlinkSync(path.join(viewedRepo, 'gone.txt'));
+
+  const vQ = (mode, base) =>
+    `source=local&root=${encodeURIComponent(viewedRepo)}&mode=${mode || 'working'}` + (base ? `&base=${base}` : '');
+  const vStoreFile = path.join(viewedRepo, '.local-review', 'comments.json');
+  const vState = async (mode, base) => {
+    const res = await call(`/api/state?${vQ(mode, base)}`);
+    return new Map(res.body.files.map((f) => [f.path, f]));
+  };
+  const mark = (file, fingerprint, viewed, mode, base) =>
+    call(`/api/viewed?${vQ(mode, base)}`, json('POST', { file, fingerprint, viewed }));
+
+  const v0 = await vState();
+  ok(
+    [...v0.values()].every((f) => typeof f.fingerprint === 'string' && f.fingerprint.length > 0 && f.viewed === false),
+    'у каждого файла есть fingerprint, и сначала ни один не просмотрен',
+    JSON.stringify([...v0.values()])
+  );
+  ok(new Set([...v0.values()].map((f) => f.fingerprint)).size === v0.size, 'у разных файлов разные fingerprint');
+  const v0again = await vState();
+  ok(
+    [...v0.keys()].every((p) => v0again.get(p).fingerprint === v0.get(p).fingerprint),
+    'fingerprint стабилен, пока ничего не менялось'
+  );
+
+  for (const p of ['one.txt', 'two.txt', 'new file.txt', 'gone.txt']) {
+    const res = await mark(p, v0.get(p).fingerprint, true);
+    ok(res.status === 200 && res.body.viewed === true, `отметка «просмотрено»: ${p}`, JSON.stringify(res.body));
+  }
+  const v1 = await vState();
+  ok([...v1.values()].every((f) => f.viewed === true), 'после отметки все четыре файла просмотрены');
+  ok(!fs.existsSync(path.join(viewedRepo, 'pr')), 'отметки не создают ничего, кроме файла хранилища');
+  const vOnDisk = JSON.parse(fs.readFileSync(vStoreFile, 'utf8'));
+  eq(vOnDisk.version, 1, 'просмотренные файлы не меняют версию формата хранилища');
+  eq(
+    ((vOnDisk.viewed['one.txt'] || {})['mode:working'] || {}).fingerprint,
+    v0.get('one.txt').fingerprint,
+    'в хранилище лежит fingerprint отмеченного диффа, в корзине своего режима'
+  );
+
+  // Invalidation: new content in one file resets only that file.
+  write(viewedRepo, 'one.txt', 'one\nedited again\n');
+  write(viewedRepo, 'new file.txt', 'новый\nи ещё строка\n');
+  const v2 = await vState();
+  ok(v2.get('one.txt').viewed === false, 'изменённый файл снова не просмотрен');
+  ok(v2.get('one.txt').fingerprint !== v0.get('one.txt').fingerprint, 'у изменённого файла новый fingerprint');
+  ok(v2.get('new file.txt').viewed === false, 'изменённый untracked-файл снова не просмотрен');
+  ok(v2.get('two.txt').viewed === true && v2.get('gone.txt').viewed === true, 'соседние неизменённые файлы остаются просмотренными');
+
+  // A new commit under an unchanged worktree file: the new side is the same
+  // blob, but HEAD (the old side) moved, so the diff is a different one.
+  write(viewedRepo, 'two.txt', 'two\ncommitted in between\n');
+  git(['add', 'two.txt'], viewedRepo);
+  git(['commit', '-q', '-m', 'commit two'], viewedRepo);
+  write(viewedRepo, 'two.txt', 'two\nedited\n');
+  const v3 = await vState();
+  ok(v3.get('two.txt').viewed === false, 'новый коммит под тем же содержимым файла сбрасывает отметку (сменилась старая сторона)');
+
+  // Staging alone does not change the file's content: working and staged agree.
+  const oneWorking = (await vState()).get('one.txt');
+  await mark('one.txt', oneWorking.fingerprint, true);
+  git(['add', 'one.txt'], viewedRepo);
+  ok((await vState()).get('one.txt').viewed === true, 'git add без правок не сбрасывает отметку в working');
+  ok(
+    (await vState('staged')).get('one.txt').viewed === false,
+    'staged — отдельный режим: отметка из working туда не переносится'
+  );
+
+  const unmark = await mark('one.txt', undefined, false);
+  ok(unmark.status === 200 && unmark.body.viewed === false, 'снятие отметки -> 200');
+  ok((await vState()).get('one.txt').viewed === false, 'после снятия отметки файл не просмотрен');
+  ok((await mark('one.txt', undefined, false)).status === 200, 'повторное снятие отметки — не ошибка');
+
+  for (const [body, label] of [
+    [{ viewed: true, fingerprint: 'x' }, 'без file'],
+    [{ file: 'one.txt', viewed: true }, 'viewed:true без fingerprint'],
+    [{ file: 'one.txt', viewed: 'true', fingerprint: 'x' }, 'viewed:"true" (строка)'],
+    [{ file: '__proto__', viewed: true, fingerprint: 'x' }, 'file = __proto__'],
+  ]) {
+    const res = await call(`/api/viewed?${vQ()}`, json('POST', body));
+    ok(res.status === 400, `POST /api/viewed ${label} -> 400`, JSON.stringify(res.body));
+  }
+
+  // Comments and viewed marks share the store but not a lifecycle.
+  await call(`/api/comments?${vQ()}`, json('POST', { file: 'two.txt', startLine: 1, endLine: 1, text: 'к two' }));
+  const twoNow = (await vState()).get('two.txt');
+  await mark('two.txt', twoNow.fingerprint, true);
+  await call(`/api/comments/clear-all?${vQ()}`, json('POST', { confirm: true }));
+  ok((await vState()).get('two.txt').viewed === true, '«Очистить всё» удаляет комментарии, но не отметки');
+  eq(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).comments, [], 'комментарии из хранилища удалены');
+
+  // --- отметки живут отдельно в каждом режиме -----------------------------
+  console.log('\nпросмотренные файлы: у каждого режима свои отметки');
+  const twoWorking = (await vState()).get('two.txt');
+  await mark('two.txt', twoWorking.fingerprint, true);
+  ok((await vState()).get('two.txt').viewed === true, 'two.txt отмечен в working');
+  const twoBase = (await vState('base', 'HEAD~1')).get('two.txt');
+  ok(twoBase.viewed === false, 'в режиме base тот же файл ещё не просмотрен');
+  ok(twoBase.fingerprint !== twoWorking.fingerprint, 'у base свой дифф — свой fingerprint');
+
+  await mark('two.txt', twoBase.fingerprint, true, 'base', 'HEAD~1');
+  ok((await vState('base', 'HEAD~1')).get('two.txt').viewed === true, 'отметка в base поставлена');
+  ok((await vState()).get('two.txt').viewed === true, 'отметка в base не стёрла отметку в working');
+  eq(
+    Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']).sort(),
+    ['mode:base:HEAD~1', 'mode:working'],
+    'в хранилище у файла по корзине на режим'
+  );
+
+  await mark('two.txt', undefined, false, 'base', 'HEAD~1');
+  ok((await vState('base', 'HEAD~1')).get('two.txt').viewed === false, 'снятие отметки в base сработало');
+  ok((await vState()).get('two.txt').viewed === true, 'снятие отметки в base не трогает working');
+  await mark('two.txt', undefined, false);
+
+  // --- base: у каждой базы свой вид, но пустая база = ветка по умолчанию ---
+  console.log('\nпросмотренные файлы: у режима base ключ по разрешённой базе');
+  // Без base сервер берёт ветку по умолчанию этого репозитория; он же
+  // возвращает её в ответе, так что явное имя должно давать тот же ключ.
+  const defaultBaseState = await call(`/api/state?${vQ('base')}`);
+  const defaultBaseRev = defaultBaseState.body.base;
+  ok(Boolean(defaultBaseRev), 'сервер сообщает, какую базу выбрал сам', JSON.stringify(defaultBaseRev));
+  const twoDefaultBase = new Map(defaultBaseState.body.files.map((f) => [f.path, f])).get('two.txt');
+
+  await mark('two.txt', twoDefaultBase.fingerprint, true, 'base');
+  ok((await vState('base')).get('two.txt').viewed === true, 'отметка при пустой базе поставлена');
+  ok(
+    (await vState('base', defaultBaseRev)).get('two.txt').viewed === true,
+    'та же отметка видна, если ту же базу назвать явно'
+  );
+  eq(
+    Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']),
+    [`mode:base:${defaultBaseRev}`],
+    'ключ вида содержит разрешённую базу, а не пустую строку'
+  );
+
+  const twoOtherBase = (await vState('base', 'HEAD~1')).get('two.txt');
+  ok(twoOtherBase.viewed === false, 'под другой базой файл ещё не просмотрен');
+  await mark('two.txt', twoOtherBase.fingerprint, true, 'base', 'HEAD~1');
+  ok((await vState('base', 'HEAD~1')).get('two.txt').viewed === true, 'отметка под другой базой поставлена');
+  ok((await vState('base')).get('two.txt').viewed === true, 'отметка под другой базой не стёрла отметку базы по умолчанию');
+  ok(
+    (await vState('base', defaultBaseRev)).get('two.txt').viewed === true &&
+      (await vState('base', 'HEAD~1')).get('two.txt').viewed === true,
+    'обе отметки живы при переключении баз туда-обратно'
+  );
+  eq(
+    Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']).sort(),
+    [`mode:base:${defaultBaseRev}`, 'mode:base:HEAD~1'].sort(),
+    'в хранилище по корзине на базу'
+  );
+
+  await mark('two.txt', undefined, false, 'base');
+  ok((await vState('base', defaultBaseRev)).get('two.txt').viewed === false, 'снятие при пустой базе сняло и явную');
+  await mark('two.txt', undefined, false, 'base', 'HEAD~1');
+
+  // --- отметки из старого, «плоского» формата хранилища --------------------
+  console.log('\nпросмотренные файлы: миграция старого формата');
+  const legacyTwo = (await vState()).get('two.txt');
+  const legacyStoreData = JSON.parse(fs.readFileSync(vStoreFile, 'utf8'));
+  legacyStoreData.viewed = { 'two.txt': { fingerprint: legacyTwo.fingerprint, viewedAt: '2026-09-01T00:00:00.000Z' } };
+  fs.writeFileSync(vStoreFile, JSON.stringify(legacyStoreData, null, 2), 'utf8');
+  ok((await vState()).get('two.txt').viewed === true, 'старая отметка действует в режиме, где её ставили');
+  ok(
+    (await vState('base', 'HEAD~1')).get('two.txt').viewed === false,
+    'старая отметка не действует в режиме с другим диффом'
+  );
+  const legacyBase = (await vState('base', 'HEAD~1')).get('two.txt');
+  await mark('two.txt', legacyBase.fingerprint, true, 'base', 'HEAD~1');
+  const afterLegacyMark = JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt'];
+  eq(
+    Object.keys(afterLegacyMark).sort(),
+    ['*', 'mode:base:HEAD~1'],
+    'старая отметка переехала в корзину «любой режим» и не потерялась'
+  );
+  ok((await vState()).get('two.txt').viewed === true, 'после отметки в base старая отметка в working жива');
+  eq(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).version, 1, 'миграция не меняет версию формата хранилища');
+  await mark('two.txt', undefined, false);
+  ok(
+    (await vState()).get('two.txt').viewed === false && (await vState('base', 'HEAD~1')).get('two.txt').viewed === true,
+    'снятие отметки в working убирает и старую отметку, но не отметку другого режима'
+  );
+  await mark('two.txt', undefined, false, 'base', 'HEAD~1');
+
+  const { fingerprintOf, isViewed, modeKeyOf } = require('./lib/viewed');
+  eq(modeKeyOf({ source: 'local', mode: 'working', base: '' }), 'mode:working', 'ключ режима working');
+  eq(modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main'), 'mode:base:main', 'ключ режима base — по разрешённой базе');
+  eq(
+    modeKeyOf({ source: 'local', mode: 'base', base: 'main' }, 'main'),
+    modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main'),
+    'пустая и явно названная база дают один ключ'
+  );
+  ok(
+    modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main') !==
+      modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'origin/production'),
+    'разные базы — разные ключи'
+  );
+  eq(modeKeyOf({ source: 'pr', number: 25 }), 'pr:all', 'ключ PR-а без диапазона');
+  eq(modeKeyOf({ source: 'local', mode: 'commits', from: 'a1', to: 'b2' }), 'commits:a1..b2', 'ключ диапазона коммитов');
+  ok(
+    modeKeyOf({ source: 'pr', number: 25, from: 'a1', to: 'b2' }) !== modeKeyOf({ source: 'pr', number: 25, from: 'a1', to: 'c3' }),
+    'разные диапазоны коммитов — разные ключи'
+  );
+  ok(isViewed({ 'mode:working': { fingerprint: 'a' } }, 'mode:working', 'a') === true, 'isViewed: отметка своего режима');
+  ok(isViewed({ 'mode:working': { fingerprint: 'a' } }, 'mode:base', 'a') === false, 'isViewed: отметка чужого режима не считается');
+  ok(isViewed({ '*': { fingerprint: 'a' } }, 'mode:base', 'a') === true, 'isViewed: отметка из старого формата подходит любому режиму');
+
+  ok(isViewed({ 'mode:working': { fingerprint: 'a' } }, 'mode:working', 'b') === false, 'isViewed: другой fingerprint -> не просмотрен');
+  ok(
+    isViewed(undefined, 'mode:working', 'a') === false && isViewed({ 'mode:working': { fingerprint: '' } }, 'mode:working', '') === false,
+    'isViewed: нет отметки или пустой fingerprint -> не просмотрен'
+  );
+  ok(fingerprintOf(['M', null, 'a']) === fingerprintOf(['M', null, 'a']), 'fingerprintOf детерминирован');
+  ok(fingerprintOf(['M', 'a', null]) !== fingerprintOf(['M', null, 'a']), 'fingerprintOf различает поля по позиции');
+
+  console.log('\nпросмотренные файлы в PR-режиме');
+  const PR_VIEWED_DIFF = (appIndex, appLine) =>
+    [
+      'diff --git a/src/app.js b/src/app.js',
+      `index ${appIndex} 100644`,
+      '--- a/src/app.js',
+      '+++ b/src/app.js',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      `+${appLine}`,
+      'diff --git a/assets/logo.bin b/assets/logo.bin',
+      'index 3333333..4444444 100644',
+      'Binary files a/assets/logo.bin and b/assets/logo.bin differ',
+      '',
+    ].join('\n');
+  const prViewedQ = 'source=pr&host=github.com&owner=o&repo=r&number=40';
+  const prViewedFixture = (diffText) =>
+    ghFixtures({ [viewKeyFor(40)]: prView(40), 'pr diff 40 --repo o/r': { code: 0, stdout: diffText } }, home);
+  const prFiles = async () =>
+    new Map((await call(`/api/state?${prViewedQ}&fresh=1`)).body.files.map((f) => [f.path, f]));
+
+  prViewedFixture(PR_VIEWED_DIFF('1111111..2222222', 'new'));
+  const p0 = await prFiles();
+  for (const p of ['src/app.js', 'assets/logo.bin']) {
+    await call(`/api/viewed?${prViewedQ}`, json('POST', { file: p, fingerprint: p0.get(p).fingerprint, viewed: true }));
+  }
+  const p1 = await prFiles();
+  ok(p1.get('src/app.js').viewed && p1.get('assets/logo.bin').viewed, 'PR: отмеченные файлы просмотрены');
+  ok(
+    JSON.parse(fs.readFileSync(path.join(home, 'pr', 'github.com__o__r__40.json'), 'utf8')).viewed['src/app.js'],
+    'PR: отметка лежит в PR-хранилище'
+  );
+
+  // The author pushes: app.js gets a new line, the binary is untouched.
+  prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer'));
+  const p2 = await prFiles();
+  ok(p2.get('src/app.js').viewed === false, 'PR: после нового пуша изменённый файл снова не просмотрен');
+  ok(p2.get('assets/logo.bin').viewed === true, 'PR: неизменённый в пуше файл остаётся просмотренным');
+  // Same patch text, different blob (e.g. a binary replaced): header decides.
+  prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer').replace('3333333..4444444', '3333333..6666666'));
+  ok((await prFiles()).get('assets/logo.bin').viewed === false, 'PR: бинарный файл с новым blob снова не просмотрен');
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);
@@ -1891,6 +2164,7 @@ async function main() {
   }
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(clean, { recursive: true, force: true });
+  fs.rmSync(viewedRepo, { recursive: true, force: true });
   fs.rmSync(notRepo, { recursive: true, force: true });
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });

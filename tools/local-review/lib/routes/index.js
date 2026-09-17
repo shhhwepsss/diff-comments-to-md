@@ -9,6 +9,7 @@ const session = require('./session');
 const settings = require('./settings');
 const ghRoutes = require('./gh');
 const commitsRoutes = require('./commits');
+const viewedRoutes = require('./viewed');
 
 const ROUTES = [
   { method: 'GET', path: '/api/state', handle: state.getState },
@@ -18,6 +19,7 @@ const ROUTES = [
   { method: 'POST', path: '/api/comments', handle: comments.create },
   // Must be matched before the /api/comments/:id pattern below.
   { method: 'POST', path: '/api/comments/clear-all', handle: comments.clearAll },
+  { method: 'POST', path: '/api/viewed', handle: viewedRoutes.set },
   { method: 'GET', path: '/api/export/text', handle: exportRoutes.exportText },
   { method: 'POST', path: '/api/export/file', handle: exportRoutes.exportFile },
   { method: 'GET', path: '/api/browse', handle: browseRoutes.browse },

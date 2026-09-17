@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Button, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
+import { Button, Checkbox, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, CodeIcon, CommentIcon, EyeClosedIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
@@ -303,6 +303,23 @@ export function DiffPane() {
         >
           Комментарий к файлу
         </Button>
+        {fileEntry && (
+          <label
+            className={'rv-file-header__viewed' + (fileEntry.viewed ? ' is-viewed' : '')}
+            title={
+              fileEntry.fingerprint
+                ? 'Отметка снимется сама, если дифф файла изменится'
+                : 'Для этого файла нельзя запомнить версию диффа'
+            }
+          >
+            <Checkbox
+              checked={fileEntry.viewed}
+              disabled={!fileEntry.fingerprint}
+              onChange={(e) => void review.setFileViewed(activeFile, e.target.checked)}
+            />
+            Просмотрено
+          </label>
+        )}
       </div>
 
       {(unanchored.length > 0 || (editorHere && !editorInDoc)) && (
