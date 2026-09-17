@@ -5,6 +5,7 @@ import {
   CopyIcon,
   DeviceDesktopIcon,
   DownloadIcon,
+  GearIcon,
   MarkGithubIcon,
   MoonIcon,
   RepoIcon,
@@ -13,10 +14,9 @@ import {
   TrashIcon,
 } from '@primer/octicons-react';
 import type { Mode } from '../api/types';
-import type { Route } from '../lib/hash';
+import { settingsHash, type Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
 import { useOptionalReview } from '../review/ReviewContext';
-import { CopyPromptSettings } from './CopyPromptSettings';
 import { GeneralComments } from './GeneralComments';
 import './header.css';
 
@@ -121,7 +121,6 @@ export function AppHeader({ route, theme, onTheme }: Props) {
             <Button size="small" leadingVisual={CopyIcon} disabled={noComments} onClick={() => void review.copyAll()}>
               Скопировать всё
             </Button>
-            <CopyPromptSettings />
             <Button size="small" leadingVisual={DownloadIcon} disabled={noComments} onClick={() => void review.exportMd()}>
               Сгенерировать .md
             </Button>
@@ -129,6 +128,20 @@ export function AppHeader({ route, theme, onTheme }: Props) {
               Очистить всё
             </Button>
           </div>
+        )}
+
+        {/* Settings is a page, not a dialog: the gear is on every screen and
+            carries the current address so «Назад» comes back here. */}
+        {route.screen !== 'settings' && (
+          <IconButton
+            icon={GearIcon}
+            aria-label="Настройки"
+            size="small"
+            variant="invisible"
+            onClick={() => {
+              window.location.hash = settingsHash(window.location.hash);
+            }}
+          />
         )}
 
         <ActionMenu>
