@@ -3,6 +3,7 @@
 const { ghJson } = require('./gh');
 
 const STATES = new Set(['open', 'closed', 'merged', 'all']);
+const AUTHORS = new Set(['all', 'mine']);
 
 function bad(message) {
   const err = new Error(message);
@@ -17,6 +18,13 @@ function normalizeState(state) {
   return s;
 }
 
+/** all = everyone's PRs; mine = only PRs opened by the logged-in gh user (@me). */
+function normalizeAuthor(author) {
+  const a = author || 'all';
+  if (!AUTHORS.has(a)) throw bad(`Неизвестный фильтр автора: ${a} (all | mine)`);
+  return a;
+}
+
 function splitRepo(repo) {
   const m = /^([^/\s]+)\/([^/\s]+)$/.exec(String(repo).trim());
   if (!m) throw bad('Репозиторий указывается как owner/repo');
@@ -28,9 +36,15 @@ function splitRepo(repo) {
  * with it we get the branch name, without it gh search prs does not expose
  * headRefName at all (checked on gh 2.96.0), so it stays null until the PR
  * is opened.
+ *
+ * The author filter goes to gh as a flag, so the user's free-text query is
+ * passed through untouched. It only changes the repository listing: without a
+ * repository "all" cannot mean all of GitHub, so the global search is always
+ * scoped to the user's own PRs, whatever the filter says.
  */
-async function searchPrs({ repo, q, state, limit }) {
+async function searchPrs({ repo, q, state, limit, author }) {
   const s = normalizeState(state);
+  const who = normalizeAuthor(author);
   const n = Math.min(Math.max(Number(limit) || 30, 1), 100);
   const query = (q || '').trim();
 
@@ -47,6 +61,7 @@ async function searchPrs({ repo, q, state, limit }) {
       'number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft',
     ];
     if (query) args.push('--search', query);
+    if (who === 'mine') args.push('--author', '@me');
     args.push('--state', s);
     const rows = await ghJson(args);
     return {
@@ -131,4 +146,4 @@ async function resolvePr({ host, owner, repo, number }) {
   };
 }
 
-module.exports = { searchPrs, resolvePr, normalizeState, splitRepo };
+module.exports = { searchPrs, resolvePr, normalizeState, normalizeAuthor, splitRepo };

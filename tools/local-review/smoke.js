@@ -876,6 +876,9 @@ async function main() {
     'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
   const searchKey =
     'search prs --author=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
+  // Фильтр «мои» (#19): автор уходит в gh флагом @me, а не в текст запроса.
+  const listMineKey =
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --search fix --author @me --state open';
   ghFixtures(
     {
       [listKey]: {
@@ -895,6 +898,22 @@ async function main() {
         ]),
       },
       [searchKey]: { code: 0, stdout: '[]' },
+      [listMineKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          {
+            number: 26,
+            title: 'Мой PR',
+            author: { login: 'octocat' },
+            headRefName: 'fix/mine',
+            baseRefName: 'main',
+            state: 'OPEN',
+            isDraft: false,
+            updatedAt: '2026-09-02T10:00:00Z',
+            url: 'https://github.com/o/r/pull/26',
+          },
+        ]),
+      },
     },
     home
   );
@@ -919,6 +938,38 @@ async function main() {
     'пустой результат глобального поиска -> пустой список, не ошибка'
   );
   eq(globalSearch.body.mode, 'global', 'режим поиска — global');
+
+  const explicitAll = await call('/api/pr/search?repo=o/r&state=open&author=all');
+  eq(
+    explicitAll.body.items && explicitAll.body.items.map((i) => i.number).join(','),
+    '25',
+    'author=all в репозитории — тот же список, что и без фильтра'
+  );
+
+  const repoMine = await call('/api/pr/search?repo=o/r&q=fix&state=open&author=mine');
+  ok(
+    repoMine.status === 200 && repoMine.body.items.length === 1 && repoMine.body.items[0].number === 26,
+    'author=mine в репозитории -> gh pr list --author @me',
+    JSON.stringify(repoMine.body)
+  );
+
+  // Глобальный поиск и так только по своим PR-ам: оба значения фильтра дают
+  // ту же команду gh (иначе фикстура ответила бы ошибкой 98).
+  for (const who of ['all', 'mine']) {
+    const globalWho = await call(`/api/pr/search?state=open&author=${who}`);
+    ok(
+      globalWho.status === 200 && globalWho.body.mode === 'global',
+      `author=${who} без репозитория -> gh search prs --author=@me`,
+      JSON.stringify(globalWho.body)
+    );
+  }
+
+  const badAuthor = await call('/api/pr/search?repo=o/r&author=someone');
+  ok(
+    badAuthor.status === 400 && /all \| mine/.test(badAuthor.body.error),
+    'неизвестный фильтр автора -> 400 с подсказкой',
+    JSON.stringify(badAuthor.body)
+  );
 
   const badRepo = await call('/api/pr/search?repo=просто-строка');
   ok(
