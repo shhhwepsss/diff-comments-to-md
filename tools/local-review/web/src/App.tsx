@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
-import { api } from './api/client';
+import { api, failureMessage } from './api/client';
 import { hashFor, routeFromHash } from './lib/hash';
+import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
@@ -25,6 +26,7 @@ export function App({ theme, onTheme }: Props) {
   // wins over the remembered one: running the command inside a folder is an
   // explicit choice, the saved session is only the previous run's leftover.
   const [booted, setBooted] = useState(Boolean(hash));
+  const toast = useToast();
 
   useEffect(() => {
     if (booted) return;
@@ -36,14 +38,17 @@ export function App({ theme, onTheme }: Props) {
           window.location.hash = hashFor(s.defaults) || hashFor(s.last) || '#/local';
         }
       })
-      .catch(() => {
-        if (alive && !window.location.hash) window.location.hash = '#/local';
+      .catch((e) => {
+        if (!alive) return;
+        // Still usable without a session: fall back to the picker, but say why.
+        toast(failureMessage('Не удалось загрузить сессию', e), true);
+        if (!window.location.hash) window.location.hash = '#/local';
       })
       .finally(() => alive && setBooted(true));
     return () => {
       alive = false;
     };
-  }, [booted]);
+  }, [booted, toast]);
 
   if (!booted) {
     return (
