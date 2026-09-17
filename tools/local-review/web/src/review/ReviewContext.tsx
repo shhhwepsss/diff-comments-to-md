@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
+import { api, errorMessage, failureMessage } from '../api/client';
 import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
@@ -143,7 +143,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   const activeFileRef = useRef<string | null>(null);
   activeFileRef.current = activeFile;
 
-  const fail = useCallback((e: unknown) => toast(e instanceof Error ? e.message : String(e), true), [toast]);
+  const fail = useCallback((e: unknown) => toast(errorMessage(e), true), [toast]);
 
   const loadDiff = useCallback(
     async (d: Descriptor, path: string, orphan: boolean, fresh: boolean) => {
@@ -277,7 +277,9 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   useEffect(() => {
     void load(descriptor, null, false);
     // Remember the choice so an empty hash after a restart lands here again.
-    api.saveSession(descriptor).catch(() => {});
+    // The review works without it, but a silent failure means the next launch
+    // quietly opens something else.
+    api.saveSession(descriptor).catch((e) => toast(failureMessage('Не удалось запомнить сессию', e), true));
     // Mode/base changes reload through their own actions, keeping the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -400,10 +402,10 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         await api.setViewed(descriptor, path, entry.fingerprint, viewed);
       } catch (e) {
         setState((s) => (s ? withViewed(s, path, !viewed) : s));
-        fail(e);
+        toast(failureMessage(viewed ? 'Не удалось отметить файл просмотренным' : 'Не удалось снять отметку', e), true);
       }
     },
-    [descriptor, fail, state],
+    [descriptor, state, toast],
   );
 
   const openEditor = useCallback((anchor: EditorAnchor) => {

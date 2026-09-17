@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Banner, Button, FormControl, Heading, Select, Spinner, TextInput } from '@primer/react';
 import { GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon, MarkGithubIcon, SearchIcon } from '@primer/octicons-react';
-import { api } from '../api/client';
+import { api, errorMessage, failureMessage } from '../api/client';
 import type { GhStatus, PrItem } from '../api/types';
 import { formatDate } from '../lib/format';
 import { hashFor } from '../lib/hash';
+import { useToast } from '../lib/toast';
 import './picker.css';
 
 function PrIcon({ item }: { item: PrItem }) {
@@ -28,6 +29,7 @@ export function PrSearch() {
   const [query, setQuery] = useState('');
   const [prState, setPrState] = useState('open');
   const [result, setResult] = useState<Result>({ kind: 'idle' });
+  const toast = useToast();
 
   const search = useCallback(async (params: { repo: string; q: string; state: string }) => {
     setResult({ kind: 'loading' });
@@ -49,11 +51,17 @@ export function PrSearch() {
         setStatus(s);
         if (s.installed && s.authenticated) void search({ repo: '', q: '', state: 'open' });
       })
-      .catch((e) => alive && setStatus({ installed: false, authenticated: false, login: null, host: null, message: String(e?.message || e) }));
+      .catch((e) => {
+        if (!alive) return;
+        // A missing gh is a 200 with installed: false; landing here means the
+        // request itself failed. The screen still shows it, the toast says why.
+        setStatus({ installed: false, authenticated: false, login: null, host: null, message: errorMessage(e) });
+        toast(failureMessage('Не удалось проверить gh', e), true);
+      });
     return () => {
       alive = false;
     };
-  }, [search]);
+  }, [search, toast]);
 
   const ready = Boolean(status?.installed && status?.authenticated);
   const run = () => void search({ repo, q: query, state: prState });

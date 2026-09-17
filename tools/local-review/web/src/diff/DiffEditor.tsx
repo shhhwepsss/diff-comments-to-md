@@ -4,6 +4,8 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { unifiedMergeView } from '@codemirror/merge';
 import type { Hunk } from '../api/types';
+import { failureMessage } from '../api/client';
+import { useToast } from '../lib/toast';
 import { orderedRange, type LineRange } from './lineMap';
 import { finalEmptyLine } from './cm/lastLine';
 import { gitDiffOverride, unpairedAddedLines } from './gitDiff';
@@ -43,6 +45,7 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
   const view = useRef<EditorView | null>(null);
   const registry = useMemo(() => new PortalRegistry(), []);
   const wrapConf = useMemo(() => new Compartment(), []);
+  const toast = useToast();
 
   // Latest props for handlers created once per view.
   const latest = useRef({ blocks, selected, wrap, onSelectLines });
@@ -151,9 +154,17 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
     // The language package is a lazy chunk; wait for it (cached after the
     // first file of a kind) so deleted lines get highlighted too.
     let alive = true;
-    void languageFor(path).then((lang) => {
-      if (alive) create(lang ?? []);
-    });
+    void languageFor(path).then(
+      (lang) => {
+        if (alive) create(lang ?? []);
+      },
+      (e) => {
+        if (!alive) return;
+        // The chunk didn't load: the diff is still readable, just plain.
+        create([]);
+        toast(failureMessage('Подсветка синтаксиса не загрузилась', e), true);
+      },
+    );
 
     return () => {
       alive = false;
@@ -164,7 +175,7 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast]);
 
   const blocksKey = blocks.map((b) => `${b.key}@${b.line}`).join('|');
   useEffect(() => {

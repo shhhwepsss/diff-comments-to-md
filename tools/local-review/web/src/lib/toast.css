@@ -1,9 +1,18 @@
-.rv-toast {
+.rv-toasts {
   position: fixed;
-  left: 50%;
+  left: 0;
+  right: 0;
   bottom: var(--base-size-24);
-  transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--base-size-8);
+  pointer-events: none;
+}
+
+.rv-toast {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: var(--base-size-8);
@@ -36,9 +45,14 @@
   overflow-wrap: anywhere;
 }
 
+.rv-toast__count {
+  color: var(--fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes rv-toast-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translateY(8px);
   }
 }
