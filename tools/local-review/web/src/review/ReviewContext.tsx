@@ -55,6 +55,11 @@ export type Review = {
   commitsMode: boolean;
   /** commitsMode is on but the branch has no commits to show. */
   commitsEmpty: boolean;
+  /**
+   * The commit history is being fetched: set from the moment the «Коммиты»
+   * tab is clicked (before the descriptor switches) until the list arrives.
+   */
+  commitsLoading: boolean;
   /** Selected commit(s) on the rail, as indices into `commits`; null outside commits mode. */
   commitSel: CommitSelection | null;
   /** Comments whose commit context falls outside the current selection. */
@@ -126,6 +131,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   // In-memory only, per the approved design: a page reload brings the banner back.
   const [dirtyNoticeDismissed, setDirtyNoticeDismissed] = useState(false);
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
+  const [commitsLoading, setCommitsLoading] = useState(false);
 
   // Responses for a file or descriptor the user already left must not land.
   const diffSeq = useRef(0);
@@ -218,9 +224,11 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         return true;
       };
       setLoading(true);
+      setCommitsLoading(true);
       try {
         const data = await api.commits(current, fresh);
         if (stale()) return;
+        setCommitsLoading(false);
         const list = data.commits || [];
         setCommits(list);
         setCommitsTruncated(Boolean(data.truncated));
@@ -256,6 +264,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       } catch (e) {
         if (stale()) return;
         setLoading(false);
+        setCommitsLoading(false);
         fail(e);
       }
     },
@@ -304,6 +313,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         return;
       }
       commitsSeq.current += 1;
+      setCommitsLoading(false);
       const wasCommits = descriptorRef.current.source === 'local' && descriptorRef.current.mode === 'commits';
       updateLocal((d) => (d.mode === mode ? null : { ...d, mode, from: undefined, to: undefined }));
       if (wasCommits) setCommitSel(null);
@@ -329,6 +339,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         return;
       }
       commitsSeq.current += 1;
+      setCommitsLoading(false);
       if (!current.from && !current.to) return; // already showing "Все изменения"
       const next: Descriptor = { ...current, from: undefined, to: undefined };
       descriptorRef.current = next;
@@ -345,6 +356,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       const count = commits.length;
       if (!count) return;
       commitsSeq.current += 1;
+      setCommitsLoading(false);
       const resolved: CommitSelection = { anchor: clampIndex(count, anchor), head: clampIndex(count, head) };
       setCommitSel(resolved);
       const l = commits[selLo(resolved)];
@@ -532,6 +544,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       dirtyNoticeDismissed,
       commitsMode,
       commitsEmpty,
+      commitsLoading,
       commitSel,
       outsideCount,
       reload,
@@ -573,6 +586,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       dirtyNoticeDismissed,
       commitsMode,
       commitsEmpty,
+      commitsLoading,
       commitSel,
       outsideCount,
       reload,

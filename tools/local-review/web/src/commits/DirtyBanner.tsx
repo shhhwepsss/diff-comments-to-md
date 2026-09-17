@@ -1,5 +1,7 @@
-import { Banner } from '@primer/react';
+import { IconButton } from '@primer/react';
+import { XIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
+import './commits.css';
 
 /**
  * Warns that the working tree has uncommitted changes while in commits mode:
@@ -14,11 +16,12 @@ export function DirtyBanner() {
   if (descriptor.source !== 'local' || !commitsMode || !dirty.dirty || dirtyNoticeDismissed) return null;
 
   return (
-    <Banner
-      variant="warning"
-      title="Есть незакоммиченные изменения"
-      description={`Файлов: ${dirty.files}. Дифф по коммитам их не показывает, поэтому картина может быть неполной. Переключитесь на «Рабочая копия», чтобы увидеть их.`}
-      onDismiss={review.dismissDirtyNotice}
-    />
+    <div className="cr-notice" role="status">
+      <div className="cr-notice__body">
+        <strong>Есть незакоммиченные изменения</strong> — файлов: {dirty.files}. Дифф по коммитам их не показывает, поэтому
+        картина может быть неполной. Переключитесь на «Рабочая копия», чтобы увидеть их.
+      </div>
+      <IconButton icon={XIcon} aria-label="Скрыть плашку" size="small" variant="invisible" onClick={review.dismissDirtyNotice} />
+    </div>
   );
 }

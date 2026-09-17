@@ -1,17 +1,10 @@
-import type { Comment, Commit } from '../api/types';
+import type { Comment } from '../api/types';
 
 /** Short human date for a commit dot / drawer row, e.g. "12 мар, 14:05". */
 export function formatCommitWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
-/** Full text for a commit's tooltip: subject, body, then the meta line. */
-export function commitTooltip(c: Commit): string {
-  const meta = `${c.short} · ${c.author} · ${formatCommitWhen(c.date)}`;
-  const head = `${c.subject}\n\n${meta}`;
-  return c.body ? `${c.subject}\n\n${c.body}\n\n${meta}` : head;
 }
 
 export function formatDate(iso: string | null | undefined): string {

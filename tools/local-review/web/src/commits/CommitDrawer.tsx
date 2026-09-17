@@ -1,6 +1,6 @@
 import { useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
-import { Dialog, IconButton } from '@primer/react';
-import { CopyIcon, LockIcon, UnlockIcon } from '@primer/octicons-react';
+import { Button, Dialog } from '@primer/react';
+import { LockIcon, UnlockIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { useToast } from '../lib/toast';
 import { copyToClipboard } from '../lib/clipboard';
@@ -15,10 +15,10 @@ type Props = {
 };
 
 /**
- * "Вся история" side sheet: the full commit list. Opens locked — rows are
- * plain text (selectable/copyable, clicks do nothing) — with a button to
- * unlock and pick a commit/range directly from the list, same rules as the
- * rail (including Shift+click to extend from the current anchor).
+ * "Вся история" side sheet: the full commit list, newest first like git log.
+ * Opens locked — rows are plain text (selectable/copyable, clicks do nothing) —
+ * with a button to unlock and pick a commit/range directly from the list, same
+ * rules as the rail (including Shift+click to extend from the current anchor).
  */
 export function CommitDrawer({ onClose, returnFocusRef }: Props) {
   const review = useReview();
@@ -45,67 +45,79 @@ export function CommitDrawer({ onClose, returnFocusRef }: Props) {
   if (commitsFallback) notes.push('точка ветвления не найдена — показаны последние коммиты HEAD');
   else if (commitsBase) notes.push(`от точки ветвления с ${commitsBase}`);
   if (commitsTruncated) notes.push('список обрезан — история длиннее лимита');
+  notes.push(locked ? 'Режим чтения: текст можно выделять и копировать. Снимите замок, чтобы менять выбор.' : 'Клик — один коммит · Shift+клик — диапазон от текущего якоря');
 
   const lo = commitSel ? selLo(commitSel) : -1;
   const hi = commitSel ? selHi(commitSel) : -1;
+  const order = commits.map((_, i) => i).reverse();
 
   return (
-    <Dialog title={`История ветки · ${commits.length}`} position="right" width="large" returnFocusRef={returnFocusRef} onClose={onClose}>
+    <Dialog
+      title={`История ветки · ${commits.length} коммитов`}
+      position="right"
+      width="large"
+      returnFocusRef={returnFocusRef}
+      onClose={onClose}
+    >
       <div className="cr-drawer-body">
         <div className="cr-drawer-toolbar">
-          <IconButton
-            icon={locked ? LockIcon : UnlockIcon}
-            aria-label={locked ? 'Разблокировать выбор' : 'Заблокировать выбор'}
-            aria-pressed={locked}
-            title={locked ? 'Клик по строке ничего не меняет — текст можно выделять и копировать' : 'Клик по строке меняет выбор'}
+          <Button
+            className="cr-lock"
             size="small"
+            variant="invisible"
+            leadingVisual={locked ? LockIcon : UnlockIcon}
+            aria-pressed={locked}
+            title={locked ? 'Выбор заблокирован: клик по коммиту ничего не меняет' : 'Выбор разблокирован: клик по коммиту меняет диапазон'}
             onClick={() => setLocked((v) => !v)}
-          />
-          <span className="rv-hint">{locked ? 'Выбор заблокирован' : 'Выбор разблокирован'}</span>
+          >
+            {locked ? 'выбор заблокирован' : 'выбор разблокирован'}
+          </Button>
         </div>
 
         <ul className="cr-drawer-list">
-          {commits.map((c, i) => {
-            const on = i >= lo && i <= hi;
-            const meta = (
-              <div className="d-meta">
-                <span>{`${c.short} · ${c.author} · ${formatCommitWhen(c.date)}`}</span>
-                <IconButton
-                  icon={CopyIcon}
-                  aria-label="Скопировать хеш"
-                  title="Скопировать хеш"
-                  size="small"
-                  variant="invisible"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void copyHash(c.sha, c.short);
-                  }}
-                />
-              </div>
-            );
+          {order.map((i) => {
+            const c = commits[i];
             const content: ReactNode = (
               <>
-                <span className="d-subj">{c.subject || '(без сообщения)'}</span>
-                {c.body && <span className="d-body">{c.body}</span>}
-                {meta}
+                <span className="di-dot" />
+                <span>
+                  <span className="di-subj">{c.subject || '(без сообщения)'}</span>
+                  {c.body && <p className="di-body">{c.body}</p>}
+                  <span className="di-meta">{`${c.short} · ${i + 1} · ${c.author} · ${formatCommitWhen(c.date)}`}</span>
+                </span>
               </>
             );
-            const className = `drawer-item${locked ? ' locked' : ''}${on ? ' on' : ''}`;
+            const attrs = {
+              className: `drawer-item${locked ? ' locked' : ''}`,
+              'data-sel': i >= lo && i <= hi ? '1' : '0',
+              'data-merge': c.merge ? '1' : undefined,
+            };
             return (
-              <li key={c.sha}>
+              <li key={c.sha} className="di-row">
                 {locked ? (
-                  <div className={className}>{content}</div>
+                  <div {...attrs}>{content}</div>
                 ) : (
-                  <button type="button" className={className} onClick={(e: MouseEvent) => onRowClick(i, e.shiftKey)}>
+                  <button type="button" {...attrs} onClick={(e: MouseEvent) => onRowClick(i, e.shiftKey)}>
                     {content}
                   </button>
                 )}
+                {/* A sibling of the row, not nested in it: nested buttons are
+                    invalid and would swallow the commit click. */}
+                <button
+                  type="button"
+                  className="cr-copy"
+                  title={`Скопировать ${c.short}`}
+                  aria-label={`Скопировать хеш ${c.short}`}
+                  onClick={() => void copyHash(c.sha, c.short)}
+                >
+                  &#10697;
+                </button>
               </li>
             );
           })}
         </ul>
 
-        <div className="cr-drawer-foot">{notes.join(' · ') || 'вся история ветки'}</div>
+        <div className="cr-drawer-foot">{notes.join(' · ')}</div>
       </div>
     </Dialog>
   );

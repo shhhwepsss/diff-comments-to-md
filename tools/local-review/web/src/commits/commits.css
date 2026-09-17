@@ -1,11 +1,12 @@
-/* Commits mode: history rail, "Вся история" drawer. Primer tokens only —
-   nothing here is a hard-coded color, so it follows the active theme. */
+/* Commits mode: history rail, hover card, "Вся история" drawer, dirty notice.
+   Layout follows the approved prototype (PR #4 artifact); colors are Primer
+   tokens only, so it follows the active light/dark theme. */
 
 .rail-wrap {
   flex: none;
-  background: var(--bgColor-inset);
+  background: var(--bgColor-default);
   border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
-  padding: var(--base-size-8) var(--base-size-16) var(--base-size-6);
+  padding: 10px var(--base-size-16) 12px;
 }
 
 .rail-head {
@@ -14,7 +15,14 @@
   justify-content: space-between;
   gap: var(--base-size-12);
   flex-wrap: wrap;
-  margin-bottom: var(--base-size-4);
+  margin-bottom: 2px;
+}
+
+.rail-head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  min-width: 0;
 }
 
 .rail-title {
@@ -30,12 +38,12 @@
 
 .rail-cmd {
   font-family: var(--fontStack-monospace);
-  font-size: var(--text-body-size-small);
+  font-size: 12px;
   color: var(--fgColor-muted);
-  background: var(--bgColor-muted);
+  background: var(--bgColor-inset);
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-radius: var(--borderRadius-medium);
-  padding: 2px var(--base-size-8);
+  padding: 3px var(--base-size-8);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -46,7 +54,8 @@
 .rail {
   overflow-x: auto;
   overflow-y: hidden;
-  padding: var(--base-size-6) 0 2px;
+  /* room above the dots for the commit index */
+  padding: 22px 6px 4px;
 }
 
 .rail:focus {
@@ -63,20 +72,18 @@
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 0;
-  min-width: min-content;
-  padding: 0 4px 4px;
+  min-width: max-content;
   touch-action: none;
 }
 
-/* pointer-events: none — otherwise the line intercepts the drag and the
-   geometric hit-test in CommitRail.indexFromX stops working. */
+/* The line runs through the dot centres (dot margin-top 5 + radius 7 = 12).
+   pointer-events: none — otherwise it intercepts the drag and the geometric
+   hit-test in CommitRail.indexFromX stops working. */
 .rail-line,
 .rail-line-sel {
   position: absolute;
-  top: 10px;
+  top: 11px;
   height: 2px;
-  margin-top: -1px;
   pointer-events: none;
 }
 
@@ -88,19 +95,25 @@
 
 .rail-line-sel {
   background: var(--fgColor-accent);
+  transition: left 0.12s ease, width 0.12s ease;
 }
 
+/* Must match DOT_WIDTH in CommitRail.tsx. */
 .commit {
   position: relative;
   flex: 0 0 auto;
-  width: 150px;
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 4px;
   background: none;
   border: 0;
-  padding: 0 4px;
-  cursor: pointer;
-  color: inherit;
+  color: var(--fgColor-muted);
   font: inherit;
-  text-align: center;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
@@ -110,114 +123,237 @@
   outline: none;
 }
 
-.commit:focus-visible .dot {
-  box-shadow: 0 0 0 3px var(--focus-outlineColor, var(--fgColor-accent));
+.commit .idx {
+  position: absolute;
+  top: -14px;
+  font-size: 10px;
+  color: var(--fgColor-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.dot {
-  display: block;
+.commit .dot {
+  position: relative;
   width: 14px;
   height: 14px;
-  margin: 3px auto 6px;
-  border-radius: 999px;
-  border: 2px solid var(--fgColor-muted);
+  margin-top: 5px;
+  border-radius: 50%;
+  border: 2px solid var(--borderColor-emphasis, var(--fgColor-muted));
   background: var(--bgColor-default);
   box-sizing: border-box;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
 
 .commit:hover .dot {
-  border-color: var(--fgColor-default);
+  border-color: var(--fgColor-accent);
+  transform: scale(1.15);
 }
 
-.commit.on .dot {
+.commit[data-state='in'] .dot {
   background: var(--fgColor-accent);
   border-color: var(--fgColor-accent);
 }
 
-/* Merge commit: a dot with a gap, like a distinct history-graph node. */
+.commit[data-state='edge'] .dot {
+  background: var(--fgColor-accent);
+  border-color: var(--fgColor-accent);
+  box-shadow: 0 0 0 4px var(--bgColor-accent-muted);
+}
+
+/* dragging: the range being drawn, before it is committed */
+.commit[data-preview='1'] .dot {
+  border-color: var(--fgColor-accent);
+  background: var(--bgColor-accent-muted);
+}
+
+/* merge commit: a dot with a gap, like a branch being merged in */
 .commit[data-merge='1'] .dot {
   border-style: double;
   border-width: 4px;
 }
 
+.commit[data-state='in'],
+.commit[data-state='edge'],
+.commit[data-preview='1'] {
+  color: var(--fgColor-default);
+}
+
+/* Exactly two lines, then an ellipsis: the rail must not jump with message
+   length. Two lines are always reserved so every sha sits on the same row. */
 .commit .subj {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: var(--text-body-size-small);
-  line-height: 1.3;
-  color: var(--fgColor-muted);
-  /* Two lines always reserved, so every commit's sha sits on the same row. */
+  max-width: 88px;
   min-height: calc(2 * 1.3em);
-  word-break: break-word;
-}
-
-.commit.on .subj {
-  color: var(--fgColor-default);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .commit .sha {
-  display: block;
-  margin-top: 3px;
   font-family: var(--fontStack-monospace);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+/* ---------- skeleton while the history loads ---------- */
+.rail.is-skeleton .commit {
+  cursor: default;
+}
+
+.rail.is-skeleton .dot {
+  border-color: var(--borderColor-default);
+  animation: cr-pulse 1.2s ease-in-out infinite;
+}
+
+.sk-line {
+  display: block;
+  width: 72px;
+  height: 8px;
+  margin: 3px auto 0;
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted);
+  animation: cr-pulse 1.2s ease-in-out infinite;
+}
+
+.sk-line.short {
+  width: 48px;
+}
+
+.sk-line.tiny {
+  width: 44px;
+  height: 7px;
+}
+
+@keyframes cr-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ---------- hover card ---------- */
+.cr-hovercard {
+  position: fixed;
+  z-index: 20;
+  max-width: 340px;
+  padding: var(--base-size-8) 10px;
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-large, 8px);
+  box-shadow: var(--shadow-floating-medium);
+  pointer-events: none;
+}
+
+.cr-hovercard .hc-subj {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: var(--base-text-weight-semibold, 600);
+  line-height: 1.35;
+}
+
+.cr-hovercard .hc-body {
+  max-height: 88px;
+  margin: 0 0 4px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fgColor-muted);
+  white-space: pre-wrap;
+}
+
+/* meta is always the last line of the card */
+.cr-hovercard .hc-meta {
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
   color: var(--fgColor-muted);
 }
 
-/* ---------- selected-commit summary ---------- */
+.cr-hovercard .hc-sha {
+  color: var(--fgColor-accent);
+}
+
+/* ---------- selection summary under the rail ---------- */
 .rail-sum {
   display: flex;
   align-items: baseline;
   gap: var(--base-size-8);
-  margin-top: var(--base-size-4);
+  margin-top: var(--base-size-8);
   min-width: 0;
+  font-size: 12px;
 }
 
 .rail-sum .sum-sha {
+  flex: none;
   font-family: var(--fontStack-monospace);
-  font-size: var(--text-body-size-small);
   color: var(--fgColor-accent);
-  flex: 0 0 auto;
 }
 
 .rail-sum .sum-subj {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-body-size-medium);
 }
 
-.rail-sum .link {
+.cr-copy {
   flex: none;
+  padding: 3px 6px;
   background: none;
-  border: 0;
-  padding: 0;
-  color: var(--fgColor-accent);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 5px;
+  color: var(--fgColor-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
   cursor: pointer;
-  font-size: var(--text-body-size-small);
 }
 
-.rail-sum .link:hover {
-  text-decoration: underline;
+.cr-copy:hover {
+  color: var(--fgColor-default);
+  border-color: var(--fgColor-accent);
 }
 
 .rail-hint {
-  margin: var(--base-size-4) 0 0;
-  font-size: var(--text-body-size-small);
+  margin: var(--base-size-8) 0 0;
+  font-size: 12px;
   color: var(--fgColor-muted);
 }
 
 .rail-hint kbd {
-  font-family: var(--fontStack-monospace);
-  border: var(--borderWidth-thin) solid var(--borderColor-default);
-  border-radius: 4px;
   padding: 0 4px;
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  color: var(--fgColor-default);
   background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- uncommitted-changes notice ---------- */
+.cr-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px var(--base-size-16) 0;
+  padding: var(--base-size-8) 10px;
+  background: var(--bgColor-attention-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-attention-muted);
+  border-left: 3px solid var(--borderColor-attention-emphasis);
+  border-radius: var(--borderRadius-medium);
+  font-size: 12px;
+}
+
+.cr-notice strong {
+  color: var(--fgColor-attention);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.cr-notice__body {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---------- "Вся история" drawer ---------- */
@@ -232,71 +368,132 @@
   display: flex;
   align-items: center;
   gap: var(--base-size-8);
-  padding: var(--base-size-8) var(--base-size-16);
-  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+  padding: var(--base-size-8) 12px;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+.cr-lock[aria-pressed='false'] {
+  color: var(--fgColor-accent);
 }
 
 .cr-drawer-list {
-  list-style: none;
-  margin: 0;
-  padding: var(--base-size-4) 0;
-  overflow: auto;
   flex: 1 1 auto;
+  margin: 0;
+  padding: 6px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.di-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-right: 10px;
+}
+
+.di-row .cr-copy {
+  margin-top: var(--base-size-8);
+  opacity: 0;
+}
+
+.di-row:hover .cr-copy,
+.di-row .cr-copy:focus-visible {
+  opacity: 1;
 }
 
 .drawer-item {
-  display: block;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: var(--base-size-8);
   width: 100%;
+  padding: 7px 12px;
   text-align: left;
   background: none;
   border: 0;
   border-left: 2px solid transparent;
-  color: inherit;
+  color: var(--fgColor-default);
   font: inherit;
-  padding: var(--base-size-6) var(--base-size-16);
   cursor: pointer;
 }
 
-.drawer-item.locked {
-  cursor: default;
-  user-select: text;
-}
-
-.drawer-item:not(.locked):hover {
+.drawer-item:hover {
   background: var(--bgColor-muted);
 }
 
-.drawer-item.on {
+/* locked drawer is a reading mode: rows don't click, text selects */
+.drawer-item.locked {
+  cursor: text;
+  user-select: text;
+}
+
+.drawer-item.locked:hover {
+  background: none;
+}
+
+.drawer-item[data-sel='1'] {
   background: var(--bgColor-muted);
   border-left-color: var(--fgColor-accent);
 }
 
-.drawer-item .d-subj {
-  display: block;
-  word-break: break-word;
+.drawer-item .di-dot {
+  width: 10px;
+  height: 10px;
+  margin: 4px auto 0;
+  border-radius: 50%;
+  border: 2px solid var(--borderColor-emphasis, var(--fgColor-muted));
+  box-sizing: border-box;
 }
 
-.drawer-item .d-body {
-  display: block;
-  margin-top: 3px;
-  font-size: var(--text-body-size-small);
+.drawer-item[data-merge='1'] .di-dot {
+  border-style: double;
+  border-width: 3px;
+}
+
+.drawer-item[data-sel='1'] .di-dot {
+  background: var(--fgColor-accent);
+  border-color: var(--fgColor-accent);
+}
+
+.drawer-item .di-subj {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.drawer-item .di-body {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
   color: var(--fgColor-muted);
   white-space: pre-wrap;
 }
 
-.drawer-item .d-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--base-size-8);
-  margin-top: var(--base-size-4);
+/* sha, author and date are always the bottom line */
+.drawer-item .di-meta {
+  display: block;
+  margin-top: 3px;
   font-family: var(--fontStack-monospace);
-  font-size: var(--text-body-size-small);
+  font-size: 11px;
   color: var(--fgColor-muted);
 }
 
 .cr-drawer-foot {
+  padding: var(--base-size-8) 12px;
   border-top: var(--borderWidth-thin) solid var(--borderColor-default);
-  padding: var(--base-size-8) var(--base-size-16);
-  font-size: var(--text-body-size-small);
+  font-size: 11px;
   color: var(--fgColor-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commit .dot,
+  .rail-line-sel {
+    transition: none;
+  }
+
+  .rail.is-skeleton .dot,
+  .sk-line {
+    animation: none;
+  }
 }

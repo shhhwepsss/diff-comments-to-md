@@ -48,7 +48,7 @@ function PrHeader({ pr }: { pr: PrMeta }) {
 }
 
 export function DiffScreen() {
-  const { state, loading, loadError, reload, commitsEmpty } = useReview();
+  const { state, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
 
   if (!state && loading) {
     return (
@@ -98,11 +98,22 @@ export function DiffScreen() {
       <CommitRail />
       <DirtyBanner />
       {state.pr && <PrHeader pr={state.pr} />}
-      <div className="rv-diff-layout">
+      {/* A reload keeps the previous files on screen; dim them and say what is
+          loading, so a fresh commit pick doesn't look like it did nothing. */}
+      <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar />
         <main className="rv-content">
           <DiffPane />
         </main>
+        {loading && (
+          <div className="rv-reload" role="status">
+            <div className="rv-reload__bar" />
+            <div className="rv-reload__chip">
+              <Spinner size="small" />
+              {commitsLoading ? 'Загружаю историю коммитов…' : commitsMode ? 'Загружаю дифф выбранных коммитов…' : 'Загружаю дифф…'}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
