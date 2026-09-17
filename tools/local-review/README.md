@@ -142,12 +142,22 @@ review                 # или: review --staged / review --base origin/main
 
 ## Разработка фронта
 
+Нужны два процесса, каждый в своём терминале:
+
 ```bash
-node review.js --no-open   # API на :4321
-npm run dev                # Vite на http://127.0.0.1:5173 с прокси /api → :4321
+npm run dev:server         # API на :4321, отдаёт репозиторий, из которого запущен
+npm run dev:frontend       # Vite на http://127.0.0.1:5173, /api проксируется на :4321
 npm run typecheck          # tsc
 npm run test:web           # vitest: чистая логика диффа, дерева файлов, роутинга
 ```
+
+`dev:frontend` сам API не поднимает: без `dev:server` запросы к `/api` падают.
+Прокси всегда идёт на `:4321` — если там уже работает другой `review`
+(например, глобально установленный), страница получит его API, а
+`dev:server` молча займёт следующий свободный порт. Перед запуском останови
+чужой `review`. `dev:server` при старте проверяет, что UI собран
+(`tools/local-review/dist/`); после `npm install` он уже собран, иначе —
+`npm run build` один раз.
 
 Исходники — `tools/local-review/web/src/`: `screens/` (экраны), `diff/` (дерево
 файлов, панель диффа, комментарии), `diff/cm/` (расширения CodeMirror: номера

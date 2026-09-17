@@ -12,7 +12,8 @@
   "scripts": {
     "review": "node review.js",
     "review:staged": "node review.js --staged",
-    "dev": "vite --config tools/local-review/web/vite.config.mts",
+    "dev:server": "node review.js --no-open --port 4321",
+    "dev:frontend": "vite --config tools/local-review/web/vite.config.mts",
     "build": "vite build --config tools/local-review/web/vite.config.mts",
     "prepare": "npm run build",
     "typecheck": "tsc -p tools/local-review/web",
