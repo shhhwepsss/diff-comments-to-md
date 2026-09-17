@@ -158,6 +158,12 @@ export type SessionResponse = {
   storedPrs: number;
 };
 
+/** ~/.local-review/settings.json. */
+export type Settings = {
+  /** Put before the comments by «Скопировать всё»; empty = comments only. */
+  copyPrompt: string;
+};
+
 export type GhStatus = {
   installed: boolean;
   authenticated: boolean;

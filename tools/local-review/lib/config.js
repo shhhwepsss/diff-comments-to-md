@@ -16,6 +16,10 @@ function statePath() {
   return path.join(homeDir(), 'state.json');
 }
 
+function settingsPath() {
+  return path.join(homeDir(), 'settings.json');
+}
+
 function exportsDir() {
   return path.join(homeDir(), 'exports');
 }
@@ -40,12 +44,36 @@ function readState() {
   }
 }
 
-function writeState(next) {
+function writeJsonAtomic(file, value) {
   ensureHome();
-  const tmp = `${statePath()}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
-  fs.renameSync(tmp, statePath());
-  return next;
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
+  return value;
+}
+
+function writeState(next) {
+  return writeJsonAtomic(statePath(), next);
+}
+
+/**
+ * User preferences, kept apart from state.json: that file is rewritten on
+ * every screen change from whatever readState() returns, so a key it does not
+ * know about would be dropped. `copyPrompt` is free text that «Скопировать
+ * всё» puts before the comments; empty means "copy the comments only".
+ */
+function readSettings() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
+    return { copyPrompt: parsed && typeof parsed.copyPrompt === 'string' ? parsed.copyPrompt : '' };
+  } catch {
+    // Same as state.json: missing or corrupt just means defaults.
+    return { copyPrompt: '' };
+  }
+}
+
+function writeSettings(patch) {
+  return writeJsonAtomic(settingsPath(), { ...readSettings(), ...patch });
 }
 
 function setLast(descriptor) {
@@ -73,10 +101,13 @@ function countStoredPrs() {
 module.exports = {
   homeDir,
   statePath,
+  settingsPath,
   exportsDir,
   ensureHome,
   readState,
   writeState,
+  readSettings,
+  writeSettings,
   setLast,
   addRecent,
   countStoredPrs,

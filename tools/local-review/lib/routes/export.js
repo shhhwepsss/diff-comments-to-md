@@ -1,7 +1,7 @@
 'use strict';
 
 const { sendJson, sendText } = require('../http');
-const { renderMarkdown, writeMarkdownFile } = require('../export');
+const { renderMarkdown, withPrompt, writeMarkdownFile } = require('../export');
 const { parseDescriptor } = require('../descriptor');
 const { storeFor } = require('../stores/factory');
 const config = require('../config');
@@ -9,9 +9,12 @@ const config = require('../config');
 // Export is read-only with respect to the comment store: it never adds,
 // changes or removes a comment.
 
+// Only the clipboard text carries the user's copy prompt; the .md file stays
+// the comments alone.
 async function exportText(req, res, ctx, url) {
   const store = storeFor(parseDescriptor(url, ctx.defaults), ctx.homeDir);
-  sendText(res, 200, renderMarkdown(store.all()), 'text/markdown; charset=utf-8');
+  const text = withPrompt(config.readSettings().copyPrompt, renderMarkdown(store.all()));
+  sendText(res, 200, text, 'text/markdown; charset=utf-8');
 }
 
 async function exportFile(req, res, ctx, url) {

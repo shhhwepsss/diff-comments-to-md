@@ -76,6 +76,18 @@ function renderMarkdown(comments) {
   return sections.join('\n\n') + '\n';
 }
 
+/**
+ * The clipboard text: the user's copy prompt (readSettings in lib/config.js),
+ * a blank line, then the comments. The prompt goes first because it is an
+ * instruction to whoever reads the comments ("fix the review below"). A blank
+ * prompt changes nothing: the text stays byte-for-byte renderMarkdown's.
+ */
+function withPrompt(prompt, markdown) {
+  const head = String(prompt || '').replace(/\r\n/g, '\n').trim();
+  if (!head) return markdown;
+  return markdown ? `${head}\n\n${markdown}` : `${head}\n`;
+}
+
 function stamp(date) {
   const d = date || new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -93,4 +105,4 @@ function writeMarkdownFile(repoRoot, comments, date) {
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, commitLineOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, renderMarkdown, withPrompt, writeMarkdownFile, sortComments, stamp };
