@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, commitsListDescriptor } from '../api/client';
+import { api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
 import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
@@ -154,7 +154,7 @@ export function ReviewProvider({
   const stateRef = useRef<StateResponse | null>(null);
   stateRef.current = state;
 
-  const fail = useCallback((e: unknown) => toast(e instanceof Error ? e.message : String(e), true), [toast]);
+  const fail = useCallback((e: unknown) => toast(errorMessage(e), true), [toast]);
 
   const loadDiff = useCallback(
     async (d: Descriptor, path: string, orphan: boolean, fresh: boolean) => {
@@ -296,7 +296,9 @@ export function ReviewProvider({
     if (isCommitsMode(descriptor)) void enterCommitsMode(false, { from: descriptor.from, to: descriptor.to, file: initialFile });
     else void load(descriptor, initialFile, false);
     // Remember the choice so an empty hash after a restart lands here again.
-    api.saveSession(descriptor).catch(() => {});
+    // The review works without it, but a silent failure means the next launch
+    // quietly opens something else.
+    api.saveSession(descriptor).catch((e) => toast(failureMessage('Не удалось запомнить сессию', e), true));
     // Mode/base changes reload through their own actions, keeping the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
