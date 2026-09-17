@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
 import { api, failureMessage } from './api/client';
-import { hashFor, routeFromHash } from './lib/hash';
+import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { ReviewProvider } from './review/ReviewContext';
@@ -9,6 +9,7 @@ import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
 import { LocalPicker } from './screens/LocalPicker';
 import { PrSearch } from './screens/PrSearch';
+import { SettingsScreen } from './settings/SettingsScreen';
 
 function subscribeHash(cb: () => void) {
   window.addEventListener('hashchange', cb);
@@ -35,14 +36,14 @@ export function App({ theme, onTheme }: Props) {
       .session()
       .then((s) => {
         if (alive && !window.location.hash) {
-          window.location.hash = hashFor(s.defaults) || hashFor(s.last) || '#/local';
+          window.location.hash = hashFor(s.defaults) || hashFor(s.last) || DEFAULT_HASH;
         }
       })
       .catch((e) => {
         if (!alive) return;
         // Still usable without a session: fall back to the picker, but say why.
         toast(failureMessage('Не удалось загрузить сессию', e), true);
-        if (!window.location.hash) window.location.hash = '#/local';
+        if (!window.location.hash) window.location.hash = DEFAULT_HASH;
       })
       .finally(() => alive && setBooted(true));
     return () => {
@@ -64,7 +65,15 @@ export function App({ theme, onTheme }: Props) {
     <div className="rv-app">
       <AppHeader route={route} theme={theme} onTheme={onTheme} />
       <div className="rv-main">
-        {route.screen === 'diff' ? <DiffScreen /> : route.screen === 'pr' ? <PrSearch /> : <LocalPicker />}
+        {route.screen === 'diff' ? (
+          <DiffScreen />
+        ) : route.screen === 'settings' ? (
+          <SettingsScreen back={route.back} />
+        ) : route.screen === 'pr' ? (
+          <PrSearch />
+        ) : (
+          <LocalPicker />
+        )}
       </div>
     </div>
   );

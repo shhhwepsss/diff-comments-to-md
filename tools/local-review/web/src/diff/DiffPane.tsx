@@ -1,7 +1,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, CodeIcon, CommentIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
+import { AlertIcon, CodeIcon, CommentIcon, EyeClosedIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { failureMessage } from '../api/client';
 import { useToast } from '../lib/toast';
@@ -11,6 +11,7 @@ import { CommentCard, CommentForm } from './CommentCard';
 import type { Block } from './cm/blocks';
 import { stripFinalNewline, type LineRange } from './lineMap';
 import { markdownToRender } from './markdownFile';
+import { setFileHidden, visibleComments, type HiddenFiles } from './hiddenComments';
 import { insideSelection } from '../review/commitSelection';
 import './diff.css';
 
@@ -110,12 +111,16 @@ export function DiffPane() {
   const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
   // Files whose remote images the reviewer chose to load (not persisted).
   const [externalImageFiles, setExternalImageFiles] = useState<Record<string, boolean>>({});
+  // Files whose comments the reviewer hid with the header button (not persisted).
+  const [hiddenFiles, setHiddenFiles] = useState<HiddenFiles>({});
   // Unsaved text of the open new-comment form. Switching Код/Просмотр remounts
   // the form; it resumes from here. Gone once the form closes (save, cancel,
   // another file), and on reload.
   const draft = useRef('');
   useEffect(() => {
     if (!editor) draft.current = '';
+    // A new comment on a hidden file would vanish on save; show the file's comments again.
+    if (editor) setHiddenFiles((prev) => setFileHidden(prev, editor.file, false));
   }, [editor]);
 
   const toggleWrap = (next: boolean) => {
@@ -142,17 +147,19 @@ export function DiffPane() {
   const docLines = showsEditor && diff ? lineCount(diff.newText ?? '') : 0;
   const markdown = diff && activeFile ? markdownToRender(activeFile, diff) : null;
   const rendered = Boolean(markdown && activeFile && renderedFiles[activeFile]);
+  const commentsHidden = Boolean(activeFile && hiddenFiles[activeFile]);
 
   // Comments whose line is not in the document go above it, with file-level ones.
+  // Hidden comments leave both places; the header still counts them.
   const { anchored, unanchored } = useMemo(() => {
     const a: Comment[] = [];
     const u: Comment[] = [];
-    for (const c of fileComments) {
+    for (const c of visibleComments(fileComments, commentsHidden, editingId)) {
       if (showsEditor && c.endLine !== null && c.endLine >= 1 && c.endLine <= docLines) a.push(c);
       else u.push(c);
     }
     return { anchored: a, unanchored: u };
-  }, [fileComments, showsEditor, docLines]);
+  }, [fileComments, commentsHidden, editingId, showsEditor, docLines]);
 
   const editorHere = editor && editor.file === activeFile ? editor : null;
   const editorLine = editorHere && editorHere.start !== null && editorHere.end !== null ? Math.max(editorHere.start, editorHere.end) : null;
@@ -257,6 +264,16 @@ export function DiffPane() {
           </span>
         )}
         <div className="rv-file-header__spacer" />
+        {fileComments.length > 0 && (
+          <Button
+            size="small"
+            leadingVisual={commentsHidden ? EyeIcon : EyeClosedIcon}
+            aria-pressed={commentsHidden}
+            onClick={() => setHiddenFiles((prev) => setFileHidden(prev, activeFile, !commentsHidden))}
+          >
+            {commentsHidden ? 'Показать комментарии' : 'Скрыть комментарии'}
+          </Button>
+        )}
         {markdown && (
           <SegmentedControl
             aria-label="Вид файла"

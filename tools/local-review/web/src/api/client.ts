@@ -8,6 +8,7 @@ import type {
   GhStatus,
   PrSearchResponse,
   SessionResponse,
+  Settings,
   StateResponse,
   ValidateResponse,
 } from './types';
@@ -144,6 +145,9 @@ export const api = {
   session: () => request<SessionResponse>('/api/session'),
   saveSession: (descriptor: Descriptor) =>
     request<{ ok: true; gitignore?: { changed: boolean } }>('/api/session', jsonBody('POST', { descriptor })),
+
+  settings: () => request<Settings>('/api/settings'),
+  saveSettings: (patch: Partial<Settings>) => request<Settings>('/api/settings', jsonBody('PUT', patch)),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   searchPrs: (params: { repo?: string; q?: string; state: string }) => {
