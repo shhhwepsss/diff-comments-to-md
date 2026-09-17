@@ -77,6 +77,14 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   padding: var(--base-size-8) var(--base-size-4);
 }
 
+/* File items are <a href> (middle click opens a new tab); keep them looking like tree rows. */
+.rv-tree-link,
+.rv-tree-link:hover {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
 .rv-sidebar__empty {
   padding: var(--base-size-16);
   text-align: center;
