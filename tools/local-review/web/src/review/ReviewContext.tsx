@@ -4,7 +4,7 @@ import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescr
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
-import { descriptorFromHash, fileHashFor, hashFor } from '../lib/hash';
+import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
 import {
   clampIndex,
@@ -12,6 +12,7 @@ import {
   defaultSelection,
   expandToComments,
   outsideComments,
+  selectionForRange,
   selHi,
   selLo,
   type CommitSelection,
@@ -149,6 +150,9 @@ export function ReviewProvider({
   const commitsSeq = useRef(0);
   const activeFileRef = useRef<string | null>(null);
   activeFileRef.current = activeFile;
+  // Back/Forward needs the file list without re-subscribing on every load.
+  const stateRef = useRef<StateResponse | null>(null);
+  stateRef.current = state;
 
   const fail = useCallback((e: unknown) => toast(e instanceof Error ? e.message : String(e), true), [toast]);
 
@@ -217,12 +221,13 @@ export function ReviewProvider({
 
   /**
    * Enter (or refresh) the commits view: load the branch history first, pick
-   * the latest commit as the default selection, and only then point the
-   * descriptor at it and load /api/state + /api/diff. An empty history skips
-   * that last step entirely — /api/state is never called without a range.
+   * the selection — the range `desired` names (from the address), else the
+   * latest commit — and only then point the descriptor at it and load
+   * /api/state + /api/diff. An empty history skips that last step entirely —
+   * /api/state is never called without a range.
    */
   const enterCommitsMode = useCallback(
-    async (fresh: boolean) => {
+    async (fresh: boolean, desired?: { from?: string; to?: string; file?: string | null }) => {
       const seq = ++commitsSeq.current;
       const stateAtStart = stateSeq.current;
       const current = descriptorRef.current;
@@ -263,14 +268,17 @@ export function ReviewProvider({
           return;
         }
 
-        const sel = defaultSelection(list.length);
+        // A range out of the address wins; one whose commits are gone (rebase,
+        // trimmed history) quietly falls back to the latest commit.
+        const sel = selectionForRange(list, desired?.from, desired?.to) ?? defaultSelection(list.length);
         setCommitSel(sel);
-        const sha = list[sel.head].sha;
+        const from = list[selLo(sel)].sha;
+        const to = list[selHi(sel)].sha;
         const next: Descriptor =
-          current.source === 'local' ? { ...current, mode: 'commits', from: sha, to: sha } : { ...current, from: sha, to: sha };
+          current.source === 'local' ? { ...current, mode: 'commits', from, to } : { ...current, from, to };
         descriptorRef.current = next;
         setDescriptor(next);
-        await load(next, activeFileRef.current, fresh);
+        await load(next, desired && 'file' in desired ? desired.file ?? null : activeFileRef.current, fresh);
       } catch (e) {
         if (stale()) return;
         setLoading(false);
@@ -282,22 +290,27 @@ export function ReviewProvider({
   );
 
   useEffect(() => {
-    void load(descriptor, initialFile, false);
+    // An address that already asks for a commit range enters that view the
+    // long way: the rail needs its history, and /api/state needs a resolved
+    // range, so the range in the address can't just be loaded as a diff.
+    if (isCommitsMode(descriptor)) void enterCommitsMode(false, { from: descriptor.from, to: descriptor.to, file: initialFile });
+    else void load(descriptor, initialFile, false);
     // Remember the choice so an empty hash after a restart lands here again.
     api.saveSession(descriptor).catch(() => {});
     // Mode/base changes reload through their own actions, keeping the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mirror the open file into the address bar, so a reload or a copied link
-  // lands on it too. replaceState: picking a file is not a history step, and
-  // it fires no hashchange, so App does not re-route on its own write. Skipped
-  // once the hash already points elsewhere (the user is leaving this review).
+  // Mirror the open view — mode, base, commit range, file — into the address,
+  // so a reload or a link copied out of it reproduces the same diff.
+  // replaceState: only opening a file is a history step (see selectFile), and
+  // it fires no hashchange, so this never re-enters the Back/Forward handler.
+  // Skipped once the address points elsewhere (the user is leaving this review).
   useEffect(() => {
     if (!state) return;
     const current = window.location.hash;
     if (hashFor(descriptorFromHash(current)) !== hashFor(descriptor)) return;
-    const next = fileHashFor(descriptor, activeFile);
+    const next = viewHash(descriptor, activeFile);
     if (next !== current) window.history.replaceState(window.history.state, '', next);
   }, [state, descriptor, activeFile]);
 
@@ -401,13 +414,66 @@ export function ReviewProvider({
 
   const dismissDirtyNotice = useCallback(() => setDirtyNoticeDismissed(true), []);
 
+  /** Opens `path` without touching history — the Back/Forward handler's way in. */
+  const openFile = useCallback(
+    (d: Descriptor, path: string) => {
+      const orphan = !(stateRef.current?.files ?? []).some((f) => f.path === path);
+      void loadDiff(d, path, orphan, false);
+    },
+    [loadDiff],
+  );
+
   const selectFile = useCallback(
     (path: string) => {
-      const orphan = !(state?.files ?? []).some((f) => f.path === path);
-      void loadDiff(descriptor, path, orphan, false);
+      // Opening a file is the one history step in a review: Back returns to
+      // the file opened before it, and eventually out of the review. Mode,
+      // base and range edits only rewrite the entry (see the mirror effect),
+      // so Back never silently swaps the diff under the same address.
+      const next = viewHash(descriptorRef.current, path);
+      if (next && next !== window.location.hash) window.history.pushState(window.history.state, '', next);
+      openFile(descriptor, path);
     },
-    [descriptor, loadDiff, state],
+    [descriptor, openFile],
   );
+
+  /**
+   * Back/Forward (and a hand-edited address) re-open what the address names.
+   * Another review is App's business: the route changes, so it remounts us.
+   */
+  const restore = useCallback(
+    (hash: string) => {
+      const current = descriptorRef.current;
+      const nav = navigationFor(hash, current, activeFileRef.current);
+      if (nav.kind === 'ignore') return;
+      if (nav.kind === 'file') {
+        openFile(current, nav.file);
+        return;
+      }
+      const target = nav.descriptor;
+      commitsSeq.current += 1;
+      if (isCommitsMode(target)) {
+        void enterCommitsMode(false, { from: target.from, to: target.to, file: nav.file });
+        return;
+      }
+      setCommitsLoading(false);
+      setCommitSel(null);
+      descriptorRef.current = target;
+      setDescriptor(target);
+      void load(target, nav.file, false);
+    },
+    [enterCommitsMode, load, openFile],
+  );
+
+  useEffect(() => {
+    // popstate covers Back/Forward; hashchange covers an address typed by hand.
+    const onNavigate = () => restore(window.location.hash);
+    window.addEventListener('popstate', onNavigate);
+    window.addEventListener('hashchange', onNavigate);
+    return () => {
+      window.removeEventListener('popstate', onNavigate);
+      window.removeEventListener('hashchange', onNavigate);
+    };
+  }, [restore]);
 
   const openEditor = useCallback((anchor: EditorAnchor) => {
     setEditingId(null);

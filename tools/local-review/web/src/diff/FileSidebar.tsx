@@ -11,7 +11,7 @@ import {
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, type TreeNode } from './fileTree';
-import { fileHashFor, wantsNativeLink } from '../lib/hash';
+import { viewHash, wantsNativeLink } from '../lib/hash';
 
 function StatusIcon({ file }: { file: FileEntry }) {
   const kind = (file.status || 'M')[0];
@@ -50,7 +50,8 @@ export function FileSidebar() {
   };
 
   // Files are real links, so the browser's own gestures work: middle click
-  // and Ctrl/Cmd/Shift+click open the file in a new tab (the URL names it).
+  // and Ctrl/Cmd/Shift+click open the file in a new tab, on the same diff —
+  // the address carries the mode, base and commit range as well as the file.
   // A plain click, Enter or Space stays in this tab without navigating.
   const open = (path: string) => (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
     if (wantsNativeLink(event)) return;
@@ -70,7 +71,7 @@ export function FileSidebar() {
     ) : (
       <TreeView.Item
         as="a"
-        href={fileHashFor(review.descriptor, node.path)}
+        href={viewHash(review.descriptor, node.path)}
         className="rv-tree-link"
         id={`file:${node.path}`}
         key={`file:${node.path}`}
@@ -89,7 +90,7 @@ export function FileSidebar() {
   const renderOrphan = (f: OrphanFile) => (
     <TreeView.Item
       as="a"
-      href={fileHashFor(review.descriptor, f.path)}
+      href={viewHash(review.descriptor, f.path)}
       className="rv-tree-link"
       id={`orphan:${f.path}`}
       key={`orphan:${f.path}`}

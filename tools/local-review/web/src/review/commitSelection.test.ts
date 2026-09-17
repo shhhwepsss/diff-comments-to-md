@@ -12,6 +12,7 @@ import {
   insideSelection,
   keySelect,
   outsideComments,
+  selectionForRange,
   selHi,
   selLo,
   type CommitSelection,
@@ -31,6 +32,24 @@ function makeCommits(n = 10): Commit[] {
     root: i === 0,
   }));
 }
+
+describe('selectionForRange', () => {
+  it('reads a range out of the address, by full sha, short sha or prefix', () => {
+    const commits = makeCommits();
+    expect(selectionForRange(commits, 'sha2full', 'sha5full')).toEqual({ anchor: 2, head: 5 });
+    expect(selectionForRange(commits, 'c5', 'c2')).toEqual({ anchor: 2, head: 5 });
+    expect(selectionForRange(commits, 'sha3', 'sha3')).toEqual({ anchor: 3, head: 3 });
+  });
+
+  it('gives up (so the caller takes the latest commit) on a range that is gone or half-written', () => {
+    const commits = makeCommits();
+    expect(selectionForRange(commits, 'deadbeef', 'sha5full')).toBeNull();
+    expect(selectionForRange(commits, 'sha2full', 'deadbeef')).toBeNull();
+    expect(selectionForRange(commits, 'sha2full', undefined)).toBeNull();
+    expect(selectionForRange(commits, null, null)).toBeNull();
+    expect(selectionForRange([], 'sha2full', 'sha5full')).toBeNull();
+  });
+});
 
 describe('defaultSelection', () => {
   it('selects the latest commit by default', () => {

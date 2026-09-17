@@ -151,9 +151,12 @@ export function AppHeader({ route, theme, onTheme }: Props) {
       {local && review && (
         <div className="rv-header__row rv-header__row--sub">
           <RepoLabel root={local.root} />
-          <SegmentedControl aria-label="Режим диффа" size="small">
+          {/* onChange (not per-button onClick) keeps the control *controlled*:
+              Back/Forward changes the mode without a click, and an uncontrolled
+              SegmentedControl would keep lighting up the tab last clicked. */}
+          <SegmentedControl aria-label="Режим диффа" size="small" onChange={(i) => review.setMode(MODES[i].value)}>
             {MODES.map((m) => (
-              <SegmentedControl.Button key={m.value} selected={m.value === 'commits' ? commitsTab : !commitsTab && local.mode === m.value} onClick={() => review.setMode(m.value)}>
+              <SegmentedControl.Button key={m.value} selected={m.value === 'commits' ? commitsTab : !commitsTab && local.mode === m.value}>
                 {m.label}
               </SegmentedControl.Button>
             ))}
@@ -170,13 +173,9 @@ export function AppHeader({ route, theme, onTheme }: Props) {
               {review.descriptor.owner}/{review.descriptor.repo} #{review.descriptor.number}
             </span>
           </span>
-          <SegmentedControl aria-label="Режим диффа" size="small">
-            <SegmentedControl.Button selected={!commitsTab} onClick={() => review.setPrCommitsView(false)}>
-              Все изменения
-            </SegmentedControl.Button>
-            <SegmentedControl.Button selected={commitsTab} onClick={() => review.setPrCommitsView(true)}>
-              Коммиты
-            </SegmentedControl.Button>
+          <SegmentedControl aria-label="Режим диффа" size="small" onChange={(i) => review.setPrCommitsView(i === 1)}>
+            <SegmentedControl.Button selected={!commitsTab}>Все изменения</SegmentedControl.Button>
+            <SegmentedControl.Button selected={commitsTab}>Коммиты</SegmentedControl.Button>
           </SegmentedControl>
           <IconButton icon={SyncIcon} aria-label="Перечитать PR" size="small" onClick={review.reload} />
         </div>

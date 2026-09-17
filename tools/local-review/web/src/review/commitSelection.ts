@@ -91,6 +91,19 @@ export function indexOfSha(commits: Commit[], sha: string | null | undefined): n
 }
 
 /**
+ * The rail selection a `from`/`to` pair out of the address means. Null when
+ * either end is missing or no longer on the rail (a rebased or trimmed
+ * history): the caller then falls back to the default selection.
+ */
+export function selectionForRange(commits: Commit[], from?: string | null, to?: string | null): CommitSelection | null {
+  if (!from || !to) return null;
+  const a = indexOfSha(commits, from);
+  const b = indexOfSha(commits, to);
+  if (a === -1 || b === -1) return null;
+  return { anchor: Math.min(a, b), head: Math.max(a, b) };
+}
+
+/**
  * Whether a comment's commit context is covered by the current selection.
  * A comment with no context (or one written on the always-uncontexted
  * latest-commit-only selection) is always visible; one whose commit(s) no
