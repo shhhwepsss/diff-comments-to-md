@@ -6,6 +6,7 @@ const comments = require('./comments');
 const exportRoutes = require('./export');
 const browseRoutes = require('./browse');
 const session = require('./session');
+const settings = require('./settings');
 const ghRoutes = require('./gh');
 const commitsRoutes = require('./commits');
 
@@ -23,6 +24,8 @@ const ROUTES = [
   { method: 'GET', path: '/api/local/validate', handle: browseRoutes.validate },
   { method: 'GET', path: '/api/session', handle: session.get },
   { method: 'POST', path: '/api/session', handle: session.post },
+  { method: 'GET', path: '/api/settings', handle: settings.get },
+  { method: 'PUT', path: '/api/settings', handle: settings.put },
   { method: 'GET', path: '/api/gh/status', handle: ghRoutes.status },
   { method: 'GET', path: '/api/pr/search', handle: ghRoutes.search },
   { method: 'GET', path: '/api/pr/resolve', handle: ghRoutes.resolve },
