@@ -71,6 +71,17 @@ export function descriptorQuery(d: Descriptor | null, extra?: Record<string, str
   return p.toString();
 }
 
+/**
+ * The descriptor to ask /api/commits with. A local `mode=commits` without a
+ * range is a 400 on every endpoint (lib/descriptor.js requires both ends), and
+ * the address can name that view before a range exists — `?mode=commits` typed
+ * by hand, or a repository with no commits at all. The branch history does not
+ * depend on the range, so ask for it as a plain working descriptor.
+ */
+export function commitsListDescriptor(d: Descriptor): Descriptor {
+  return d.source === 'local' && d.mode === 'commits' && !(d.from && d.to) ? { ...d, mode: 'working' } : d;
+}
+
 export const api = {
   state: (d: Descriptor, fresh = false) =>
     request<StateResponse>(`/api/state?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),

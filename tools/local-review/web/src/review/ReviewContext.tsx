@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
+import { api, commitsListDescriptor } from '../api/client';
 import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
@@ -241,7 +241,7 @@ export function ReviewProvider({
       setLoading(true);
       setCommitsLoading(true);
       try {
-        const data = await api.commits(current, fresh);
+        const data = await api.commits(commitsListDescriptor(current), fresh);
         if (stale()) return;
         setCommitsLoading(false);
         const list = data.commits || [];
