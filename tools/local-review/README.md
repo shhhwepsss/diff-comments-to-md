@@ -313,7 +313,7 @@ DELETE: `?source=local&root=<путь>&mode=&base=` либо
 | GET | `/api/export/text?<дескриптор>` | markdown-текст для буфера |
 | POST | `/api/export/file?<дескриптор>` | записать `review-<...>.md` |
 | GET | `/api/gh/status` | установлен ли `gh`, залогинен ли, под кем |
-| GET | `/api/pr/search?repo=&q=&state=&author=&limit=` | поиск PR-ов (репозиторий необязателен; `author=all\|mine`, `mine` — только свои, без репозитория поиск всегда по своим) |
+| GET | `/api/pr/search?repo=&q=&state=&author=&limit=` | поиск PR-ов (репозиторий необязателен; `author=all\|mine`, `mine` — только свои, без репозитория `all` — все, где ты участвуешь) |
 | GET | `/api/pr/resolve?source=pr&host=&owner=&repo=&number=` | заголовок, ветки, автор, `headSha` |
 | GET | `/api/browse?path=` | имена подкаталогов и признак «это репозиторий» |
 | GET | `/api/local/validate?root=` | git-репозиторий ли это и совпадает ли с корнем |

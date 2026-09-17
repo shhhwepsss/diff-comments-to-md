@@ -18,7 +18,7 @@ function normalizeState(state) {
   return s;
 }
 
-/** all = everyone's PRs; mine = only PRs opened by the logged-in gh user (@me). */
+/** mine = only PRs opened by the logged-in gh user (@me); all = everyone's. */
 function normalizeAuthor(author) {
   const a = author || 'all';
   if (!AUTHORS.has(a)) throw bad(`Неизвестный фильтр автора: ${a} (all | mine)`);
@@ -38,9 +38,9 @@ function splitRepo(repo) {
  * is opened.
  *
  * The author filter goes to gh as a flag, so the user's free-text query is
- * passed through untouched. It only changes the repository listing: without a
- * repository "all" cannot mean all of GitHub, so the global search is always
- * scoped to the user's own PRs, whatever the filter says.
+ * passed through untouched. Without a repository "all" cannot mean all of
+ * GitHub: it widens to every PR the user is involved in (author, assignee,
+ * mentioned, review requested).
  */
 async function searchPrs({ repo, q, state, limit, author }) {
   const s = normalizeState(state);
@@ -86,7 +86,7 @@ async function searchPrs({ repo, q, state, limit, author }) {
   const args = [
     'search',
     'prs',
-    '--author=@me',
+    who === 'mine' ? '--author=@me' : '--involves=@me',
     '--limit',
     String(n),
     '--json',

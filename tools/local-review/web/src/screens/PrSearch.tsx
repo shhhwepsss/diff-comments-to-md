@@ -49,6 +49,8 @@ export function PrSearch() {
       .then((s) => {
         if (!alive) return;
         setStatus(s);
+        // The first search runs without a repository, with the remembered
+        // author filter — the same value the select shows.
         if (s.installed && s.authenticated) void search({ repo: '', q: '', state: 'open', author: readPrAuthor() });
       })
       .catch((e) => alive && setStatus({ installed: false, authenticated: false, login: null, host: null, message: String(e?.message || e) }));
@@ -127,10 +129,9 @@ export function PrSearch() {
             </FormControl>
             <FormControl>
               <FormControl.Label>Автор</FormControl.Label>
-              {/* Without a repository the search is always over your own PRs (lib/pr-search.js), so the filter has nothing to narrow. */}
+              {/* Without a repository "все" is every PR you are involved in — gh cannot list all of GitHub (lib/pr-search.js). */}
               <Select
-                value={repo.trim() ? author : 'mine'}
-                disabled={!repo.trim()}
+                value={author}
                 onChange={(e) => {
                   const next = parsePrAuthor(e.target.value);
                   setAuthor(next);
