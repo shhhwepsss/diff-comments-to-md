@@ -1,0 +1,225 @@
+/* Rendered markdown, after GitHub's .markdown-body, on Primer theme tokens so it
+   follows the app's light/dark choice. */
+
+.rv-markdown {
+  max-width: 980px;
+  padding: var(--base-size-24) var(--base-size-32);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--fgColor-default);
+  overflow-wrap: break-word;
+}
+
+.rv-markdown--empty {
+  font-size: var(--text-body-size-medium);
+  color: var(--fgColor-muted);
+}
+
+.rv-markdown > :first-child {
+  margin-top: 0 !important;
+}
+.rv-markdown > :last-child {
+  margin-bottom: 0 !important;
+}
+
+.rv-markdown p,
+.rv-markdown blockquote,
+.rv-markdown ul,
+.rv-markdown ol,
+.rv-markdown dl,
+.rv-markdown table,
+.rv-markdown pre,
+.rv-markdown details {
+  margin-top: 0;
+  margin-bottom: var(--base-size-16);
+}
+
+.rv-markdown h1,
+.rv-markdown h2,
+.rv-markdown h3,
+.rv-markdown h4,
+.rv-markdown h5,
+.rv-markdown h6 {
+  margin-top: var(--base-size-24);
+  margin-bottom: var(--base-size-16);
+  font-weight: var(--base-text-weight-semibold, 600);
+  line-height: 1.25;
+}
+.rv-markdown h1 {
+  padding-bottom: 0.3em;
+  font-size: 2em;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-markdown h2 {
+  padding-bottom: 0.3em;
+  font-size: 1.5em;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-markdown h3 {
+  font-size: 1.25em;
+}
+.rv-markdown h4 {
+  font-size: 1em;
+}
+.rv-markdown h5 {
+  font-size: 0.875em;
+}
+.rv-markdown h6 {
+  font-size: 0.85em;
+  color: var(--fgColor-muted);
+}
+
+.rv-markdown a {
+  color: var(--fgColor-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+/* Links whose target was dropped (relative / #fragment). */
+.rv-markdown a:not([href]) {
+  color: inherit;
+  text-decoration-style: dotted;
+  cursor: help;
+}
+
+.rv-markdown ul,
+.rv-markdown ol {
+  padding-left: 2em;
+}
+.rv-markdown li + li {
+  margin-top: 0.25em;
+}
+.rv-markdown li > p {
+  margin-top: var(--base-size-16);
+}
+.rv-markdown ul ul,
+.rv-markdown ul ol,
+.rv-markdown ol ol,
+.rv-markdown ol ul {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.rv-markdown li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+.rv-markdown li > input[type='checkbox'] {
+  margin: 0 0.2em 0.25em -1.4em;
+  vertical-align: middle;
+}
+
+.rv-markdown blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0 1em;
+  color: var(--fgColor-muted);
+  border-left: 0.25em solid var(--borderColor-default);
+}
+
+.rv-markdown hr {
+  height: 0.25em;
+  margin: var(--base-size-24) 0;
+  padding: 0;
+  background: var(--borderColor-default);
+  border: 0;
+}
+
+.rv-markdown code,
+.rv-markdown kbd,
+.rv-markdown pre {
+  font-family: var(--fontStack-monospace);
+  font-size: 85%;
+}
+.rv-markdown code {
+  padding: 0.2em 0.4em;
+  white-space: break-spaces;
+  background: var(--bgColor-neutral-muted);
+  border-radius: var(--borderRadius-medium);
+}
+.rv-markdown pre {
+  padding: var(--base-size-16);
+  overflow: auto;
+  line-height: 1.45;
+  background: var(--bgColor-muted);
+  border-radius: var(--borderRadius-medium);
+}
+.rv-markdown pre code {
+  padding: 0;
+  font-size: 100%;
+  white-space: pre;
+  background: transparent;
+  border-radius: 0;
+}
+.rv-markdown kbd {
+  display: inline-block;
+  padding: 0.2em 0.4em;
+  line-height: 1;
+  background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium);
+  box-shadow: inset 0 -1px 0 var(--borderColor-muted);
+}
+
+.rv-markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+.rv-markdown th {
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+.rv-markdown th,
+.rv-markdown td {
+  padding: 6px 13px;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+.rv-markdown tr {
+  background: var(--bgColor-default);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-markdown tr:nth-child(2n) {
+  background: var(--bgColor-muted);
+}
+
+.rv-markdown img {
+  max-width: 100%;
+  box-sizing: content-box;
+}
+/* Image not loaded (remote before opt-in, or relative): alt text + URL as text. */
+.rv-markdown .rv-md-image {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--base-size-8);
+  max-width: 100%;
+  padding: 0 var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  line-height: 1.6;
+  color: var(--fgColor-muted);
+  vertical-align: middle;
+  border: var(--borderWidth-thin) dashed var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+}
+.rv-markdown .rv-md-image__alt {
+  font-style: italic;
+  color: var(--fgColor-default);
+}
+.rv-markdown .rv-md-image__url {
+  font-family: var(--fontStack-monospace);
+  overflow-wrap: anywhere;
+}
+
+.rv-markdown-external {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-8) var(--base-size-12);
+  padding: var(--base-size-8) var(--base-size-16);
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+.rv-markdown details summary {
+  cursor: pointer;
+}

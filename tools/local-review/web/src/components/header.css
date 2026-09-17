@@ -1,0 +1,110 @@
+.rv-header {
+  flex: none;
+  background: var(--bgColor-inset);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+.rv-header__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--base-size-8) var(--base-size-16);
+  min-height: 48px;
+  padding: 0 var(--base-size-16);
+}
+
+.rv-header__row--sub {
+  min-height: 44px;
+  gap: var(--base-size-12);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+  background: var(--bgColor-default);
+}
+
+.rv-header__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  color: var(--fgColor-default);
+  font-weight: var(--base-text-weight-semibold, 600);
+  font-size: var(--text-body-size-large);
+  text-decoration: none;
+}
+
+.rv-header__brand:hover {
+  text-decoration: none;
+  color: var(--fgColor-accent);
+}
+
+/* UnderlineNav brings its own bottom border and padding; inside the bar we want neither. */
+.rv-header__nav {
+  box-shadow: none !important;
+  border-bottom: none !important;
+  min-height: 48px;
+  padding: 0 !important;
+  /* It measures its own width to decide on overflow; give it room. */
+  flex: none;
+  width: 260px;
+}
+
+.rv-header__spacer {
+  flex: 1;
+}
+
+.rv-header__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--base-size-8);
+}
+
+.rv-header__count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  margin-right: var(--base-size-4);
+}
+
+.rv-header__root {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--base-size-8);
+  min-width: 0;
+  max-width: 46vw;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-header__root > svg {
+  align-self: center;
+  flex: none;
+  color: var(--fgColor-muted);
+}
+
+.rv-header__root > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The repository name never shrinks away: the path may be clipped, the
+   identity of what you are reviewing may not. */
+.rv-header__repo {
+  flex: none;
+  color: var(--fgColor-default);
+  font-size: var(--text-body-size-medium);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-header__path {
+  flex: 0 1 auto;
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-header__base {
+  width: 180px;
+  font-family: var(--fontStack-monospace);
+}

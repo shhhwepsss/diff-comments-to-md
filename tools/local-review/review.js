@@ -6,32 +6,16 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const { findRepoRoot } = require('./lib/git');
-const { listFiles, fileDiff, resolveRange } = require('./lib/diff');
-const { CommentStore, STORE_DIR } = require('./lib/store');
-const { renderMarkdown, writeMarkdownFile } = require('./lib/export');
-const {
-  listCommits,
-  uncommittedSummary,
-  listCommitFiles,
-  commitFileDiff,
-  describeCommand,
-  rangeLabel,
-} = require('./lib/commits');
-
-const PUBLIC_DIR = path.join(__dirname, 'public');
-const MODES = new Set(['working', 'staged', 'base']);
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+const { resolveRange } = require('./lib/diff');
+const { CommentStore, STORE_DIR, STORE_FILE } = require('./lib/store');
+const { sendJson, getPublicDir } = require('./lib/http');
+const { createApp, MODES } = require('./lib/routes');
+const config = require('./lib/config');
 
 function parseArgs(argv) {
   const options = {
-    base: 'origin/main',
+    // Empty = the repository's default branch, resolved from origin/HEAD.
+    base: '',
     port: 4321,
     mode: 'working',
     open: true,
@@ -64,6 +48,9 @@ function parseArgs(argv) {
         break;
       case '--cwd':
         options.cwd = next();
+        // An explicitly named directory that is not a repository is a typo, and
+        // a typo should be loud. Launching anywhere without --cwd is not.
+        options.cwdExplicit = true;
         break;
       case '--host':
         options.host = next();
@@ -102,11 +89,13 @@ function parseArgs(argv) {
 const HELP = `
 local-review — локальный просмотр git-диффа с комментариями к строкам.
 
+  review [флаги]                         (после npm link)
   node tools/local-review/review.js [флаги]
 
   --working            рабочая копия vs HEAD (по умолчанию)
   --staged             индекс vs HEAD
-  --base <rev>         рабочая копия vs merge-base(<rev>, HEAD); по умолчанию origin/main
+  --base <rev>         рабочая копия vs merge-base(<rev>, HEAD); по умолчанию
+                       ветка по умолчанию у origin (origin/HEAD)
   --mode <m>           working | staged | base
   --port <n>           стартовый порт (по умолчанию 4321, занятый — берётся следующий)
   --host <addr>        адрес прослушивания (по умолчанию 127.0.0.1)
@@ -139,289 +128,6 @@ function ensureGitignore(repoRoot) {
   } catch (e) {
     return { changed: false, error: e.message };
   }
-}
-
-function sendJson(res, status, body) {
-  const payload = Buffer.from(JSON.stringify(body), 'utf8');
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': payload.length,
-    'cache-control': 'no-store',
-  });
-  res.end(payload);
-}
-
-function sendText(res, status, text, type) {
-  const payload = Buffer.from(text, 'utf8');
-  res.writeHead(status, {
-    'content-type': type || 'text/plain; charset=utf-8',
-    'content-length': payload.length,
-    'cache-control': 'no-store',
-  });
-  res.end(payload);
-}
-
-function readBody(req, limitBytes) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > (limitBytes || 2 * 1024 * 1024)) {
-        reject(new Error('Тело запроса слишком большое'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
-}
-
-async function readJsonBody(req) {
-  const raw = await readBody(req);
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const err = new Error('Некорректный JSON в теле запроса');
-    err.userFacing = true;
-    err.status = 400;
-    throw err;
-  }
-}
-
-function serveStatic(req, res, urlPath) {
-  const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
-  const abs = path.join(PUBLIC_DIR, rel);
-  const normalized = path.resolve(abs);
-  if (!normalized.startsWith(path.resolve(PUBLIC_DIR))) {
-    sendText(res, 403, 'Forbidden');
-    return;
-  }
-  fs.readFile(normalized, (err, data) => {
-    if (err) {
-      sendText(res, 404, 'Not found');
-      return;
-    }
-    res.writeHead(200, {
-      'content-type': MIME[path.extname(normalized).toLowerCase()] || 'application/octet-stream',
-      'content-length': data.length,
-      'cache-control': 'no-store',
-    });
-    res.end(data);
-  });
-}
-
-function createApp(context) {
-  const { repoRoot, store } = context;
-
-  return async function handle(req, res) {
-    const url = new URL(req.url, 'http://localhost');
-    const pathname = decodeURIComponent(url.pathname);
-
-    if (!pathname.startsWith('/api/')) {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        sendText(res, 405, 'Method not allowed');
-        return;
-      }
-      serveStatic(req, res, pathname);
-      return;
-    }
-
-    // ---- state -------------------------------------------------------------
-    if (pathname === '/api/state' && req.method === 'GET') {
-      const mode = url.searchParams.get('mode') || context.mode;
-      const base = url.searchParams.get('base') || context.base;
-      if (!MODES.has(mode)) {
-        sendJson(res, 400, { error: `Неизвестный режим: ${mode}` });
-        return;
-      }
-      const { files, range } = await listFiles(repoRoot, mode, base);
-      const counts = store.countsByFile();
-      sendJson(res, 200, {
-        repoRoot,
-        mode,
-        base,
-        rangeLabel: range.label,
-        totalComments: store.all().length,
-        files: files.map((f) => ({
-          path: f.path,
-          oldPath: f.oldPath,
-          status: f.status,
-          kind: f.kind,
-          untracked: Boolean(f.untracked),
-          comments: counts[f.path] || 0,
-        })),
-        // Comments can outlive the diff they were written against; surface them
-        // so nothing silently disappears from the UI.
-        orphanFiles: Object.keys(counts)
-          .filter((p) => !files.some((f) => f.path === p))
-          .map((p) => ({ path: p, comments: counts[p], orphan: true })),
-      });
-      return;
-    }
-
-    // ---- diff of one file --------------------------------------------------
-    if (pathname === '/api/diff' && req.method === 'GET') {
-      const file = url.searchParams.get('file');
-      const mode = url.searchParams.get('mode') || context.mode;
-      const base = url.searchParams.get('base') || context.base;
-      if (!file) {
-        sendJson(res, 400, { error: 'Не передан параметр file' });
-        return;
-      }
-      const result = await fileDiff(repoRoot, mode, base, file, 3);
-      sendJson(res, 200, result);
-      return;
-    }
-
-    // ---- comments ----------------------------------------------------------
-    if (pathname === '/api/comments' && req.method === 'GET') {
-      sendJson(res, 200, { comments: store.all() });
-      return;
-    }
-
-    if (pathname === '/api/comments' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      if (!body.file || typeof body.file !== 'string') {
-        sendJson(res, 400, { error: 'file обязателен' });
-        return;
-      }
-      if (!body.text || !String(body.text).trim()) {
-        sendJson(res, 400, { error: 'Пустой комментарий' });
-        return;
-      }
-      const comment = store.add({
-        file: body.file,
-        startLine: body.startLine === undefined ? null : body.startLine,
-        endLine: body.endLine === undefined ? null : body.endLine,
-        text: String(body.text).trim(),
-        commit: body.commit,
-      });
-      sendJson(res, 201, { comment });
-      return;
-    }
-
-    // ---- destructive: only here, only with explicit confirm ----------------
-    if (pathname === '/api/comments/clear-all' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      if (body.confirm !== true) {
-        sendJson(res, 400, {
-          error: 'Нужно подтверждение: {"confirm": true}',
-          remaining: store.all().length,
-        });
-        return;
-      }
-      const removed = store.clearAll();
-      sendJson(res, 200, { removed, remaining: store.all().length });
-      return;
-    }
-
-    const commentMatch = /^\/api\/comments\/([^/]+)$/.exec(pathname);
-    if (commentMatch) {
-      const id = commentMatch[1];
-      if (req.method === 'PUT' || req.method === 'PATCH') {
-        const body = await readJsonBody(req);
-        if (!body.text || !String(body.text).trim()) {
-          sendJson(res, 400, { error: 'Пустой комментарий' });
-          return;
-        }
-        const comment = store.update(id, String(body.text).trim());
-        if (!comment) {
-          sendJson(res, 404, { error: 'Комментарий не найден' });
-          return;
-        }
-        sendJson(res, 200, { comment });
-        return;
-      }
-      if (req.method === 'DELETE') {
-        const ok = store.remove(id);
-        sendJson(res, ok ? 200 : 404, ok ? { removed: id } : { error: 'Комментарий не найден' });
-        return;
-      }
-    }
-
-    // ---- export (read-only w.r.t. the comment store) ------------------------
-    if (pathname === '/api/export/text' && req.method === 'GET') {
-      sendText(res, 200, renderMarkdown(store.all()), 'text/markdown; charset=utf-8');
-      return;
-    }
-
-    if (pathname === '/api/export/file' && req.method === 'POST') {
-      const comments = store.all();
-      const written = writeMarkdownFile(repoRoot, comments);
-      sendJson(res, 200, {
-        file: written.name,
-        path: written.path,
-        count: comments.length,
-        remaining: store.all().length,
-      });
-      return;
-    }
-
-    // ---- режим коммитов ----------------------------------------------------
-    // Отдельные эндпоинты, а не ещё один mode у /api/state: фича добавляется
-    // поверх существующих режимов и не меняет их поведение.
-    if (pathname === '/api/commits' && req.method === 'GET') {
-      const base = url.searchParams.get('base') || context.base;
-      const limit = Number(url.searchParams.get('limit'));
-      const history = await listCommits(repoRoot, base, limit);
-      const dirty = await uncommittedSummary(repoRoot);
-      sendJson(res, 200, Object.assign({ repoRoot, dirty }, history));
-      return;
-    }
-
-    if (pathname === '/api/commits/state' && req.method === 'GET') {
-      const from = url.searchParams.get('from');
-      const to = url.searchParams.get('to') || from;
-      if (!from) {
-        sendJson(res, 400, { error: 'Не переданы параметры from / to' });
-        return;
-      }
-      const count = Number(url.searchParams.get('count'));
-      const { files, combined } = await listCommitFiles(repoRoot, from, to);
-      const counts = store.countsByFile();
-      sendJson(res, 200, {
-        repoRoot,
-        mode: 'commits',
-        base: context.base,
-        from,
-        to,
-        combined,
-        command: await describeCommand(repoRoot, from, to),
-        rangeLabel: rangeLabel(from, to, Number.isFinite(count) ? count : 0),
-        totalComments: store.all().length,
-        files: files.map((f) => ({
-          path: f.path,
-          oldPath: f.oldPath,
-          status: f.status,
-          kind: f.kind,
-          untracked: false,
-          comments: counts[f.path] || 0,
-        })),
-        orphanFiles: Object.keys(counts)
-          .filter((p) => !files.some((f) => f.path === p))
-          .map((p) => ({ path: p, comments: counts[p], orphan: true })),
-      });
-      return;
-    }
-
-    if (pathname === '/api/commits/diff' && req.method === 'GET') {
-      const file = url.searchParams.get('file');
-      const from = url.searchParams.get('from');
-      const to = url.searchParams.get('to') || from;
-      if (!file || !from) {
-        sendJson(res, 400, { error: 'Нужны параметры file и from' });
-        return;
-      }
-      sendJson(res, 200, await commitFileDiff(repoRoot, from, to, file, 3));
-      return;
-    }
-
-    sendJson(res, 404, { error: `Нет такого эндпоинта: ${req.method} ${pathname}` });
-  };
 }
 
 function listen(server, port, host, attemptsLeft) {
@@ -457,8 +163,23 @@ function openBrowser(url) {
 }
 
 async function start(options) {
+  // Fail before touching anything else: a UI that was never built is not a
+  // git problem, a port problem, or a repo-selection problem, and should not
+  // be diagnosed as one of those.
+  const staticDir = getPublicDir();
+  if (!fs.existsSync(path.join(staticDir, 'index.html'))) {
+    const err = new Error(
+      `UI не собран: выполни \`npm run build\` (каталог ${staticDir})`
+    );
+    err.userFacing = true;
+    throw err;
+  }
+
+  // The only thing the tool ever creates outside the chosen repository.
+  const homeDir = config.ensureHome();
+
   const repoRoot = await findRepoRoot(options.cwd);
-  if (!repoRoot) {
+  if (!repoRoot && options.cwdExplicit) {
     const err = new Error(
       `Это не git-репозиторий: ${options.cwd}\n` +
         'Запусти тулу из корня репозитория (или укажи --cwd <путь к репозиторию>).'
@@ -468,11 +189,17 @@ async function start(options) {
   }
 
   // Fail early with a readable message instead of a stack trace mid-request.
-  await resolveRange(repoRoot, options.mode, options.base);
+  const range = repoRoot ? await resolveRange(repoRoot, options.mode, options.base) : null;
+  const resolvedBase = (range && range.base) || options.base;
 
-  const gitignore = ensureGitignore(repoRoot);
-  const store = new CommentStore(repoRoot);
-  const handler = createApp({ repoRoot, store, mode: options.mode, base: options.base });
+  // No repository under cwd is no longer a reason to refuse: the UI opens on
+  // the folder picker and the descriptor arrives with the first request.
+  const gitignore = repoRoot ? ensureGitignore(repoRoot) : { changed: false };
+  const defaults = repoRoot
+    ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
+    : null;
+  const store = repoRoot ? new CommentStore(path.join(repoRoot, STORE_DIR, STORE_FILE)) : null;
+  const handler = createApp({ defaults, homeDir });
 
   const server = http.createServer((req, res) => {
     Promise.resolve(handler(req, res)).catch((err) => {
@@ -486,7 +213,7 @@ async function start(options) {
   });
 
   const port = await listen(server, options.port, options.host, 50);
-  return { server, port, repoRoot, store, gitignore };
+  return { server, port, repoRoot, store, gitignore, homeDir, resolvedBase };
 }
 
 async function main() {
@@ -507,11 +234,17 @@ async function main() {
   const url = `http://${options.host}:${started.port}/`;
   console.log('');
   console.log(`  local-review    ${url}`);
-  console.log(`  репозиторий     ${started.repoRoot}`);
-  console.log(
-    `  режим           ${options.mode}${options.mode === 'base' ? ` (${options.base})` : ''}`
-  );
-  console.log(`  комментарии     ${STORE_DIR}/comments.json (${started.store.all().length} шт.)`);
+  if (started.repoRoot) {
+    console.log(`  репозиторий     ${started.repoRoot}`);
+    console.log(
+      `  режим           ${options.mode}${
+        options.mode === 'base' ? ` (${started.resolvedBase})` : ''
+      }`
+    );
+    console.log(`  комментарии     ${STORE_DIR}/comments.json (${started.store.all().length} шт.)`);
+  } else {
+    console.log('  репозиторий     не выбран — выбери папку на странице «Папка»');
+  }
   if (started.gitignore.changed) console.log(`  .gitignore      добавлен ${STORE_DIR}/`);
   if (started.port !== options.port) console.log(`  порт ${options.port} занят, взят ${started.port}`);
   console.log('\n  Ctrl+C — выход\n');

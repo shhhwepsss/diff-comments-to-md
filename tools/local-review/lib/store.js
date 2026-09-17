@@ -8,26 +8,23 @@ const STORE_DIR = '.local-review';
 const STORE_FILE = 'comments.json';
 
 /**
- * { from, to, label } — диапазон коммитов, в котором комментарий был написан.
- * Нужен, чтобы комментарий не всплывал в диффе другого диапазона и чтобы
- * экспорт мог указать, что именно читал ревьюер.
+ * A general comment is about the review as a whole, like GitHub's review
+ * summary: it lives in the same `comments` array, with `file: null` and no
+ * lines. Files written before general comments existed simply have none.
  */
-function normalizeCommit(commit) {
-  if (!commit || typeof commit !== 'object') return null;
-  const to = commit.to ? String(commit.to) : '';
-  if (!to) return null;
-  return {
-    from: commit.from ? String(commit.from) : to,
-    to,
-    label: commit.label ? String(commit.label) : '',
-  };
+function isGeneralComment(comment) {
+  return comment.file === null;
 }
 
 class CommentStore {
-  constructor(repoRoot) {
-    this.repoRoot = repoRoot;
-    this.dir = path.join(repoRoot, STORE_DIR);
-    this.file = path.join(this.dir, STORE_FILE);
+  /**
+   * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
+   * disk and deliberately knows nothing about local repos vs pull requests —
+   * that mapping lives in lib/stores/factory.js and nowhere else.
+   */
+  constructor(filePath) {
+    this.file = filePath;
+    this.dir = path.dirname(filePath);
     this.data = { version: 1, comments: [] };
     this.load();
   }
@@ -65,11 +62,14 @@ class CommentStore {
 
   countsByFile() {
     const counts = {};
-    for (const c of this.data.comments) counts[c.file] = (counts[c.file] || 0) + 1;
+    for (const c of this.data.comments) {
+      if (isGeneralComment(c)) continue;
+      counts[c.file] = (counts[c.file] || 0) + 1;
+    }
     return counts;
   }
 
-  add({ file, startLine, endLine, text, commit }) {
+  add({ file, startLine, endLine, text }) {
     const now = new Date().toISOString();
     const comment = {
       id: crypto.randomUUID(),
@@ -90,10 +90,6 @@ class CommentStore {
       comment.startLine = comment.endLine;
       comment.endLine = tmp;
     }
-    // Контекст коммита пишем только когда он есть: комментарий, оставленный
-    // в режимах working / staged / base, хранится ровно как раньше.
-    const ctx = normalizeCommit(commit);
-    if (ctx) comment.commit = ctx;
     this.data.comments.push(comment);
     this.save();
     return comment;
@@ -125,4 +121,4 @@ class CommentStore {
   }
 }
 
-module.exports = { CommentStore, STORE_DIR, STORE_FILE, normalizeCommit };
+module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment };

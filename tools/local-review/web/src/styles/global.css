@@ -1,0 +1,54 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* Primer's ThemeProvider renders the div that carries data-color-mode; the
+   theme variables only exist inside it, so it has to fill the page. */
+#root > [data-component='ThemeProvider'] {
+  height: 100%;
+}
+
+.rv-root {
+  height: 100%;
+  color: var(--fgColor-default);
+  background: var(--bgColor-default);
+}
+
+.rv-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.rv-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rv-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--base-size-24);
+}
+
+.rv-hint {
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+/* The diff screen scrolls inside its own panes, not the whole main area. */
+.rv-main:has(> .rv-diff-screen) {
+  overflow: hidden;
+}
+
+/* Primer portals (dialogs, side sheets) must cover the sticky file header,
+   which sits at z-index 5 inside the diff. */
+#__primerPortalRoot__ {
+  z-index: 100;
+}

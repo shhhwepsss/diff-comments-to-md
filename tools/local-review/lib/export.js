@@ -2,6 +2,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { isGeneralComment } = require('./store');
+
+const GENERAL_HEADING = '## Общие комментарии';
+const CODE_HEADING = '## Комментарии к коду';
 
 /**
  * `path:L42` for a single line, `path:L42-L50` for a range, bare `path` for a
@@ -27,28 +31,30 @@ function sortComments(comments) {
   });
 }
 
-/**
- * Вторая строка блока — коммит или диапазон, в котором комментарий писали.
- * Её получают только комментарии из режима коммитов, оставленные не на
- * последнем коммите: всё остальное экспортируется как раньше — путь и текст.
- */
-function commitLineOf(comment) {
-  const ctx = comment.commit;
-  if (!ctx || !ctx.to) return null;
-  const range = ctx.from && ctx.from !== ctx.to ? `${ctx.from}..${ctx.to}` : ctx.to;
-  return ctx.label ? `${range} · ${ctx.label}` : range;
+function textOf(comment) {
+  return String(comment.text).replace(/\r\n/g, '\n').trim();
 }
 
+/**
+ * Without general comments the output is exactly what it has always been:
+ * `anchor\ntext` blocks, nothing else. General comments, when there are any,
+ * come first under their own heading, oldest first, and the code comments
+ * follow under a second heading.
+ */
 function renderMarkdown(comments) {
-  return (
-    sortComments(comments)
-      .map((c) => {
-        const commitLine = commitLineOf(c);
-        const head = commitLine ? `${anchorOf(c)}\n${commitLine}` : anchorOf(c);
-        return `${head}\n${String(c.text).replace(/\r\n/g, '\n').trim()}`;
-      })
-      .join('\n\n') + (comments.length ? '\n' : '')
-  );
+  const general = comments
+    .filter(isGeneralComment)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const code = comments.filter((c) => !isGeneralComment(c));
+  const codeBlocks = sortComments(code)
+    .map((c) => `${anchorOf(c)}\n${textOf(c)}`)
+    .join('\n\n');
+
+  if (!general.length) return codeBlocks + (code.length ? '\n' : '');
+
+  const sections = [`${GENERAL_HEADING}\n\n${general.map(textOf).join('\n\n')}`];
+  if (code.length) sections.push(`${CODE_HEADING}\n\n${codeBlocks}`);
+  return sections.join('\n\n') + '\n';
 }
 
 function stamp(date) {
@@ -68,4 +74,4 @@ function writeMarkdownFile(repoRoot, comments, date) {
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, commitLineOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };

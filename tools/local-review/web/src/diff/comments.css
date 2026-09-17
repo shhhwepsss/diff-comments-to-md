@@ -1,0 +1,94 @@
+.rv-comment {
+  max-width: 900px;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-default);
+  overflow: hidden;
+}
+
+.rv-comment + .rv-comment,
+.rv-comment + .rv-comment-form,
+.rv-comment-form + .rv-comment {
+  margin-top: var(--base-size-8);
+}
+
+.rv-comment__head {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-height: 36px;
+  padding: 0 var(--base-size-4) 0 var(--base-size-12);
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-comment__anchor {
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-default);
+  overflow-wrap: anywhere;
+}
+
+.rv-comment__date {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.rv-comment__actions {
+  display: inline-flex;
+}
+
+.rv-comment__body {
+  padding: var(--base-size-8) var(--base-size-12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-size-medium);
+  line-height: 1.5;
+  color: var(--fgColor-default);
+}
+
+.rv-comment .rv-comment-form {
+  border: none;
+  border-radius: 0;
+}
+
+.rv-comment-form {
+  max-width: 900px;
+  padding: var(--base-size-8);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-default);
+}
+
+.rv-comment-form__label {
+  margin-bottom: var(--base-size-8);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-comment-form__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--base-size-8);
+  margin-top: var(--base-size-8);
+}
+
+.rv-comment-form__actions .rv-hint {
+  margin-right: auto;
+}
+
+/* General comments side sheet: cards and the new-comment form stacked. */
+.rv-general {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+
+.rv-general .rv-comment + .rv-comment,
+.rv-general .rv-comment + .rv-comment-form {
+  margin-top: 0;
+}
