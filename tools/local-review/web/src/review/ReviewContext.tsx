@@ -4,6 +4,7 @@ import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescr
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
+import { descriptorFromHash, fileHashFor, hashFor } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
 import {
   clampIndex,
@@ -102,7 +103,16 @@ export function useOptionalReview(): Review | null {
   return useContext(ReviewContext);
 }
 
-export function ReviewProvider({ initial, children }: { initial: Descriptor; children: ReactNode }) {
+export function ReviewProvider({
+  initial,
+  initialFile = null,
+  children,
+}: {
+  initial: Descriptor;
+  /** File named in the URL; opened on load when the diff (or an orphan) has it. */
+  initialFile?: string | null;
+  children: ReactNode;
+}) {
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -272,12 +282,24 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   );
 
   useEffect(() => {
-    void load(descriptor, null, false);
+    void load(descriptor, initialFile, false);
     // Remember the choice so an empty hash after a restart lands here again.
     api.saveSession(descriptor).catch(() => {});
     // Mode/base changes reload through their own actions, keeping the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Mirror the open file into the address bar, so a reload or a copied link
+  // lands on it too. replaceState: picking a file is not a history step, and
+  // it fires no hashchange, so App does not re-route on its own write. Skipped
+  // once the hash already points elsewhere (the user is leaving this review).
+  useEffect(() => {
+    if (!state) return;
+    const current = window.location.hash;
+    if (hashFor(descriptorFromHash(current)) !== hashFor(descriptor)) return;
+    const next = fileHashFor(descriptor, activeFile);
+    if (next !== current) window.history.replaceState(window.history.state, '', next);
+  }, [state, descriptor, activeFile]);
 
   const refreshComments = useCallback(async () => {
     const data = await api.comments(descriptor);
