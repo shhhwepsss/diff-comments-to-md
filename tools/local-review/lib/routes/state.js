@@ -36,6 +36,10 @@ async function getState(req, res, ctx, url) {
   // above); the PR-branch label only applies when no such range is selected.
   const commitsSelected = descriptor.source === 'local' ? descriptor.mode === 'commits' : Boolean(descriptor.from && descriptor.to);
 
+  // The same revision the header shows is the one the `base` view keys by,
+  // so an empty base and its explicit spelling share one key.
+  const modeKey = modeKeyOf(descriptor, base);
+
   sendJson(res, 200, {
     repoRoot: descriptor.source === 'local' ? descriptor.root : null,
     source: descriptor.source,
@@ -56,7 +60,7 @@ async function getState(req, res, ctx, url) {
       comments: counts[f.path] || 0,
       fingerprint: f.fingerprint || null,
       // A mark made against another version of this file's diff no longer counts.
-      viewed: isViewed(viewed[f.path], modeKeyOf(descriptor), f.fingerprint),
+      viewed: isViewed(viewed[f.path], modeKey, f.fingerprint),
     })),
     // Comments can outlive the diff they were written against; surface them
     // so nothing silently disappears from the UI.

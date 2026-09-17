@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { gitTry } = require('./git');
+const { resolveRange } = require('./diff');
 
 /**
  * "Просмотрено" is stored together with a fingerprint of the file's diff, the
@@ -30,10 +31,34 @@ const ANY_MODE = '*';
  * the range itself, because picking other commits is another diff again.
  * Local and PR descriptors never share a store (lib/stores/factory.js), so
  * the key does not repeat the source.
+ *
+ * Mode `base` also carries the revision it compares against, because two
+ * bases are two different views of the same file. That revision is the *ref*
+ * resolveRange settled on (lib/diff.js:36), not the merge-base commit: the
+ * ref is what the reviewer chose and it stays the same as the branch moves,
+ * while the merge-base commit would change under them and silently drop every
+ * mark. `resolvedBase` must therefore come from resolveRange (or modeKeyFor
+ * below), so that an empty base and the same branch named explicitly are one
+ * key and not two.
  */
-function modeKeyOf(descriptor) {
+function modeKeyOf(descriptor, resolvedBase) {
   if (descriptor.from && descriptor.to) return `commits:${descriptor.from}..${descriptor.to}`;
-  return descriptor.source === 'local' ? `mode:${descriptor.mode}` : 'pr:all';
+  if (descriptor.source !== 'local') return 'pr:all';
+  if (descriptor.mode !== 'base') return `mode:${descriptor.mode}`;
+  return `mode:base:${resolvedBase || descriptor.base}`;
+}
+
+/**
+ * The same key for a caller that has no resolved base at hand: asks git
+ * through the very function the diff itself goes through, so "the
+ * repository's default branch" means exactly one thing in both places.
+ */
+async function modeKeyFor(descriptor) {
+  const needsBase =
+    descriptor.source === 'local' && descriptor.mode === 'base' && !(descriptor.from && descriptor.to);
+  if (!needsBase) return modeKeyOf(descriptor);
+  const range = await resolveRange(descriptor.root, 'base', descriptor.base);
+  return modeKeyOf(descriptor, range.base);
 }
 
 /**
@@ -113,4 +138,12 @@ async function withLocalFingerprints(root, mode, files) {
   });
 }
 
-module.exports = { fingerprintOf, isViewed, modeKeyOf, withLocalFingerprints, hashWorktreeFiles, ANY_MODE };
+module.exports = {
+  fingerprintOf,
+  isViewed,
+  modeKeyOf,
+  modeKeyFor,
+  withLocalFingerprints,
+  hashWorktreeFiles,
+  ANY_MODE,
+};

@@ -1757,7 +1757,7 @@ async function main() {
   ok((await vState()).get('two.txt').viewed === true, 'отметка в base не стёрла отметку в working');
   eq(
     Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']).sort(),
-    ['mode:base', 'mode:working'],
+    ['mode:base:HEAD~1', 'mode:working'],
     'в хранилище у файла по корзине на режим'
   );
 
@@ -1765,6 +1765,47 @@ async function main() {
   ok((await vState('base', 'HEAD~1')).get('two.txt').viewed === false, 'снятие отметки в base сработало');
   ok((await vState()).get('two.txt').viewed === true, 'снятие отметки в base не трогает working');
   await mark('two.txt', undefined, false);
+
+  // --- base: у каждой базы свой вид, но пустая база = ветка по умолчанию ---
+  console.log('\nпросмотренные файлы: у режима base ключ по разрешённой базе');
+  // Без base сервер берёт ветку по умолчанию этого репозитория; он же
+  // возвращает её в ответе, так что явное имя должно давать тот же ключ.
+  const defaultBaseState = await call(`/api/state?${vQ('base')}`);
+  const defaultBaseRev = defaultBaseState.body.base;
+  ok(Boolean(defaultBaseRev), 'сервер сообщает, какую базу выбрал сам', JSON.stringify(defaultBaseRev));
+  const twoDefaultBase = new Map(defaultBaseState.body.files.map((f) => [f.path, f])).get('two.txt');
+
+  await mark('two.txt', twoDefaultBase.fingerprint, true, 'base');
+  ok((await vState('base')).get('two.txt').viewed === true, 'отметка при пустой базе поставлена');
+  ok(
+    (await vState('base', defaultBaseRev)).get('two.txt').viewed === true,
+    'та же отметка видна, если ту же базу назвать явно'
+  );
+  eq(
+    Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']),
+    [`mode:base:${defaultBaseRev}`],
+    'ключ вида содержит разрешённую базу, а не пустую строку'
+  );
+
+  const twoOtherBase = (await vState('base', 'HEAD~1')).get('two.txt');
+  ok(twoOtherBase.viewed === false, 'под другой базой файл ещё не просмотрен');
+  await mark('two.txt', twoOtherBase.fingerprint, true, 'base', 'HEAD~1');
+  ok((await vState('base', 'HEAD~1')).get('two.txt').viewed === true, 'отметка под другой базой поставлена');
+  ok((await vState('base')).get('two.txt').viewed === true, 'отметка под другой базой не стёрла отметку базы по умолчанию');
+  ok(
+    (await vState('base', defaultBaseRev)).get('two.txt').viewed === true &&
+      (await vState('base', 'HEAD~1')).get('two.txt').viewed === true,
+    'обе отметки живы при переключении баз туда-обратно'
+  );
+  eq(
+    Object.keys(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt']).sort(),
+    [`mode:base:${defaultBaseRev}`, 'mode:base:HEAD~1'].sort(),
+    'в хранилище по корзине на базу'
+  );
+
+  await mark('two.txt', undefined, false, 'base');
+  ok((await vState('base', defaultBaseRev)).get('two.txt').viewed === false, 'снятие при пустой базе сняло и явную');
+  await mark('two.txt', undefined, false, 'base', 'HEAD~1');
 
   // --- отметки из старого, «плоского» формата хранилища --------------------
   console.log('\nпросмотренные файлы: миграция старого формата');
@@ -1780,7 +1821,11 @@ async function main() {
   const legacyBase = (await vState('base', 'HEAD~1')).get('two.txt');
   await mark('two.txt', legacyBase.fingerprint, true, 'base', 'HEAD~1');
   const afterLegacyMark = JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).viewed['two.txt'];
-  eq(Object.keys(afterLegacyMark).sort(), ['*', 'mode:base'], 'старая отметка переехала в корзину «любой режим» и не потерялась');
+  eq(
+    Object.keys(afterLegacyMark).sort(),
+    ['*', 'mode:base:HEAD~1'],
+    'старая отметка переехала в корзину «любой режим» и не потерялась'
+  );
   ok((await vState()).get('two.txt').viewed === true, 'после отметки в base старая отметка в working жива');
   eq(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).version, 1, 'миграция не меняет версию формата хранилища');
   await mark('two.txt', undefined, false);
@@ -1792,7 +1837,17 @@ async function main() {
 
   const { fingerprintOf, isViewed, modeKeyOf } = require('./lib/viewed');
   eq(modeKeyOf({ source: 'local', mode: 'working', base: '' }), 'mode:working', 'ключ режима working');
-  eq(modeKeyOf({ source: 'local', mode: 'base', base: 'main' }), 'mode:base', 'ключ режима base');
+  eq(modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main'), 'mode:base:main', 'ключ режима base — по разрешённой базе');
+  eq(
+    modeKeyOf({ source: 'local', mode: 'base', base: 'main' }, 'main'),
+    modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main'),
+    'пустая и явно названная база дают один ключ'
+  );
+  ok(
+    modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'main') !==
+      modeKeyOf({ source: 'local', mode: 'base', base: '' }, 'origin/production'),
+    'разные базы — разные ключи'
+  );
   eq(modeKeyOf({ source: 'pr', number: 25 }), 'pr:all', 'ключ PR-а без диапазона');
   eq(modeKeyOf({ source: 'local', mode: 'commits', from: 'a1', to: 'b2' }), 'commits:a1..b2', 'ключ диапазона коммитов');
   ok(

@@ -310,7 +310,7 @@ DELETE: `?source=local&root=<путь>&mode=&base=` либо
 | PUT | `/api/comments/<id>?<дескриптор>` | изменить текст |
 | DELETE | `/api/comments/<id>?<дескриптор>` | удалить один |
 | POST | `/api/comments/clear-all?<дескриптор>` | удалить все, только с `{"confirm": true}` |
-| POST | `/api/viewed?<дескриптор>` | `{file, fingerprint, viewed: true}` — отметить просмотренным, `{file, viewed: false}` — снять; отметка своя у каждого вида (working / staged / base / диапазон коммитов / «все изменения» PR-а) и перестаёт действовать, как только дифф файла меняется |
+| POST | `/api/viewed?<дескриптор>` | `{file, fingerprint, viewed: true}` — отметить просмотренным, `{file, viewed: false}` — снять; отметка своя у каждого вида (working / staged / base с конкретной базой / диапазон коммитов / «все изменения» PR-а) и перестаёт действовать, как только дифф файла меняется |
 | GET | `/api/export/text?<дескриптор>` | markdown-текст для буфера |
 | POST | `/api/export/file?<дескриптор>` | записать `review-<...>.md` |
 | GET | `/api/gh/status` | установлен ли `gh`, залогинен ли, под кем |

@@ -3,7 +3,7 @@
 const { sendJson, readJsonBody } = require('../http');
 const { parseDescriptor } = require('../descriptor');
 const { storeFor } = require('../stores/factory');
-const { modeKeyOf } = require('../viewed');
+const { modeKeyFor } = require('../viewed');
 
 /**
  * POST { file, fingerprint, viewed: true } marks a file viewed;
@@ -20,7 +20,7 @@ async function set(req, res, ctx, url) {
   const store = storeFor(descriptor, ctx.homeDir);
   // Which view the mark belongs to comes from the descriptor, not the body:
   // it is the same descriptor /api/state answered with.
-  const modeKey = modeKeyOf(descriptor);
+  const modeKey = await modeKeyFor(descriptor);
   const body = await readJsonBody(req);
   if (!body.file || typeof body.file !== 'string' || body.file === '__proto__') {
     sendJson(res, 400, { error: 'file обязателен' });
