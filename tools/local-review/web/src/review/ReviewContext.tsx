@@ -1,9 +1,25 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
-import type { Comment, Descriptor, DiffResponse, LocalDescriptor, Mode, StateResponse } from '../api/types';
+import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
+import { copyToClipboard } from '../lib/clipboard';
 import { createDraftStore, type DraftStore } from './drafts';
+import {
+  clampIndex,
+  commitContextFor,
+  defaultSelection,
+  expandToComments,
+  outsideComments,
+  selHi,
+  selLo,
+  type CommitSelection,
+} from './commitSelection';
+
+/** Whether a descriptor currently asks for the "commits" view (local mode, or a PR range). */
+function isCommitsMode(d: Descriptor): boolean {
+  return d.source === 'local' ? d.mode === 'commits' : Boolean(d.from && d.to);
+}
 
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
@@ -27,9 +43,32 @@ export type Review = {
   /** Unsaved general-comment text; survives closing the panel, not a reload. */
   drafts: DraftStore;
 
+  /** Branch history for the "commits" mode; empty when not in that mode (or not loaded yet). */
+  commits: Commit[];
+  commitsTruncated: boolean;
+  commitsFallback: boolean;
+  commitsBase: string | null;
+  /** Uncommitted-changes status from the last commit-history fetch (local only). */
+  dirty: DirtyStatus;
+  dirtyNoticeDismissed: boolean;
+  /** True once the descriptor asks for the commits view (local mode === 'commits', or a PR range). */
+  commitsMode: boolean;
+  /** commitsMode is on but the branch has no commits to show. */
+  commitsEmpty: boolean;
+  /** Selected commit(s) on the rail, as indices into `commits`; null outside commits mode. */
+  commitSel: CommitSelection | null;
+  /** Comments whose commit context falls outside the current selection. */
+  outsideCount: number;
+
   reload: () => void;
   setMode: (mode: Mode) => void;
   setBase: (base: string) => void;
+  /** Toggles the PR "Все изменения"/"Коммиты" view; no-op for a local descriptor. */
+  setPrCommitsView: (on: boolean) => void;
+  setCommitSelection: (anchor: number, head: number) => void;
+  /** Grows the selection to cover every comment currently outside it. */
+  expandSelectionToOutside: () => void;
+  dismissDirtyNotice: () => void;
   selectFile: (path: string) => void;
   openEditor: (anchor: EditorAnchor) => void;
   closeEditor: () => void;
@@ -58,28 +97,6 @@ export function useOptionalReview(): Review | null {
   return useContext(ReviewContext);
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const area = document.createElement('textarea');
-    area.value = text;
-    area.style.position = 'fixed';
-    area.style.opacity = '0';
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
-  }
-}
-
 export function ReviewProvider({ initial, children }: { initial: Descriptor; children: ReactNode }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -99,9 +116,21 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   // One store for the life of this review; the provider remounts per descriptor.
   const [drafts] = useState(createDraftStore);
 
+  // Commits-mode state. The provider does NOT remount when toggling this mode
+  // (hashFor ignores from/to on purpose), so it lives alongside the rest here.
+  const [commits, setCommits] = useState<Commit[]>([]);
+  const [commitsTruncated, setCommitsTruncated] = useState(false);
+  const [commitsFallback, setCommitsFallback] = useState(false);
+  const [commitsBase, setCommitsBase] = useState<string | null>(null);
+  const [dirty, setDirty] = useState<DirtyStatus>({ dirty: false, files: 0 });
+  // In-memory only, per the approved design: a page reload brings the banner back.
+  const [dirtyNoticeDismissed, setDirtyNoticeDismissed] = useState(false);
+  const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
+
   // Responses for a file or descriptor the user already left must not land.
   const diffSeq = useRef(0);
   const stateSeq = useRef(0);
+  const commitsSeq = useRef(0);
   const activeFileRef = useRef<string | null>(null);
   activeFileRef.current = activeFile;
 
@@ -170,6 +199,69 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     [fail, loadDiff],
   );
 
+  /**
+   * Enter (or refresh) the commits view: load the branch history first, pick
+   * the latest commit as the default selection, and only then point the
+   * descriptor at it and load /api/state + /api/diff. An empty history skips
+   * that last step entirely — /api/state is never called without a range.
+   */
+  const enterCommitsMode = useCallback(
+    async (fresh: boolean) => {
+      const seq = ++commitsSeq.current;
+      const stateAtStart = stateSeq.current;
+      const current = descriptorRef.current;
+      // The user switched mode or picked commits while history was loading:
+      // drop this result, and clear the spinner unless a newer load owns it.
+      const stale = () => {
+        if (seq === commitsSeq.current) return false;
+        if (stateSeq.current === stateAtStart) setLoading(false);
+        return true;
+      };
+      setLoading(true);
+      try {
+        const data = await api.commits(current, fresh);
+        if (stale()) return;
+        const list = data.commits || [];
+        setCommits(list);
+        setCommitsTruncated(Boolean(data.truncated));
+        setCommitsFallback(Boolean(data.fallback));
+        setCommitsBase(data.base ?? null);
+        setDirty(data.dirty || { dirty: false, files: 0 });
+
+        if (!list.length) {
+          const next: Descriptor =
+            current.source === 'local' ? { ...current, mode: 'commits', from: undefined, to: undefined } : { ...current, from: undefined, to: undefined };
+          descriptorRef.current = next;
+          setDescriptor(next);
+          setCommitSel(null);
+          diffSeq.current += 1;
+          stateSeq.current += 1;
+          setActiveFile(null);
+          setActiveDiff(null);
+          setState(null);
+          setComments([]);
+          setLoadError(null);
+          setLoading(false);
+          return;
+        }
+
+        const sel = defaultSelection(list.length);
+        setCommitSel(sel);
+        const sha = list[sel.head].sha;
+        const next: Descriptor =
+          current.source === 'local' ? { ...current, mode: 'commits', from: sha, to: sha } : { ...current, from: sha, to: sha };
+        descriptorRef.current = next;
+        setDescriptor(next);
+        await load(next, activeFileRef.current, fresh);
+      } catch (e) {
+        if (stale()) return;
+        setLoading(false);
+        fail(e);
+      }
+    },
+    [fail, load],
+  );
+
   useEffect(() => {
     void load(descriptor, null, false);
     // Remember the choice so an empty hash after a restart lands here again.
@@ -184,8 +276,12 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   }, [descriptor]);
 
   const reload = useCallback(() => {
+    if (isCommitsMode(descriptorRef.current)) {
+      void enterCommitsMode(true);
+      return;
+    }
     void load(descriptor, activeFileRef.current, true);
-  }, [descriptor, load]);
+  }, [descriptor, load, enterCommitsMode]);
 
   const updateLocal = useCallback(
     (patch: (d: LocalDescriptor) => LocalDescriptor | null) => {
@@ -201,8 +297,18 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
   );
 
   const setMode = useCallback(
-    (mode: Mode) => updateLocal((d) => (d.mode === mode ? null : { ...d, mode })),
-    [updateLocal],
+    (mode: Mode) => {
+      if (mode === 'commits') {
+        // Re-clicking the active tab must not reset the chosen range.
+        if (!isCommitsMode(descriptorRef.current)) void enterCommitsMode(false);
+        return;
+      }
+      commitsSeq.current += 1;
+      const wasCommits = descriptorRef.current.source === 'local' && descriptorRef.current.mode === 'commits';
+      updateLocal((d) => (d.mode === mode ? null : { ...d, mode, from: undefined, to: undefined }));
+      if (wasCommits) setCommitSel(null);
+    },
+    [updateLocal, enterCommitsMode],
   );
 
   const setBase = useCallback(
@@ -213,6 +319,53 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     },
     [updateLocal],
   );
+
+  const setPrCommitsView = useCallback(
+    (on: boolean) => {
+      const current = descriptorRef.current;
+      if (current.source !== 'pr') return;
+      if (on) {
+        if (!isCommitsMode(current)) void enterCommitsMode(false);
+        return;
+      }
+      commitsSeq.current += 1;
+      if (!current.from && !current.to) return; // already showing "Все изменения"
+      const next: Descriptor = { ...current, from: undefined, to: undefined };
+      descriptorRef.current = next;
+      setDescriptor(next);
+      setCommitSel(null);
+      void load(next, activeFileRef.current, false);
+    },
+    [enterCommitsMode, load],
+  );
+
+  const setCommitSelection = useCallback(
+    (anchor: number, head: number) => {
+      const current = descriptorRef.current;
+      const count = commits.length;
+      if (!count) return;
+      commitsSeq.current += 1;
+      const resolved: CommitSelection = { anchor: clampIndex(count, anchor), head: clampIndex(count, head) };
+      setCommitSel(resolved);
+      const l = commits[selLo(resolved)];
+      const h = commits[selHi(resolved)];
+      if (!l || !h) return;
+      const next: Descriptor = { ...current, from: l.sha, to: h.sha };
+      descriptorRef.current = next;
+      setDescriptor(next);
+      void load(next, activeFileRef.current, false);
+    },
+    [commits, load],
+  );
+
+  const expandSelectionToOutside = useCallback(() => {
+    if (!commitSel || !commits.length) return;
+    const next = expandToComments(commits, commits.length, commitSel, comments);
+    if (next === commitSel) return;
+    setCommitSelection(next.anchor, next.head);
+  }, [commitSel, commits, comments, setCommitSelection]);
+
+  const dismissDirtyNotice = useCallback(() => setDirtyNoticeDismissed(true), []);
 
   const selectFile = useCallback(
     (path: string) => {
@@ -244,7 +397,8 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       try {
         const lo = editor.start === null || editor.end === null ? null : Math.min(editor.start, editor.end);
         const hi = editor.start === null || editor.end === null ? null : Math.max(editor.start, editor.end);
-        await api.createComment(descriptor, { file: editor.file, startLine: lo, endLine: hi, text: value });
+        const commit = commitSel ? commitContextFor(commits, commitSel) : undefined;
+        await api.createComment(descriptor, { file: editor.file, startLine: lo, endLine: hi, text: value, commit });
         setEditor(null);
         await refreshComments();
         return true;
@@ -253,7 +407,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
         return false;
       }
     },
-    [descriptor, editor, fail, refreshComments, toast],
+    [descriptor, editor, fail, refreshComments, toast, commitSel, commits],
   );
 
   const createGeneralComment = useCallback(
@@ -351,6 +505,13 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     }
   }, [comments.length, confirm, descriptor, fail, refreshComments, toast]);
 
+  const commitsMode = useMemo(() => isCommitsMode(descriptor), [descriptor]);
+  const commitsEmpty = commitsMode && commits.length === 0;
+  const outsideCount = useMemo(
+    () => (commitsMode && commitSel ? outsideComments(commits, commitSel, comments).length : 0),
+    [commitsMode, commitSel, commits, comments],
+  );
+
   const value = useMemo<Review>(
     () => ({
       descriptor,
@@ -363,9 +524,23 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       editor,
       editingId,
       drafts,
+      commits,
+      commitsTruncated,
+      commitsFallback,
+      commitsBase,
+      dirty,
+      dirtyNoticeDismissed,
+      commitsMode,
+      commitsEmpty,
+      commitSel,
+      outsideCount,
       reload,
       setMode,
       setBase,
+      setPrCommitsView,
+      setCommitSelection,
+      expandSelectionToOutside,
+      dismissDirtyNotice,
       selectFile,
       openEditor,
       closeEditor,
@@ -390,9 +565,23 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       editor,
       editingId,
       drafts,
+      commits,
+      commitsTruncated,
+      commitsFallback,
+      commitsBase,
+      dirty,
+      dirtyNoticeDismissed,
+      commitsMode,
+      commitsEmpty,
+      commitSel,
+      outsideCount,
       reload,
       setMode,
       setBase,
+      setPrCommitsView,
+      setCommitSelection,
+      expandSelectionToOutside,
+      dismissDirtyNotice,
       selectFile,
       openEditor,
       closeEditor,

@@ -23,6 +23,7 @@ const MODES: { value: Mode; label: string }[] = [
   { value: 'working', label: 'Рабочая копия' },
   { value: 'staged', label: 'Staged' },
   { value: 'base', label: 'Base' },
+  { value: 'commits', label: 'Коммиты' },
 ];
 
 const THEMES: { value: ThemePref; label: string; icon: typeof SunIcon }[] = [
@@ -101,6 +102,16 @@ export function AppHeader({ route, theme, onTheme }: Props) {
             <span className="rv-header__count" title="Комментариев всего">
               Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
             </span>
+            {review.commitsMode && review.outsideCount > 0 && (
+              <button
+                type="button"
+                className="rv-header__outside"
+                title="Комментарии, написанные вне выбранного диапазона коммитов"
+                onClick={review.expandSelectionToOutside}
+              >
+                {review.outsideCount} вне выбора
+              </button>
+            )}
             <GeneralComments review={review} />
             <Button size="small" leadingVisual={CopyIcon} disabled={noComments} onClick={() => void review.copyAll()}>
               Скопировать всё
@@ -155,6 +166,14 @@ export function AppHeader({ route, theme, onTheme }: Props) {
               {review.descriptor.owner}/{review.descriptor.repo} #{review.descriptor.number}
             </span>
           </span>
+          <SegmentedControl aria-label="Режим диффа" size="small">
+            <SegmentedControl.Button selected={!review.commitsMode} onClick={() => review.setPrCommitsView(false)}>
+              Все изменения
+            </SegmentedControl.Button>
+            <SegmentedControl.Button selected={review.commitsMode} onClick={() => review.setPrCommitsView(true)}>
+              Коммиты
+            </SegmentedControl.Button>
+          </SegmentedControl>
           <IconButton icon={SyncIcon} aria-label="Перечитать PR" size="small" onClick={review.reload} />
         </div>
       )}

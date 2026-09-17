@@ -1,12 +1,15 @@
 // Shapes of the local-review HTTP API (tools/local-review/lib/routes/*).
 
-export type Mode = 'working' | 'staged' | 'base';
+export type Mode = 'working' | 'staged' | 'base' | 'commits';
 
 export type LocalDescriptor = {
   source: 'local';
   root: string;
   mode: Mode;
   base: string;
+  /** Selected commit range (short or full sha); set only while mode === 'commits'. */
+  from?: string;
+  to?: string;
 };
 
 export type PrDescriptor = {
@@ -15,6 +18,9 @@ export type PrDescriptor = {
   owner: string;
   repo: string;
   number: number;
+  /** Selected commit range for the PR's "commits" view; absent means "все изменения". */
+  from?: string;
+  to?: string;
 };
 
 export type Descriptor = LocalDescriptor | PrDescriptor;
@@ -82,6 +88,9 @@ export type DiffResponse = {
   textUnavailable?: string;
 };
 
+/** Commit range a comment was written against; omitted for the latest-commit-only selection. */
+export type CommitContext = { from: string; to: string; label: string };
+
 export type Comment = {
   id: string;
   /** null for a general comment about the whole review, not tied to a file. */
@@ -91,6 +100,32 @@ export type Comment = {
   text: string;
   createdAt: string;
   updatedAt: string;
+  commit?: CommitContext;
+};
+
+export type Commit = {
+  sha: string;
+  short: string;
+  parents: string[];
+  author: string;
+  /** ISO timestamp. */
+  date: string;
+  subject: string;
+  body: string;
+  merge: boolean;
+  /** A commit with no parents (the repository's first commit). */
+  root: boolean;
+};
+
+export type DirtyStatus = { dirty: boolean; files: number };
+
+export type CommitsResponse = {
+  /** Oldest to newest. */
+  commits: Commit[];
+  truncated: boolean;
+  fallback: boolean;
+  base: string | null;
+  dirty: DirtyStatus;
 };
 
 export type BrowseEntry = { name: string; path: string; isRepo: boolean; recent?: boolean };

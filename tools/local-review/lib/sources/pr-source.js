@@ -4,11 +4,23 @@ const { gh, ghJson } = require('../gh');
 const { parsePatch, MAX_TEXT_BYTES, TEXT_TOO_BIG_MESSAGE } = require('../diff');
 const { descriptorKey } = require('../descriptor');
 const { resolvePr } = require('../pr-search');
+const { rangeLabel } = require('../commits');
 
 const CACHE = new Map(); // descriptorKey -> { at, files }
 const TTL_MS = 120000;
 
 const SHA_CACHE = new Map(); // descriptorKey -> { at, mergeBaseSha, headRefOid }
+
+// The well-known empty-tree object id: every git object database has it,
+// including GitHub's — used as the left side of a commit range that starts
+// at the PR's root commit (no parent to diff against).
+const EMPTY_TREE_SHA1 = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+// "owner/repo:sha" -> { at, left } — the first parent of a commit-range's
+// `from`, resolved once per sha (a sha is immutable, so this never expires
+// beyond the same TTL as everything else here; it just avoids a refetch on
+// every /api/diff call for the same range).
+const RANGE_LEFT_CACHE = new Map();
 
 // Content is addressed by (commit sha, path): a sha is immutable, so once a
 // blob is fetched it never needs to be refetched or expired — only bounded so
@@ -264,7 +276,89 @@ async function loadFiles(descriptor, fresh) {
   return files;
 }
 
+/**
+ * The first parent of a commit-range's `from`, via GitHub's single-commit
+ * API — mirrors lib/commits.js's `${from}^` for the local source, since we
+ * have no local clone to ask git directly. A root commit (no parents) falls
+ * back to the empty tree, exactly like lib/commits.js's own root-commit case.
+ */
+async function resolveRangeLeft(descriptor, fresh) {
+  const key = `${descriptor.owner}/${descriptor.repo}:${descriptor.from}`;
+  const hit = RANGE_LEFT_CACHE.get(key);
+  if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit.left;
+
+  const commit = await ghJson([
+    'api',
+    `repos/${descriptor.owner}/${descriptor.repo}/commits/${descriptor.from}`,
+  ]);
+  const parents = commit.parents || [];
+  const left = parents.length ? parents[0].sha : EMPTY_TREE_SHA1;
+  RANGE_LEFT_CACHE.set(key, { at: Date.now(), left });
+  return left;
+}
+
+/**
+ * One entry of GitHub's "compare two commits" `files` array -> our shape.
+ * The compare API has no explicit binary flag, and it reports 0/0 line counts
+ * without a `patch` for changed binary files too. The only patch-less entry
+ * that is known to be textual is a pure rename/copy (or an empty file being
+ * added/removed) with no changes; everything else without a patch is treated
+ * as binary, so the diff view shows a placeholder instead of trying to fetch
+ * bytes that `gh api` cannot return as text.
+ */
+function mapCompareFile(f) {
+  const STATUS = { added: 'A', removed: 'D', modified: 'M', renamed: 'R', copied: 'C', changed: 'M' };
+  const status = STATUS[f.status] || 'M';
+  const additions = f.additions || 0;
+  const deletions = f.deletions || 0;
+  const unchanged = (f.changes || additions + deletions) === 0;
+  const textualWithoutPatch = unchanged && ['renamed', 'copied', 'added', 'removed'].includes(f.status);
+  const binary = !f.patch && !textualWithoutPatch;
+  const parsed = f.patch ? parsePatch(f.patch) : { hunks: [], binary, additions, deletions };
+  return {
+    path: f.filename,
+    oldPath: f.previous_filename || null,
+    status,
+    kind: status,
+    hunks: parsed.hunks,
+    binary: f.patch ? parsed.binary : binary,
+    additions: f.patch ? parsed.additions : additions,
+    deletions: f.patch ? parsed.deletions : deletions,
+  };
+}
+
+// GitHub pages the compare `files` list (300 per page by default, 3000 max
+// overall); ask for 100 at a time and keep going until a short page.
+const COMPARE_PER_PAGE = 100;
+const COMPARE_MAX_PAGES = 30;
+
+/** `gh api .../compare/left...to`, all pages, per (descriptor, from, to): same shape of caching as loadFiles above. */
+async function loadCommitRangeFiles(descriptor, fresh) {
+  const key = descriptorKey(descriptor); // includes from/to (lib/descriptor.js)
+  const hit = CACHE.get(key);
+  if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
+
+  const left = await resolveRangeLeft(descriptor, fresh);
+  const raw = [];
+  for (let page = 1; page <= COMPARE_MAX_PAGES; page += 1) {
+    const compare = await ghJson([
+      'api',
+      `repos/${descriptor.owner}/${descriptor.repo}/compare/${left}...${descriptor.to}` +
+        `?per_page=${COMPARE_PER_PAGE}&page=${page}`,
+    ]);
+    const pageFiles = compare.files || [];
+    raw.push(...pageFiles);
+    if (pageFiles.length < COMPARE_PER_PAGE) break;
+  }
+  const files = raw.map(mapCompareFile).sort((a, b) => a.path.localeCompare(b.path));
+
+  const result = { at: Date.now(), files, left };
+  CACHE.set(key, result);
+  return result;
+}
+
 function createPrSource(descriptor) {
+  const inRange = Boolean(descriptor.from && descriptor.to);
   return {
     id: descriptorKey(descriptor),
     kind: 'pr',
@@ -273,7 +367,22 @@ function createPrSource(descriptor) {
       return resolvePr(descriptor);
     },
     async listFiles(options) {
-      const files = await loadFiles(descriptor, options && options.fresh);
+      const fresh = options && options.fresh;
+      if (inRange) {
+        const { files } = await loadCommitRangeFiles(descriptor, fresh);
+        return {
+          files: files.map((f) => ({
+            path: f.path,
+            oldPath: f.oldPath,
+            status: f.status,
+            kind: f.kind,
+            additions: f.additions,
+            deletions: f.deletions,
+          })),
+          range: { label: rangeLabel(descriptor.from, descriptor.to) },
+        };
+      }
+      const files = await loadFiles(descriptor, fresh);
       return {
         files: files.map((f) => ({
           path: f.path,
@@ -288,6 +397,21 @@ function createPrSource(descriptor) {
     },
     async fileDiff(filePath, context, options) {
       const fresh = options && options.fresh;
+      if (inRange) {
+        const { files, left } = await loadCommitRangeFiles(descriptor, fresh);
+        const entry = files.find((f) => f.path === filePath);
+        if (!entry) {
+          const err = new Error(`Файл "${filePath}" отсутствует в диффе выбранных коммитов.`);
+          err.userFacing = true;
+          err.status = 404;
+          throw err;
+        }
+        // Reuses loadPrTexts as-is: a commit range's (left, to) pair is the
+        // same shape as a PR's (mergeBaseSha, headRefOid) pair, just with
+        // different actual shas.
+        const texts = await loadPrTexts(descriptor, { mergeBaseSha: left, headRefOid: descriptor.to }, entry);
+        return Object.assign({}, entry, texts);
+      }
       const files = await loadFiles(descriptor, fresh);
       const entry = files.find((f) => f.path === filePath);
       if (!entry) {

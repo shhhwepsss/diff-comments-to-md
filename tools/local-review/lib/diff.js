@@ -293,6 +293,8 @@ module.exports = {
   listFiles,
   fileDiff,
   parsePatch,
+  parseRawZ,
+  splitZ,
   splitLines,
   MAX_TEXT_BYTES,
   TEXT_TOO_BIG_MESSAGE,

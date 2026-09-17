@@ -94,6 +94,11 @@ export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, on
     <div className="rv-comment">
       <div className="rv-comment__head">
         <span className="rv-comment__anchor">{anchorLabel(comment)}</span>
+        {comment.commit && (
+          <span className="commit-chip" title="Коммит, в котором написан комментарий">
+            {comment.commit.from === comment.commit.to ? comment.commit.to : `${comment.commit.from}..${comment.commit.to}`}
+          </span>
+        )}
         <span className="rv-comment__date" title={`создан ${formatDate(comment.createdAt)}`}>
           {formatDate(comment.updatedAt)}
         </span>

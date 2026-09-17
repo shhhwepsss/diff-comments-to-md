@@ -1,6 +1,8 @@
 import type {
   BrowseResponse,
   Comment,
+  CommitContext,
+  CommitsResponse,
   Descriptor,
   DiffResponse,
   GhStatus,
@@ -47,12 +49,23 @@ export function descriptorQuery(d: Descriptor | null, extra?: Record<string, str
     // An omitted base means "the repository's default branch" server-side;
     // sending an empty string would be the same thing, but noisier in logs.
     if (d.base) p.set('base', d.base);
+    // Local commit range only matters in commits mode: other modes ignore it,
+    // and sending it anyway would be a stale range from a previous selection.
+    if (d.mode === 'commits' && d.from && d.to) {
+      p.set('from', d.from);
+      p.set('to', d.to);
+    }
   } else if (d && d.source === 'pr') {
     p.set('source', 'pr');
     p.set('host', d.host);
     p.set('owner', d.owner);
     p.set('repo', d.repo);
     p.set('number', String(d.number));
+    // Presence of both is what selects the PR's "commits" view.
+    if (d.from && d.to) {
+      p.set('from', d.from);
+      p.set('to', d.to);
+    }
   }
   for (const [k, v] of Object.entries(extra || {})) p.set(k, v);
   return p.toString();
@@ -63,10 +76,14 @@ export const api = {
     request<StateResponse>(`/api/state?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
   diff: (d: Descriptor, file: string, fresh = false) =>
     request<DiffResponse>(`/api/diff?${descriptorQuery(d, fresh ? { file, fresh: '1' } : { file })}`),
+  commits: (d: Descriptor, fresh = false) =>
+    request<CommitsResponse>(`/api/commits?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
 
   comments: (d: Descriptor) => request<{ comments: Comment[] }>(`/api/comments?${descriptorQuery(d)}`),
-  createComment: (d: Descriptor, body: { file: string; startLine: number | null; endLine: number | null; text: string }) =>
-    request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  createComment: (
+    d: Descriptor,
+    body: { file: string; startLine: number | null; endLine: number | null; text: string; commit?: CommitContext },
+  ) => request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', body)),
   createGeneralComment: (d: Descriptor, text: string) =>
     request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', { general: true, text })),
   updateComment: (d: Descriptor, id: string, text: string) =>

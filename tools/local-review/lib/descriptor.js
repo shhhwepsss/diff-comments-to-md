@@ -1,6 +1,6 @@
 'use strict';
 
-const MODES = new Set(['working', 'staged', 'base']);
+const MODES = new Set(['working', 'staged', 'base', 'commits']);
 
 function bad(message) {
   const err = new Error(message);
@@ -25,6 +25,7 @@ function parseDescriptor(url, defaults) {
     const mode = p.get('mode') || defaults.mode;
     const base = p.get('base') || defaults.base;
     if (!MODES.has(mode)) throw bad(`Неизвестный режим: ${mode}`);
+    if (mode === 'commits') return withCommitRange(Object.assign({}, defaults, { mode, base }), p, true);
     return Object.assign({}, defaults, { mode, base });
   }
 
@@ -36,7 +37,9 @@ function parseDescriptor(url, defaults) {
     // which revision that is, because only it can ask git.
     const base = p.get('base') || '';
     if (!MODES.has(mode)) throw bad(`Неизвестный режим: ${mode}`);
-    return { source: 'local', root, mode, base };
+    const descriptor = { source: 'local', root, mode, base };
+    if (mode === 'commits') return withCommitRange(descriptor, p, true);
+    return descriptor;
   }
 
   if (source === 'pr') {
@@ -46,16 +49,37 @@ function parseDescriptor(url, defaults) {
     const number = Number(p.get('number'));
     if (!owner || !repo) throw bad('Для PR нужны owner и repo');
     if (!Number.isInteger(number) || number <= 0) throw bad('Некорректный номер PR');
-    return { source: 'pr', host, owner, repo, number };
+    // For a PR, a commit range is optional: with neither from nor to the PR
+    // behaves exactly as it always has (the whole PR diff).
+    return withCommitRange({ source: 'pr', host, owner, repo, number }, p, false);
   }
 
   throw bad(`Неизвестный источник: ${source}`);
 }
 
+/**
+ * Reads `from`/`to` off the query string onto a descriptor.
+ * `required: true` (local mode=commits) -> both must be present, 400 otherwise.
+ * `required: false` (a PR) -> either both or neither; one alone is 400.
+ */
+function withCommitRange(descriptor, p, required) {
+  const from = p.get('from') || '';
+  const to = p.get('to') || '';
+  if (required && (!from || !to)) {
+    throw bad('Для режима «коммиты» нужны оба параметра: from и to');
+  }
+  if (!required && Boolean(from) !== Boolean(to)) {
+    throw bad('Нужны оба параметра: from и to, либо ни одного');
+  }
+  if (from && to) return Object.assign({}, descriptor, { from, to });
+  return descriptor;
+}
+
 function descriptorKey(d) {
+  const range = d.from && d.to ? `:${d.from}..${d.to}` : '';
   return d.source === 'local'
-    ? `local:${d.root}:${d.mode}:${d.base}`
-    : `pr:${d.host}/${d.owner}/${d.repo}#${d.number}`;
+    ? `local:${d.root}:${d.mode}:${d.base}${range}`
+    : `pr:${d.host}/${d.owner}/${d.repo}#${d.number}${range}`;
 }
 
 function descriptorLabel(d) {

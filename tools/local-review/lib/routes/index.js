@@ -7,10 +7,12 @@ const exportRoutes = require('./export');
 const browseRoutes = require('./browse');
 const session = require('./session');
 const ghRoutes = require('./gh');
+const commitsRoutes = require('./commits');
 
 const ROUTES = [
   { method: 'GET', path: '/api/state', handle: state.getState },
   { method: 'GET', path: '/api/diff', handle: state.getDiff },
+  { method: 'GET', path: '/api/commits', handle: commitsRoutes.list },
   { method: 'GET', path: '/api/comments', handle: comments.list },
   { method: 'POST', path: '/api/comments', handle: comments.create },
   // Must be matched before the /api/comments/:id pattern below.

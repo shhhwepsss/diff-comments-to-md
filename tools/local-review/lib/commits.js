@@ -7,10 +7,14 @@
  * существующих режимов (working / staged / base) через него не ходит: фича
  * «выбор диапазона коммитов» живёт отдельно и её можно выключить, не трогая
  * остальное.
+ *
+ * Мердж-коммит диффится с первым родителем (`sha^` == `sha^1` в git) — точно
+ * так же, как любой другой одиночный коммит; отдельного «комбинированного»
+ * (`--cc`) пути здесь больше нет.
  */
 
-const { git, gitText, gitTry, hasHead, revExists, mergeBase } = require('./git');
-const { parsePatch, parseRawZ, splitZ, splitLines } = require('./diff');
+const { git, gitText, gitTry, hasHead, revExists, mergeBase, gitShow } = require('./git');
+const { parsePatch, parseRawZ, splitZ, MAX_TEXT_BYTES, TEXT_TOO_BIG_MESSAGE } = require('./diff');
 
 // Разделители внутри --format: в сообщении коммита их не бывает, в отличие от
 // любого печатного символа, который кто-нибудь да напишет.
@@ -25,7 +29,7 @@ const EMPTY_TREE_SHA256 =
 
 const emptyTreeCache = new Map();
 
-/** Хеш пустого дерева — левая сторона диффа для самого первого коммита. */
+/** Хеш пустого дерева — левая сторона диффа для самого первого (root) коммита. */
 async function emptyTree(repoRoot) {
   if (emptyTreeCache.has(repoRoot)) return emptyTreeCache.get(repoRoot);
   const raw = await gitTry(['rev-parse', '--show-object-format'], repoRoot);
@@ -128,12 +132,6 @@ async function uncommittedSummary(repoRoot) {
 
 // ----------------------------------------------------------------- дифф
 
-async function isMergeCommit(repoRoot, sha) {
-  const out = await gitTry(['rev-list', '--parents', '-n', '1', sha], repoRoot);
-  if (!out) return false;
-  return out.trim().split(/\s+/).length > 2;
-}
-
 async function assertCommit(repoRoot, sha, what) {
   if (!(await revExists(sha, repoRoot))) {
     throw userError(`Коммит "${what || sha}" не найден в этом репозитории.`, 404);
@@ -141,189 +139,77 @@ async function assertCommit(repoRoot, sha, what) {
 }
 
 /**
- * argv для `git diff` по диапазону: от родителя нижнего коммита до верхнего.
- * У самого первого коммита родителя нет — сравниваем с пустым деревом.
+ * Левая сторона диффа выбора и argv для `git diff`: от первого родителя
+ * нижнего коммита (`from^`, что для мерджа и есть первый родитель) до
+ * верхнего. У самого первого (root) коммита родителя нет — сравниваем с
+ * пустым деревом.
  */
 async function rangeArgs(repoRoot, from, to) {
   const parent = await gitTry(['rev-parse', '--verify', '--quiet', `${from}^`], repoRoot);
   const left = parent ? parent.trim() : await emptyTree(repoRoot);
-  return ['diff', left, to];
-}
-
-/** Человекочитаемая git-команда, которую повторяет выбор. Показываем в UI. */
-async function describeCommand(repoRoot, from, to) {
-  if (from === to) {
-    if (await isMergeCommit(repoRoot, from)) return `git show --cc ${short(from)}`;
-    const parent = await gitTry(['rev-parse', '--verify', '--quiet', `${from}^`], repoRoot);
-    return parent ? `git show ${short(from)}` : `git diff <empty-tree>..${short(from)}`;
-  }
-  const parent = await gitTry(['rev-parse', '--verify', '--quiet', `${from}^`], repoRoot);
-  return parent
-    ? `git diff ${short(from)}^..${short(to)}`
-    : `git diff <empty-tree>..${short(to)}`;
+  return { args: ['diff', left, to], left };
 }
 
 function short(sha) {
   return String(sha).slice(0, 7);
 }
 
-/** `git diff-tree --cc --raw`: записи начинаются с N двоеточий по числу родителей. */
-function parseCombinedRawZ(tokens) {
-  const files = [];
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (!token.startsWith('::')) continue;
-    const fields = token.replace(/^:+/, '').split(' ');
-    const status = fields[fields.length - 1] || 'M';
-    files.push({ path: tokens[i + 1], oldPath: null, status, kind: status[0] });
-    i += 1;
-  }
-  return files;
-}
-
-/**
- * Комбинированный дифф мерджа (`@@@ -a,b -c,d +e,f @@@`): первые N символов
- * строки — маркеры по одному на родителя. Строка с '-' хоть у одного родителя
- * в результат не попала, строка без маркеров есть у всех — это контекст.
- */
-function parseCombinedPatch(patchText) {
-  const lines = splitLines(patchText);
-  const hunks = [];
-  let current = null;
-  let parents = 2;
-  let additions = 0;
-  let deletions = 0;
-  let binary = false;
-  let inHunk = false;
-
-  for (const line of lines) {
-    if (!inHunk && (line.startsWith('Binary files ') || line.startsWith('GIT binary patch'))) {
-      binary = true;
-      continue;
-    }
-    const header = /^(@{2,}) (.+?) \1(.*)$/.exec(line);
-    if (header) {
-      parents = header[1].length - 1;
-      const groups = header[2].trim().split(/\s+/);
-      const oldStart = Number(groups[0].slice(1).split(',')[0]);
-      const newStart = Number(groups[groups.length - 1].slice(1).split(',')[0]);
-      current = {
-        oldStart,
-        newStart,
-        heading: (header[3] || '').trim(),
-        lines: [],
-        _oldCursor: oldStart,
-        _newCursor: newStart,
-      };
-      hunks.push(current);
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk || !current) continue;
-    if (line.startsWith('\\')) continue;
-
-    const markers = line.slice(0, parents);
-    const text = line.slice(parents);
-    if (!/^[-+ ]*$/.test(markers)) {
-      inHunk = false;
-      current = null;
-      continue;
-    }
-    if (markers.includes('-')) {
-      current.lines.push({ type: 'del', oldLine: current._oldCursor, newLine: null, text });
-      current._oldCursor += 1;
-      deletions += 1;
-    } else if (markers.includes('+')) {
-      current.lines.push({ type: 'add', oldLine: null, newLine: current._newCursor, text });
-      current._newCursor += 1;
-      additions += 1;
-    } else {
-      current.lines.push({
-        type: 'context',
-        oldLine: current._oldCursor,
-        newLine: current._newCursor,
-        text,
-      });
-      current._oldCursor += 1;
-      current._newCursor += 1;
-    }
-  }
-
-  for (const h of hunks) {
-    delete h._oldCursor;
-    delete h._newCursor;
-  }
-  return { hunks, binary, additions, deletions };
-}
-
-/**
- * Файлы, затронутые выбором. Одиночный мердж-коммит показываем как GitHub —
- * комбинированным диффом: у чистого мерджа он пуст, и это не ошибка.
- */
+/** Файлы, затронутые выбором (одним коммитом или диапазоном). */
 async function listCommitFiles(repoRoot, from, to) {
   await assertCommit(repoRoot, from);
   if (to !== from) await assertCommit(repoRoot, to);
 
-  const combined = from === to && (await isMergeCommit(repoRoot, from));
-  let files;
-  if (combined) {
-    const raw = await git(
-      ['diff-tree', '--cc', '-r', '--raw', '-z', '--no-commit-id', '--no-color', from],
-      repoRoot
-    );
-    files = parseCombinedRawZ(splitZ(raw));
-  } else {
-    const args = await rangeArgs(repoRoot, from, to);
-    const raw = await git(args.concat(['--raw', '-z', '-M', '--no-color']), repoRoot);
-    files = parseRawZ(splitZ(raw));
-  }
+  const { args } = await rangeArgs(repoRoot, from, to);
+  const raw = await git(args.concat(['--raw', '-z', '-M', '--no-color']), repoRoot);
+  const files = parseRawZ(splitZ(raw));
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, combined };
+  return { files };
+}
+
+/**
+ * Полный текст файла по обе стороны выбора (для построчного дифф-виджета),
+ * тем же правилом, что и loadTexts в lib/diff.js: старый текст — `gitShow`
+ * на левой стороне (родитель нижнего коммита или пустое дерево), новый —
+ * `gitShow` на верхнем коммите. И то и другое естественно даёт null, когда
+ * пути не существует на этой стороне (добавленный / удалённый файл).
+ */
+async function loadCommitTexts(repoRoot, left, to, entry) {
+  if (entry.binary) return { oldText: null, newText: null };
+
+  const oldPath = entry.oldPath || entry.path;
+  const oldBuf = await gitShow(left, oldPath, repoRoot);
+  const newBuf = await gitShow(to, entry.path, repoRoot);
+
+  if ((oldBuf && oldBuf.length > MAX_TEXT_BYTES) || (newBuf && newBuf.length > MAX_TEXT_BYTES)) {
+    return { oldText: null, newText: null, textUnavailable: TEXT_TOO_BIG_MESSAGE };
+  }
+  return {
+    oldText: oldBuf !== null ? oldBuf.toString('utf8') : null,
+    newText: newBuf !== null ? newBuf.toString('utf8') : null,
+  };
 }
 
 async function commitFileDiff(repoRoot, from, to, filePath, context) {
-  const { files, combined } = await listCommitFiles(repoRoot, from, to);
+  const { files } = await listCommitFiles(repoRoot, from, to);
   const entry = files.find((f) => f.path === filePath);
   if (!entry) {
     throw userError(`Файл "${filePath}" отсутствует в диффе выбранных коммитов.`, 404);
   }
   const unified = Number.isFinite(context) ? context : 3;
 
-  if (combined) {
-    const patch = (
-      await git(
-        [
-          'diff-tree',
-          '--cc',
-          '-r',
-          '--no-commit-id',
-          '--no-color',
-          `-U${unified}`,
-          from,
-          '--',
-          entry.path,
-        ],
-        repoRoot
-      )
-    ).toString('utf8');
-    return Object.assign({}, entry, parseCombinedPatch(patch), { combined: true });
-  }
+  const { args, left } = await rangeArgs(repoRoot, from, to);
+  const diffArgs = args.concat(['-M', '--no-color', `-U${unified}`, '--', entry.path]);
+  if (entry.oldPath) diffArgs.push(entry.oldPath);
+  const patch = (await git(diffArgs, repoRoot)).toString('utf8');
 
-  const args = (await rangeArgs(repoRoot, from, to)).concat([
-    '-M',
-    '--no-color',
-    `-U${unified}`,
-    '--',
-    entry.path,
-  ]);
-  if (entry.oldPath) args.push(entry.oldPath);
-  const patch = (await git(args, repoRoot)).toString('utf8');
-  return Object.assign({}, entry, parsePatch(patch), { combined: false });
+  const result = Object.assign({}, entry, parsePatch(patch));
+  const texts = await loadCommitTexts(repoRoot, left, to, result);
+  return Object.assign(result, texts);
 }
 
-function rangeLabel(from, to, count) {
+function rangeLabel(from, to) {
   if (from === to) return `коммит ${short(from)}`;
-  return `коммиты ${short(from)}..${short(to)}${count ? ` (${count})` : ''}`;
+  return `коммиты ${short(from)}..${short(to)}`;
 }
 
 module.exports = {
@@ -331,11 +217,7 @@ module.exports = {
   uncommittedSummary,
   listCommitFiles,
   commitFileDiff,
-  describeCommand,
   rangeLabel,
-  parseCombinedPatch,
-  parseCombinedRawZ,
-  isMergeCommit,
   emptyTree,
   short,
 };

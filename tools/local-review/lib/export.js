@@ -36,6 +36,21 @@ function textOf(comment) {
 }
 
 /**
+ * The line right after the anchor for a comment written in commits mode and
+ * not on the latest commit alone: `<from>..<to>` (or bare `<to>` when it is
+ * a single commit), plus ` · <label>` when the client sent one. A comment
+ * with no `commit` context (every comment from working / staged / base, and
+ * one left on just the latest commit) has no such line — its block is
+ * exactly `anchor\ntext`, unchanged from before commits mode existed.
+ */
+function commitLineOf(comment) {
+  const ctx = comment.commit;
+  if (!ctx || !ctx.to) return null;
+  const range = ctx.from && ctx.from !== ctx.to ? `${ctx.from}..${ctx.to}` : ctx.to;
+  return ctx.label ? `${range} · ${ctx.label}` : range;
+}
+
+/**
  * Without general comments the output is exactly what it has always been:
  * `anchor\ntext` blocks, nothing else. General comments, when there are any,
  * come first under their own heading, oldest first, and the code comments
@@ -47,7 +62,11 @@ function renderMarkdown(comments) {
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const code = comments.filter((c) => !isGeneralComment(c));
   const codeBlocks = sortComments(code)
-    .map((c) => `${anchorOf(c)}\n${textOf(c)}`)
+    .map((c) => {
+      const commitLine = commitLineOf(c);
+      const head = commitLine ? `${anchorOf(c)}\n${commitLine}` : anchorOf(c);
+      return `${head}\n${textOf(c)}`;
+    })
     .join('\n\n');
 
   if (!general.length) return codeBlocks + (code.length ? '\n' : '');
@@ -74,4 +93,4 @@ function writeMarkdownFile(repoRoot, comments, date) {
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, renderMarkdown, writeMarkdownFile, sortComments, stamp };

@@ -17,7 +17,8 @@
     "prepare": "npm run build",
     "typecheck": "tsc -p tools/local-review/web",
     "test:web": "vitest run --config tools/local-review/web/vite.config.mts",
-    "smoke": "node tools/local-review/smoke.js"
+    "smoke": "node tools/local-review/smoke.js",
+    "smoke:commits": "node tools/local-review/smoke-commits.js"
   },
   "devDependencies": {
     "@codemirror/language": "^6.12.4",

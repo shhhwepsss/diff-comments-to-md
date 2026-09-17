@@ -16,6 +16,24 @@ function isGeneralComment(comment) {
   return comment.file === null;
 }
 
+/**
+ * { from, to, label } — the commit range within which the comment was
+ * written. Kept only on file comments written in commits mode (a general
+ * comment has no file/line to begin with, so it never carries one) so that
+ * a comment written in `working` / `staged` / `base` is stored exactly as
+ * it always has been.
+ */
+function normalizeCommit(commit) {
+  if (!commit || typeof commit !== 'object') return null;
+  const to = commit.to ? String(commit.to) : '';
+  if (!to) return null;
+  return {
+    from: commit.from ? String(commit.from) : to,
+    to,
+    label: commit.label ? String(commit.label) : '',
+  };
+}
+
 class CommentStore {
   /**
    * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
@@ -69,7 +87,7 @@ class CommentStore {
     return counts;
   }
 
-  add({ file, startLine, endLine, text }) {
+  add({ file, startLine, endLine, text, commit }) {
     const now = new Date().toISOString();
     const comment = {
       id: crypto.randomUUID(),
@@ -89,6 +107,11 @@ class CommentStore {
       const tmp = comment.startLine;
       comment.startLine = comment.endLine;
       comment.endLine = tmp;
+    }
+    // A general comment (file === null) never carries a commit context.
+    if (file !== null) {
+      const ctx = normalizeCommit(commit);
+      if (ctx) comment.commit = ctx;
     }
     this.data.comments.push(comment);
     this.save();
@@ -121,4 +144,4 @@ class CommentStore {
   }
 }
 
-module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment };
+module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment, normalizeCommit };

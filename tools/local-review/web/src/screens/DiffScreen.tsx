@@ -1,10 +1,12 @@
 import { Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, LinkExternalIcon } from '@primer/octicons-react';
+import { AlertIcon, HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import type { PrMeta } from '../api/types';
 import { FileSidebar } from '../diff/FileSidebar';
 import { DiffPane } from '../diff/DiffPane';
+import { CommitRail } from '../commits/CommitRail';
+import { DirtyBanner } from '../commits/DirtyBanner';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -46,12 +48,32 @@ function PrHeader({ pr }: { pr: PrMeta }) {
 }
 
 export function DiffScreen() {
-  const { state, loading, loadError, reload } = useReview();
+  const { state, loading, loadError, reload, commitsEmpty } = useReview();
 
   if (!state && loading) {
     return (
       <div className="rv-center">
         <Spinner size="large" />
+      </div>
+    );
+  }
+
+  // Commits mode with an empty history: /api/state is never called for it, so
+  // `state` stays null without this being a load error.
+  if (!state && commitsEmpty) {
+    return (
+      <div className="rv-diff-screen">
+        <DirtyBanner />
+        <div className="rv-center">
+          <Blankslate spacious>
+            <Blankslate.Visual>
+              <HistoryIcon size={24} />
+            </Blankslate.Visual>
+            <Blankslate.Heading>В репозитории ещё нет коммитов</Blankslate.Heading>
+            <Blankslate.Description>Сделайте хотя бы один коммит, чтобы использовать режим «Коммиты».</Blankslate.Description>
+            <Blankslate.PrimaryAction onClick={reload}>Обновить</Blankslate.PrimaryAction>
+          </Blankslate>
+        </div>
       </div>
     );
   }
@@ -73,6 +95,8 @@ export function DiffScreen() {
 
   return (
     <div className="rv-diff-screen">
+      <CommitRail />
+      <DirtyBanner />
       {state.pr && <PrHeader pr={state.pr} />}
       <div className="rv-diff-layout">
         <FileSidebar />
