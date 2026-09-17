@@ -79,8 +79,9 @@ export function App({ theme, onTheme }: Props) {
   );
 
   // A new descriptor is a new review: remount so no state leaks across.
+  // The file in the hash is left out of the key: switching files is not a new review.
   return route.screen === 'diff' ? (
-    <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor}>
+    <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor} initialFile={route.file}>
       {shell}
     </ReviewProvider>
   ) : (

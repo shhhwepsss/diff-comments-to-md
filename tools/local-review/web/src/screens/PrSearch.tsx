@@ -5,6 +5,7 @@ import { api, errorMessage, failureMessage } from '../api/client';
 import type { GhStatus, PrItem } from '../api/types';
 import { formatDate } from '../lib/format';
 import { hashFor } from '../lib/hash';
+import { type PrAuthorFilter, parsePrAuthor, readPrAuthor, writePrAuthor } from '../lib/prAuthor';
 import { useToast } from '../lib/toast';
 import './picker.css';
 
@@ -28,13 +29,14 @@ export function PrSearch() {
   const [repo, setRepo] = useState('');
   const [query, setQuery] = useState('');
   const [prState, setPrState] = useState('open');
+  const [author, setAuthor] = useState<PrAuthorFilter>(readPrAuthor);
   const [result, setResult] = useState<Result>({ kind: 'idle' });
   const toast = useToast();
 
-  const search = useCallback(async (params: { repo: string; q: string; state: string }) => {
+  const search = useCallback(async (params: { repo: string; q: string; state: string; author: PrAuthorFilter }) => {
     setResult({ kind: 'loading' });
     try {
-      const data = await api.searchPrs({ repo: params.repo.trim(), q: params.q.trim(), state: params.state });
+      const data = await api.searchPrs({ repo: params.repo.trim(), q: params.q.trim(), state: params.state, author: params.author });
       setResult({ kind: 'ok', items: data.items, homeDir: data.homeDir, storedPrs: data.storedPrs });
     } catch (e) {
       // On screen, not in a toast that disappears.
@@ -49,7 +51,9 @@ export function PrSearch() {
       .then((s) => {
         if (!alive) return;
         setStatus(s);
-        if (s.installed && s.authenticated) void search({ repo: '', q: '', state: 'open' });
+        // The first search runs without a repository, with the remembered
+        // author filter — the same value the select shows.
+        if (s.installed && s.authenticated) void search({ repo: '', q: '', state: 'open', author: readPrAuthor() });
       })
       .catch((e) => {
         if (!alive) return;
@@ -64,7 +68,7 @@ export function PrSearch() {
   }, [search, toast]);
 
   const ready = Boolean(status?.installed && status?.authenticated);
-  const run = () => void search({ repo, q: query, state: prState });
+  const run = () => void search({ repo, q: query, state: prState, author });
 
   return (
     <div className="rv-page">
@@ -122,13 +126,29 @@ export function PrSearch() {
                 value={prState}
                 onChange={(e) => {
                   setPrState(e.target.value);
-                  void search({ repo, q: query, state: e.target.value });
+                  void search({ repo, q: query, state: e.target.value, author });
                 }}
               >
                 <Select.Option value="open">open</Select.Option>
                 <Select.Option value="closed">closed</Select.Option>
                 <Select.Option value="merged">merged</Select.Option>
                 <Select.Option value="all">все</Select.Option>
+              </Select>
+            </FormControl>
+            <FormControl>
+              <FormControl.Label>Автор</FormControl.Label>
+              {/* Without a repository "все" is every PR you are involved in — gh cannot list all of GitHub (lib/pr-search.js). */}
+              <Select
+                value={author}
+                onChange={(e) => {
+                  const next = parsePrAuthor(e.target.value);
+                  setAuthor(next);
+                  writePrAuthor(next);
+                  void search({ repo, q: query, state: prState, author: next });
+                }}
+              >
+                <Select.Option value="all">все</Select.Option>
+                <Select.Option value="mine">мои</Select.Option>
               </Select>
             </FormControl>
             <Button type="submit" variant="primary" className="rv-pr-form__submit">

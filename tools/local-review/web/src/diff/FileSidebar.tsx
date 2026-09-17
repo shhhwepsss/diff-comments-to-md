@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import { CounterLabel, TextInput, TreeView } from '@primer/react';
 import {
   CheckIcon,
@@ -12,6 +22,7 @@ import {
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, type TreeNode } from './fileTree';
+import { viewHash, wantsNativeLink } from '../lib/hash';
 import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_WIDTH_KEY } from './sidebarWidth';
 import { viewedCount } from '../review/viewed';
 
@@ -142,6 +153,16 @@ export function FileSidebar() {
     );
   };
 
+  // Files are real links, so the browser's own gestures work: middle click
+  // and Ctrl/Cmd/Shift+click open the file in a new tab, on the same diff —
+  // the address carries the mode, base and commit range as well as the file.
+  // A plain click, Enter or Space stays in this tab without navigating.
+  const open = (path: string) => (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
+    if (wantsNativeLink(event)) return;
+    event.preventDefault();
+    review.selectFile(path);
+  };
+
   const renderNode = (node: TreeNode<FileEntry>): ReactNode =>
     node.type === 'dir' ? (
       <TreeView.Item id={`dir:${node.path}`} key={`dir:${node.path}`} title={node.path} defaultExpanded>
@@ -153,10 +174,13 @@ export function FileSidebar() {
       </TreeView.Item>
     ) : (
       <TreeView.Item
+        as="a"
+        href={viewHash(review.descriptor, node.path)}
+        className="rv-tree-link"
         id={`file:${node.path}`}
         key={`file:${node.path}`}
         current={node.path === activeFile}
-        onSelect={() => review.selectFile(node.path)}
+        onSelect={open(node.path)}
         title={node.item.oldPath ? `${node.item.oldPath} → ${node.path}` : node.path}
       >
         <TreeView.LeadingVisual>
@@ -169,10 +193,13 @@ export function FileSidebar() {
 
   const renderOrphan = (f: OrphanFile) => (
     <TreeView.Item
+      as="a"
+      href={viewHash(review.descriptor, f.path)}
+      className="rv-tree-link"
       id={`orphan:${f.path}`}
       key={`orphan:${f.path}`}
       current={f.path === activeFile}
-      onSelect={() => review.selectFile(f.path)}
+      onSelect={open(f.path)}
       title={`${f.path} — нет в текущем диффе`}
     >
       <TreeView.LeadingVisual>

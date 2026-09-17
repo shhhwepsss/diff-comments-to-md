@@ -18,6 +18,7 @@ async function search(req, res, ctx, url) {
     q: p.get('q'),
     state: p.get('state'),
     limit: p.get('limit'),
+    author: p.get('author'),
   });
   // The stored-PR count and config path are shown on the search screen so the
   // home directory never grows unnoticed (spec 3.2).

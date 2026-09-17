@@ -12,6 +12,7 @@ import type {
   StateResponse,
   ValidateResponse,
 } from './types';
+import type { PrAuthorFilter } from '../lib/prAuthor';
 
 export class ApiError extends Error {
   constructor(
@@ -107,6 +108,17 @@ export function descriptorQuery(d: Descriptor | null, extra?: Record<string, str
   return p.toString();
 }
 
+/**
+ * The descriptor to ask /api/commits with. A local `mode=commits` without a
+ * range is a 400 on every endpoint (lib/descriptor.js requires both ends), and
+ * the address can name that view before a range exists — `?mode=commits` typed
+ * by hand, or a repository with no commits at all. The branch history does not
+ * depend on the range, so ask for it as a plain working descriptor.
+ */
+export function commitsListDescriptor(d: Descriptor): Descriptor {
+  return d.source === 'local' && d.mode === 'commits' && !(d.from && d.to) ? { ...d, mode: 'working' } : d;
+}
+
 export const api = {
   state: (d: Descriptor, fresh = false) =>
     request<StateResponse>(`/api/state?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
@@ -156,11 +168,12 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) => request<Settings>('/api/settings', jsonBody('PUT', patch)),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
-  searchPrs: (params: { repo?: string; q?: string; state: string }) => {
+  searchPrs: (params: { repo?: string; q?: string; state: string; author: PrAuthorFilter }) => {
     const p = new URLSearchParams();
     if (params.repo) p.set('repo', params.repo);
     if (params.q) p.set('q', params.q);
     p.set('state', params.state);
+    p.set('author', params.author);
     return request<PrSearchResponse>(`/api/pr/search?${p.toString()}`);
   },
 };
