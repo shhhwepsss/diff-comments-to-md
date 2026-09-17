@@ -1709,6 +1709,45 @@ async function main() {
     'PR: общий комментарий лежит в PR-хранилище'
   );
 
+  // ------------------------------------------------------ copy prompt (#28)
+  console.log('\nпромпт при копировании');
+  const settings0 = await call('/api/settings');
+  ok(settings0.status === 200 && settings0.body.copyPrompt === '', 'GET /api/settings: по умолчанию промпт пустой', JSON.stringify(settings0.body));
+  const badSettings = await call('/api/settings', json('PUT', { copyPrompt: 42 }));
+  eq(badSettings.status, 400, 'PUT /api/settings: не строка -> 400');
+  const emptyPatch = await call('/api/settings', json('PUT', {}));
+  eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
+
+  const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
+  ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));
+  ok(fs.existsSync(path.join(home, 'settings.json')), 'промпт лежит в <home>/settings.json');
+  // Choosing a screen rewrites state.json; the prompt must survive that.
+  await call('/api/session', json('POST', { descriptor: { source: 'pr', host: 'github.com', owner: 'o', repo: 'r', number: 26 } }));
+  eq((await call('/api/settings')).body.copyPrompt, '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n', 'промпт переживает запись сессии');
+
+  const WITH_PROMPT = GENERAL_EXPORT + '\nИсправь замечания ниже.\nПо одному коммиту.\n';
+  const pText = await call(`/api/export/text?${cleanQ}`);
+  eq(pText.body, WITH_PROMPT, 'буфер: комментарии, пустая строка, промпт в конце');
+  const pFile = await call(`/api/export/file?${cleanQ}`, { method: 'POST' });
+  eq(fs.readFileSync(pFile.body.path, 'utf8'), WITH_PROMPT, '.md-файл содержит тот же промпт, что и буфер');
+  fs.rmSync(pFile.body.path, { force: true });
+  eq(
+    (await call(`/api/comments?${cleanQ}`)).body.comments.map((c) => c.id).sort(),
+    gIdsBefore,
+    'инвариант 1: экспорт с промптом комментарии не меняет'
+  );
+
+  const { exportMarkdown } = require('./lib/export');
+  eq(exportMarkdown([], 'Промпт'), 'Промпт\n', 'промпт без комментариев — только промпт');
+  eq(
+    exportMarkdown([{ id: 'g', file: null, startLine: null, endLine: null, text: 'Только общий', createdAt: 'x' }], ' \n '),
+    '## Общие комментарии\n\nТолько общий\n',
+    'пробельный промпт текст не меняет'
+  );
+
+  await call('/api/settings', json('PUT', { copyPrompt: '' }));
+  eq((await call(`/api/export/text?${cleanQ}`)).body, GENERAL_EXPORT, 'очищенный промпт: экспорт снова байт в байт прежний');
+
   const gCleared = await call(`/api/comments/clear-all?${cleanQ}`, json('POST', { confirm: true }));
   eq(gCleared.body.removed, 4, '«Очистить всё» удаляет и общие комментарии');
 
