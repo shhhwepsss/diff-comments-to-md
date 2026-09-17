@@ -38,6 +38,9 @@ async function create(req, res, ctx, url) {
         startLine: body.startLine === undefined ? null : body.startLine,
         endLine: body.endLine === undefined ? null : body.endLine,
         text: String(body.text).trim(),
+        // The client only sends this when the selection is not just the
+        // latest commit (see docs on lib/store.js's normalizeCommit).
+        commit: body.commit,
       });
   sendJson(res, 201, { comment });
 }

@@ -29,6 +29,11 @@ async function getState(req, res, ctx, url) {
       ? descriptor.base
       : range.base || descriptor.base || (await defaultBase(descriptor.root));
 
+  // A commit-range selection (local mode=commits, or a PR with from/to) has
+  // its own label ("коммит <sha>" / "коммиты <a>..<b>", built by the source
+  // above); the PR-branch label only applies when no such range is selected.
+  const commitsSelected = descriptor.source === 'local' ? descriptor.mode === 'commits' : Boolean(descriptor.from && descriptor.to);
+
   sendJson(res, 200, {
     repoRoot: descriptor.source === 'local' ? descriptor.root : null,
     source: descriptor.source,
@@ -36,7 +41,7 @@ async function getState(req, res, ctx, url) {
     base,
     pr,
     rangeLabel:
-      pr && pr.baseRefName && pr.headRefName
+      !commitsSelected && pr && pr.baseRefName && pr.headRefName
         ? `${pr.baseRefName} ← ${pr.headRefName}`
         : range.label,
     totalComments: store.all().length,

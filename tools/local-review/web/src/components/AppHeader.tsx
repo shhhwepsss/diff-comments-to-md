@@ -23,6 +23,7 @@ const MODES: { value: Mode; label: string }[] = [
   { value: 'working', label: 'Рабочая копия' },
   { value: 'staged', label: 'Staged' },
   { value: 'base', label: 'Base' },
+  { value: 'commits', label: 'Коммиты' },
 ];
 
 const THEMES: { value: ThemePref; label: string; icon: typeof SunIcon }[] = [
@@ -76,6 +77,10 @@ export function AppHeader({ route, theme, onTheme }: Props) {
   const count = review?.comments.length ?? 0;
   const noComments = !review || count === 0;
   const ThemeIcon = THEMES.find((t) => t.value === theme)?.icon ?? DeviceDesktopIcon;
+  // The «Коммиты» tab lights up on click, not once the history has loaded:
+  // otherwise the old tab stays selected for the whole fetch and the click
+  // looks ignored.
+  const commitsTab = Boolean(review && (review.commitsMode || review.commitsLoading));
 
   return (
     <header className="rv-header">
@@ -101,6 +106,16 @@ export function AppHeader({ route, theme, onTheme }: Props) {
             <span className="rv-header__count" title="Комментариев всего">
               Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
             </span>
+            {review.commitsMode && review.outsideCount > 0 && (
+              <button
+                type="button"
+                className="rv-header__outside"
+                title="Комментарии, написанные вне выбранного диапазона коммитов"
+                onClick={review.expandSelectionToOutside}
+              >
+                {review.outsideCount} вне выбора
+              </button>
+            )}
             <GeneralComments review={review} />
             <Button size="small" leadingVisual={CopyIcon} disabled={noComments} onClick={() => void review.copyAll()}>
               Скопировать всё
@@ -138,7 +153,7 @@ export function AppHeader({ route, theme, onTheme }: Props) {
           <RepoLabel root={local.root} />
           <SegmentedControl aria-label="Режим диффа" size="small">
             {MODES.map((m) => (
-              <SegmentedControl.Button key={m.value} selected={local.mode === m.value} onClick={() => review.setMode(m.value)}>
+              <SegmentedControl.Button key={m.value} selected={m.value === 'commits' ? commitsTab : !commitsTab && local.mode === m.value} onClick={() => review.setMode(m.value)}>
                 {m.label}
               </SegmentedControl.Button>
             ))}
@@ -155,6 +170,14 @@ export function AppHeader({ route, theme, onTheme }: Props) {
               {review.descriptor.owner}/{review.descriptor.repo} #{review.descriptor.number}
             </span>
           </span>
+          <SegmentedControl aria-label="Режим диффа" size="small">
+            <SegmentedControl.Button selected={!commitsTab} onClick={() => review.setPrCommitsView(false)}>
+              Все изменения
+            </SegmentedControl.Button>
+            <SegmentedControl.Button selected={commitsTab} onClick={() => review.setPrCommitsView(true)}>
+              Коммиты
+            </SegmentedControl.Button>
+          </SegmentedControl>
           <IconButton icon={SyncIcon} aria-label="Перечитать PR" size="small" onClick={review.reload} />
         </div>
       )}

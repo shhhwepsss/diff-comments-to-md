@@ -9,6 +9,7 @@ import { CommentCard, CommentForm } from './CommentCard';
 import type { Block } from './cm/blocks';
 import { stripFinalNewline, type LineRange } from './lineMap';
 import { markdownToRender } from './markdownFile';
+import { insideSelection } from '../review/commitSelection';
 import './diff.css';
 
 const WRAP_KEY = 'local-review:wrap';
@@ -79,7 +80,7 @@ function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: 
 
 export function DiffPane() {
   const review = useReview();
-  const { activeFile, activeDiff, comments, editor, editingId, state } = review;
+  const { activeFile, activeDiff, comments, editor, editingId, state, commitsMode, commitSel, commits } = review;
   const [wrap, setWrap] = useState(readWrap);
   // Source diff or rendered markdown, per file path; source is the default.
   const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
@@ -102,7 +103,15 @@ export function DiffPane() {
     }
   };
 
-  const fileComments = useMemo(() => comments.filter((c) => c.file === activeFile), [comments, activeFile]);
+  // Comments outside the selected commit range are hidden here; the header
+  // counts them separately ("N вне выбора") instead of just dropping them.
+  const fileComments = useMemo(
+    () =>
+      comments.filter(
+        (c) => c.file === activeFile && (!commitsMode || !commitSel || insideSelection(commits, commitSel, c.commit)),
+      ),
+    [comments, activeFile, commitsMode, commitSel, commits],
+  );
   const diff = activeDiff?.kind === 'ready' ? activeDiff.diff : null;
   const reason = diff ? unavailableReason(diff) : null;
   const showsEditor = Boolean(diff && !reason);

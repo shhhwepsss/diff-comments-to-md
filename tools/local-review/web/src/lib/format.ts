@@ -1,5 +1,12 @@
 import type { Comment } from '../api/types';
 
+/** Short human date for a commit dot / drawer row, e.g. "12 мар, 14:05". */
+export function formatCommitWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);

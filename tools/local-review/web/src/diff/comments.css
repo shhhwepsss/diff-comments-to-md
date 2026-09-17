@@ -30,6 +30,17 @@
   overflow-wrap: anywhere;
 }
 
+/* Commit range a comment was written against (commits mode only). */
+.commit-chip {
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-full);
+  padding: 0 var(--base-size-6);
+  white-space: nowrap;
+}
+
 .rv-comment__date {
   margin-left: auto;
   white-space: nowrap;

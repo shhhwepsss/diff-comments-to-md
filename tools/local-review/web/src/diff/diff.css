@@ -261,3 +261,63 @@ body.rv-dragging-lines * {
   background: var(--bgColor-accent-muted);
   border-radius: var(--borderRadius-medium);
 }
+
+/* ---------- reload over an existing diff ---------- */
+.rv-diff-layout {
+  position: relative;
+}
+
+.rv-diff-layout.is-loading > .rv-sidebar,
+.rv-diff-layout.is-loading > .rv-content {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.15s ease 0.1s;
+}
+
+.rv-reload {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.rv-reload__bar {
+  height: 2px;
+  overflow: hidden;
+  background: var(--bgColor-accent-muted);
+}
+
+.rv-reload__bar::after {
+  content: '';
+  display: block;
+  width: 30%;
+  height: 100%;
+  background: var(--bgColor-accent-emphasis);
+  animation: rv-reload-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes rv-reload-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+.rv-reload__chip {
+  position: absolute;
+  top: var(--base-size-16);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: var(--base-size-6) var(--base-size-12);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 999px;
+  box-shadow: var(--shadow-floating-small);
+  font-size: var(--text-body-size-small);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-reload__bar::after { animation: none; width: 100%; opacity: 0.6; }
+}
