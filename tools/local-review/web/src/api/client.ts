@@ -12,6 +12,7 @@ import type {
   StateResponse,
   ValidateResponse,
 } from './types';
+import type { PrAuthorFilter } from '../lib/prAuthor';
 
 export class ApiError extends Error {
   constructor(
@@ -150,11 +151,12 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) => request<Settings>('/api/settings', jsonBody('PUT', patch)),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
-  searchPrs: (params: { repo?: string; q?: string; state: string }) => {
+  searchPrs: (params: { repo?: string; q?: string; state: string; author: PrAuthorFilter }) => {
     const p = new URLSearchParams();
     if (params.repo) p.set('repo', params.repo);
     if (params.q) p.set('q', params.q);
     p.set('state', params.state);
+    p.set('author', params.author);
     return request<PrSearchResponse>(`/api/pr/search?${p.toString()}`);
   },
 };

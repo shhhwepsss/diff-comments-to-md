@@ -875,7 +875,13 @@ async function main() {
   const listKey =
     'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
   const searchKey =
+    'search prs --involves=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
+  // Фильтр «мои» (#19): автор уходит в gh флагом @me, а не в текст запроса.
+  // Без репозитория «все» — это --involves=@me (весь GitHub перечислить нельзя).
+  const searchMineKey =
     'search prs --author=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
+  const listMineKey =
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --search fix --author @me --state open';
   ghFixtures(
     {
       [listKey]: {
@@ -895,6 +901,37 @@ async function main() {
         ]),
       },
       [searchKey]: { code: 0, stdout: '[]' },
+      [searchMineKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          {
+            number: 27,
+            title: 'Мой PR в другом репозитории',
+            repository: { nameWithOwner: 'o/other' },
+            author: { login: 'octocat' },
+            state: 'OPEN',
+            isDraft: true,
+            updatedAt: '2026-09-03T10:00:00Z',
+            url: 'https://github.com/o/other/pull/27',
+          },
+        ]),
+      },
+      [listMineKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          {
+            number: 26,
+            title: 'Мой PR',
+            author: { login: 'octocat' },
+            headRefName: 'fix/mine',
+            baseRefName: 'main',
+            state: 'OPEN',
+            isDraft: false,
+            updatedAt: '2026-09-02T10:00:00Z',
+            url: 'https://github.com/o/r/pull/26',
+          },
+        ]),
+      },
     },
     home
   );
@@ -919,6 +956,46 @@ async function main() {
     'пустой результат глобального поиска -> пустой список, не ошибка'
   );
   eq(globalSearch.body.mode, 'global', 'режим поиска — global');
+
+  const explicitAll = await call('/api/pr/search?repo=o/r&state=open&author=all');
+  eq(
+    explicitAll.body.items && explicitAll.body.items.map((i) => i.number).join(','),
+    '25',
+    'author=all в репозитории — тот же список, что и без фильтра'
+  );
+
+  const repoMine = await call('/api/pr/search?repo=o/r&q=fix&state=open&author=mine');
+  ok(
+    repoMine.status === 200 && repoMine.body.items.length === 1 && repoMine.body.items[0].number === 26,
+    'author=mine в репозитории -> gh pr list --author @me',
+    JSON.stringify(repoMine.body)
+  );
+
+  // Без репозитория фильтр меняет саму команду gh, а у подставного gh нет
+  // ключа «*»: промах по команде уронил бы проверку кодом 98.
+  const globalAll = await call('/api/pr/search?state=open&author=all');
+  ok(
+    globalAll.status === 200 && globalAll.body.items.length === 0,
+    'author=all без репозитория -> gh search prs --involves=@me',
+    JSON.stringify(globalAll.body)
+  );
+
+  const globalMine = await call('/api/pr/search?state=open&author=mine');
+  ok(
+    globalMine.status === 200 &&
+      globalMine.body.items.length === 1 &&
+      globalMine.body.items[0].number === 27 &&
+      globalMine.body.items[0].repo === 'other',
+    'author=mine без репозитория -> gh search prs --author=@me, другой список',
+    JSON.stringify(globalMine.body)
+  );
+
+  const badAuthor = await call('/api/pr/search?repo=o/r&author=someone');
+  ok(
+    badAuthor.status === 400 && /all \| mine/.test(badAuthor.body.error),
+    'неизвестный фильтр автора -> 400 с подсказкой',
+    JSON.stringify(badAuthor.body)
+  );
 
   const badRepo = await call('/api/pr/search?repo=просто-строка');
   ok(
