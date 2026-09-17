@@ -744,6 +744,50 @@ async function main() {
     'обзор каталога НЕ пишет в .gitignore'
   );
 
+  // The line always lands in the repository's top-level .gitignore, even when
+  // the chosen root is a subfolder (e.g. a hand-edited #hash or a stale recent).
+  const nestedRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-nested-'));
+  git(['init', '-q', '-b', 'main'], nestedRepo);
+  write(nestedRepo, 'packages/app/index.js', 'x\n');
+  const nestedDir = path.join(nestedRepo, 'packages', 'app');
+  const pickedNested = await call(
+    '/api/session',
+    json('POST', {
+      descriptor: { source: 'local', root: nestedDir, mode: 'working', base: 'origin/main' },
+    })
+  );
+  ok(
+    pickedNested.status === 200 && pickedNested.body.gitignore.changed === true,
+    'выбор подкаталога репозитория -> gitignore.changed',
+    JSON.stringify(pickedNested.body)
+  );
+  ok(!fs.existsSync(path.join(nestedDir, '.gitignore')), 'вложенный .gitignore в подкаталоге НЕ создаётся');
+  eq(
+    fs.readFileSync(path.join(nestedRepo, '.gitignore'), 'utf8'),
+    '.local-review/\n',
+    'строка записана в корневой .gitignore репозитория'
+  );
+
+  const { ensureGitignore } = require('./review');
+  const notRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-nogit-'));
+  eq(await ensureGitignore(notRepoDir), { changed: false }, 'вне git-репозитория ensureGitignore ничего не пишет');
+  ok(!fs.existsSync(path.join(notRepoDir, '.gitignore')), 'вне git-репозитория .gitignore не создаётся');
+
+  const gitignoreCases = [
+    ['node_modules', 'node_modules\n.local-review/\n', 'без перевода строки в конце -> дописывает с новой строки'],
+    ['node_modules\r\n', 'node_modules\r\n.local-review/\r\n', 'CRLF сохраняется'],
+    ['/.local-review\n', '/.local-review\n', '/.local-review уже игнорирует -> без дубля'],
+    ['**/.local-review/\n', '**/.local-review/\n', '**/.local-review/ уже игнорирует -> без дубля'],
+  ];
+  for (const [before, after, label] of gitignoreCases) {
+    const r = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-gi-'));
+    git(['init', '-q', '-b', 'main'], r);
+    fs.writeFileSync(path.join(r, '.gitignore'), before);
+    await ensureGitignore(r);
+    await ensureGitignore(r); // a second run must not duplicate the line
+    eq(fs.readFileSync(path.join(r, '.gitignore'), 'utf8'), after, `.gitignore: ${label}`);
+  }
+
   const noGitignoreRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-pick-'));
   git(['init', '-q', '-b', 'main'], noGitignoreRepo);
   const picked = await call(

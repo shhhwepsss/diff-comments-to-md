@@ -106,8 +106,18 @@ local-review — локальный просмотр git-диффа с комм�
 Комментарии хранятся в ${STORE_DIR}/comments.json в корне репозитория.
 `;
 
-/** Adds .local-review/ to .gitignore if it is not already ignored. */
-function ensureGitignore(repoRoot) {
+// Lines that already ignore the store at the repository root.
+const GITIGNORE_ENTRIES = [STORE_DIR, `${STORE_DIR}/`, `/${STORE_DIR}`, `/${STORE_DIR}/`, `**/${STORE_DIR}`, `**/${STORE_DIR}/`];
+
+/**
+ * Adds .local-review/ to the top-level .gitignore of the repository that
+ * contains `dir`, if it is not already there. `dir` may be any folder inside
+ * the repository: the line never goes to a nested .gitignore. Outside a git
+ * repository nothing is written.
+ */
+async function ensureGitignore(dir) {
+  const repoRoot = await findRepoRoot(dir);
+  if (!repoRoot) return { changed: false };
   const file = path.join(repoRoot, '.gitignore');
   const entry = `${STORE_DIR}/`;
   let content = '';
@@ -117,7 +127,7 @@ function ensureGitignore(repoRoot) {
     if (e.code !== 'ENOENT') return { changed: false, error: e.message };
   }
   const lines = content.split(/\r?\n/).map((l) => l.trim());
-  if (lines.includes(entry) || lines.includes(STORE_DIR) || lines.includes(`/${entry}`)) {
+  if (lines.some((l) => GITIGNORE_ENTRIES.includes(l))) {
     return { changed: false };
   }
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
@@ -194,7 +204,7 @@ async function start(options) {
 
   // No repository under cwd is no longer a reason to refuse: the UI opens on
   // the folder picker and the descriptor arrives with the first request.
-  const gitignore = repoRoot ? ensureGitignore(repoRoot) : { changed: false };
+  const gitignore = repoRoot ? await ensureGitignore(repoRoot) : { changed: false };
   const defaults = repoRoot
     ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
     : null;
