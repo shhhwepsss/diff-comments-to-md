@@ -168,6 +168,8 @@ export type Gitignore = {
 
 /** ~/.local-review/settings.json. */
 export type Settings = {
+  /** Appended after the comments in both exports; empty = comments alone. */
+  copyPrompt: string;
   /** Where the `.local-review/` ignore line goes: repo root .gitignore or the machine-wide one. */
   gitignoreTarget: 'project' | 'global';
 };

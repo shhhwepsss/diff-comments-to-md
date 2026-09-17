@@ -60,26 +60,32 @@ function writeState(next) {
 /**
  * User preferences, kept apart from state.json: that file is rewritten on
  * every screen change from whatever readState() returns, so a key it does not
- * know about would be dropped. `gitignoreTarget` says where the
- * `.local-review/` ignore line goes — into the repository's root .gitignore
- * ('project', the default and the historical behaviour) or into the machine's
- * global ignore file, core.excludesFile ('global').
+ * know about would be dropped. `copyPrompt` is free text the export puts
+ * after the comments; empty means "the comments alone". `gitignoreTarget`
+ * says where the `.local-review/` ignore line goes — into the repository's
+ * root .gitignore ('project', the default and the historical behaviour) or
+ * into the machine's global ignore file, core.excludesFile ('global').
  */
+const SETTINGS_DEFAULTS = { copyPrompt: '', gitignoreTarget: 'project' };
+
 function readSettings() {
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
     return {
+      copyPrompt: parsed && typeof parsed.copyPrompt === 'string' ? parsed.copyPrompt : SETTINGS_DEFAULTS.copyPrompt,
       gitignoreTarget:
-        parsed && GITIGNORE_TARGETS.includes(parsed.gitignoreTarget) ? parsed.gitignoreTarget : 'project',
+        parsed && GITIGNORE_TARGETS.includes(parsed.gitignoreTarget)
+          ? parsed.gitignoreTarget
+          : SETTINGS_DEFAULTS.gitignoreTarget,
     };
   } catch {
     // Same as state.json: missing or corrupt just means defaults.
-    return { gitignoreTarget: 'project' };
+    return { ...SETTINGS_DEFAULTS };
   }
 }
 
 function writeSettings(patch) {
-  return writeJsonAtomic(settingsPath(), Object.assign(readSettings(), patch));
+  return writeJsonAtomic(settingsPath(), { ...readSettings(), ...patch });
 }
 
 function setLast(descriptor) {

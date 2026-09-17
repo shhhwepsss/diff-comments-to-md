@@ -5,6 +5,7 @@ import {
   CopyIcon,
   DeviceDesktopIcon,
   DownloadIcon,
+  GearIcon,
   MarkGithubIcon,
   MoonIcon,
   RepoIcon,
@@ -13,11 +14,10 @@ import {
   TrashIcon,
 } from '@primer/octicons-react';
 import type { Mode } from '../api/types';
-import type { Route } from '../lib/hash';
+import { settingsHash, type Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
 import { useOptionalReview } from '../review/ReviewContext';
 import { GeneralComments } from './GeneralComments';
-import { GitignoreSettings } from './GitignoreSettings';
 import './header.css';
 
 const MODES: { value: Mode; label: string }[] = [
@@ -130,7 +130,19 @@ export function AppHeader({ route, theme, onTheme }: Props) {
           </div>
         )}
 
-        <GitignoreSettings />
+        {/* Settings is a page, not a dialog: the gear is on every screen and
+            carries the current address so «Назад» comes back here. */}
+        {route.screen !== 'settings' && (
+          <IconButton
+            icon={GearIcon}
+            aria-label="Настройки"
+            size="small"
+            variant="invisible"
+            onClick={() => {
+              window.location.hash = settingsHash(window.location.hash);
+            }}
+          />
+        )}
 
         <ActionMenu>
           <ActionMenu.Anchor>
