@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  clampSidebarWidth,
-  maxSidebarWidth,
-  parseSidebarWidth,
-  SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-  sidebarWidthForKey,
-} from './sidebarWidth';
+import { clampSidebarWidth, maxSidebarWidth, parseSidebarWidth, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH } from './sidebarWidth';
 
 describe('clampSidebarWidth', () => {
   it('keeps widths inside the range as they are', () => {
@@ -45,29 +38,5 @@ describe('parseSidebarWidth', () => {
 
   it.each([null, '', 'abc', '12px', '-300', '3.5', '100'])('falls back to the default for %j', (raw) => {
     expect(parseSidebarWidth(raw)).toBe(SIDEBAR_DEFAULT_WIDTH);
-  });
-});
-
-describe('sidebarWidthForKey', () => {
-  it('steps with the arrows, further with Shift', () => {
-    expect(sidebarWidthForKey('ArrowRight', false, 320, 1600)).toBe(336);
-    expect(sidebarWidthForKey('ArrowLeft', false, 320, 1600)).toBe(304);
-    expect(sidebarWidthForKey('ArrowRight', true, 320, 1600)).toBe(384);
-  });
-
-  it('clamps arrow steps at both ends', () => {
-    expect(sidebarWidthForKey('ArrowLeft', true, 230, 1600)).toBe(SIDEBAR_MIN_WIDTH);
-    expect(sidebarWidthForKey('ArrowRight', true, 1100, 1600)).toBe(1120);
-  });
-
-  it('jumps to min, max and the default', () => {
-    expect(sidebarWidthForKey('Home', false, 500, 1600)).toBe(SIDEBAR_MIN_WIDTH);
-    expect(sidebarWidthForKey('End', false, 500, 1600)).toBe(1120);
-    expect(sidebarWidthForKey('Enter', false, 500, 1600)).toBe(SIDEBAR_DEFAULT_WIDTH);
-  });
-
-  it('ignores other keys', () => {
-    expect(sidebarWidthForKey('a', false, 320, 1600)).toBeNull();
-    expect(sidebarWidthForKey('ArrowUp', false, 320, 1600)).toBeNull();
   });
 });

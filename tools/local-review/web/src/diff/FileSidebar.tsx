@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { CounterLabel, TextInput, TreeView } from '@primer/react';
 import {
   FileAddedIcon,
@@ -11,15 +11,7 @@ import {
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, type TreeNode } from './fileTree';
-import {
-  clampSidebarWidth,
-  maxSidebarWidth,
-  parseSidebarWidth,
-  SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-  SIDEBAR_WIDTH_KEY,
-  sidebarWidthForKey,
-} from './sidebarWidth';
+import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_WIDTH_KEY } from './sidebarWidth';
 
 function StatusIcon({ file }: { file: FileEntry }) {
   const kind = (file.status || 'M')[0];
@@ -60,33 +52,25 @@ function useViewportWidth(): number {
  * The stored width is what the user chose; the rendered one is re-clamped to
  * the current viewport, so shrinking the window doesn't forget the choice.
  */
-function useSidebarWidth(): [number, number, (next: number, persist: boolean) => void] {
+function useSidebarWidth(): [number, (next: number, persist: boolean) => void] {
   const viewport = useViewportWidth();
   const [chosen, setChosen] = useState(readWidth);
   const update = useCallback((next: number, persist: boolean) => {
     setChosen(next);
     if (persist) saveWidth(next);
   }, []);
-  return [clampSidebarWidth(chosen, viewport), viewport, update];
+  return [clampSidebarWidth(chosen, viewport), update];
 }
 
-function ResizeHandle({
-  width,
-  viewport,
-  onResize,
-}: {
-  width: number;
-  viewport: number;
-  onResize: (next: number, persist: boolean) => void;
-}) {
+function ResizeHandle({ width, onResize }: { width: number; onResize: (next: number, persist: boolean) => void }) {
   const drag = useRef<{ startX: number; startWidth: number; last: number } | null>(null);
 
-  const endDrag = (commit: boolean) => {
+  const endDrag = () => {
     const d = drag.current;
     if (!d) return;
     drag.current = null;
     document.body.classList.remove('rv-dragging-sidebar');
-    onResize(commit ? d.last : d.startWidth, true);
+    onResize(d.last, true);
   };
 
   // Mid-drag unmount (e.g. switching screens) must not leave the cursor stuck.
@@ -96,7 +80,6 @@ function ResizeHandle({
     if (event.button !== 0) return;
     // Otherwise the browser selects file names while we drag.
     event.preventDefault();
-    event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = { startX: event.clientX, startWidth: width, last: width };
     document.body.classList.add('rv-dragging-sidebar');
@@ -109,35 +92,17 @@ function ResizeHandle({
     d.last = next;
     onResize(next, false);
   };
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape' && drag.current) {
-      event.preventDefault();
-      endDrag(false);
-      return;
-    }
-    const next = sidebarWidthForKey(event.key, event.shiftKey, width, viewport);
-    if (next === null) return;
-    event.preventDefault();
-    onResize(next, true);
-  };
 
   return (
     <div
       className="rv-sidebar__resize"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Ширина дерева файлов"
-      aria-valuemin={SIDEBAR_MIN_WIDTH}
-      aria-valuemax={maxSidebarWidth(viewport)}
-      aria-valuenow={width}
-      title="Потяните, чтобы изменить ширину (двойной клик — сбросить)"
-      tabIndex={0}
+      title="Потяните, чтобы изменить ширину"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={() => endDrag(true)}
-      onPointerCancel={() => endDrag(false)}
-      onDoubleClick={() => onResize(clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH, viewport), true)}
-      onKeyDown={onKeyDown}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     />
   );
 }
@@ -146,7 +111,7 @@ export function FileSidebar() {
   const review = useReview();
   const { state, comments, activeFile } = review;
   const [filter, setFilter] = useState('');
-  const [width, viewport, setWidth] = useSidebarWidth();
+  const [width, setWidth] = useSidebarWidth();
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -172,7 +137,7 @@ export function FileSidebar() {
 
   const renderNode = (node: TreeNode<FileEntry>): ReactNode =>
     node.type === 'dir' ? (
-      <TreeView.Item id={`dir:${node.path}`} key={`dir:${node.path}`} defaultExpanded>
+      <TreeView.Item id={`dir:${node.path}`} key={`dir:${node.path}`} title={node.path} defaultExpanded>
         <TreeView.LeadingVisual>
           <TreeView.DirectoryIcon />
         </TreeView.LeadingVisual>
@@ -245,7 +210,7 @@ export function FileSidebar() {
           </>
         )}
       </div>
-      <ResizeHandle width={width} viewport={viewport} onResize={setWidth} />
+      <ResizeHandle width={width} onResize={setWidth} />
     </nav>
   );
 }

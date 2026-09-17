@@ -38,10 +38,8 @@
 }
 
 .rv-sidebar__resize:hover,
-.rv-sidebar__resize:focus-visible,
 body.rv-dragging-sidebar .rv-sidebar__resize {
   background: var(--bgColor-accent-emphasis);
-  outline: none;
 }
 
 .rv-sidebar__head {
