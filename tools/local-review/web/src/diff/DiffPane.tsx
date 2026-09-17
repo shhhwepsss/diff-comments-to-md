@@ -1,8 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, CodeIcon, CommentIcon, EyeClosedIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
+import { failureMessage } from '../api/client';
+import { useToast } from '../lib/toast';
 import type { Comment, DiffResponse } from '../api/types';
 import { DiffEditor } from './DiffEditor';
 import { CommentCard, CommentForm } from './CommentCard';
@@ -17,6 +19,27 @@ const WRAP_KEY = 'local-review:wrap';
 
 // marked + DOMPurify + markdown styles load only when a file is first rendered.
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
+
+/**
+ * A chunk that fails to load throws through render, and with no boundary that
+ * unmounts the whole app. Instead the pane goes back to the source diff and
+ * `onError` says why.
+ */
+class PreviewBoundary extends Component<{ onError: (e: unknown) => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  componentDidCatch(error: unknown) {
+    this.props.onError(error);
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+}
 
 function readWrap(): boolean {
   try {
@@ -83,6 +106,7 @@ export function DiffPane() {
   const review = useReview();
   const { activeFile, activeDiff, comments, editor, editingId, state, commitsMode, commitSel, commits } = review;
   const [wrap, setWrap] = useState(readWrap);
+  const toast = useToast();
   // Source diff or rendered markdown, per file path; source is the default.
   const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
   // Files whose remote images the reviewer chose to load (not persisted).
@@ -312,19 +336,26 @@ export function DiffPane() {
             {anchored.length > 0 ? ` (${anchored.length})` : ''}.
           </div>
           <div className="rv-diff-frame">
-            <Suspense
-              fallback={
-                <div className="rv-diff-loading">
-                  <Spinner size="medium" />
-                </div>
-              }
+            <PreviewBoundary
+              onError={(e) => {
+                setRenderedFiles((prev) => ({ ...prev, [activeFile]: false }));
+                toast(failureMessage('Просмотр markdown не загрузился', e), true);
+              }}
             >
-              <MarkdownPreview
-                text={markdown.text}
-                loadExternalImages={Boolean(externalImageFiles[activeFile])}
-                onLoadExternalImages={() => setExternalImageFiles((prev) => ({ ...prev, [activeFile]: true }))}
-              />
-            </Suspense>
+              <Suspense
+                fallback={
+                  <div className="rv-diff-loading">
+                    <Spinner size="medium" />
+                  </div>
+                }
+              >
+                <MarkdownPreview
+                  text={markdown.text}
+                  loadExternalImages={Boolean(externalImageFiles[activeFile])}
+                  onLoadExternalImages={() => setExternalImageFiles((prev) => ({ ...prev, [activeFile]: true }))}
+                />
+              </Suspense>
+            </PreviewBoundary>
           </div>
         </>
       )}

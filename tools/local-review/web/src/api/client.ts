@@ -22,14 +22,49 @@ export class ApiError extends Error {
   }
 }
 
+/** Status of an ApiError for a request that never got an HTTP response. */
+export const NO_RESPONSE = 0;
+
+/**
+ * The text a failed response should show: the server's `{ error }` when it
+ * sent one, otherwise the start of a plain-text body (a proxy page, a stack),
+ * otherwise just the status.
+ */
+export function responseErrorMessage(status: number, payload: unknown): string {
+  if (payload && typeof payload === 'object' && 'error' in payload && payload.error) return String(payload.error);
+  const text = typeof payload === 'string' ? payload.replace(/\s+/g, ' ').trim() : '';
+  if (!text) return `HTTP ${status}`;
+  return `HTTP ${status}: ${text.length > 200 ? `${text.slice(0, 200)}…` : text}`;
+}
+
+/** One line for a toast from whatever a request (or anything else) threw. */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  return String(e);
+}
+
+/** A toast line with what was being done in front: "Не удалось X: reason". */
+export function failureMessage(action: string, e: unknown): string {
+  return `${action}: ${errorMessage(e)}`;
+}
+
 async function request<T>(pathname: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(pathname, init);
-  const contentType = res.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json') ? await res.json() : await res.text();
-  if (!res.ok) {
-    const message = payload && typeof payload === 'object' && payload.error ? payload.error : `HTTP ${res.status}`;
-    throw new ApiError(String(message), res.status);
+  let res: Response;
+  try {
+    res = await fetch(pathname, init);
+  } catch (e) {
+    // fetch rejects only when there is no response at all: the review server
+    // is down or restarting. The browser's own "Failed to fetch" says nothing.
+    throw new ApiError(`Сервер review недоступен (${errorMessage(e)})`, NO_RESPONSE);
   }
+  const contentType = res.headers.get('content-type') || '';
+  let payload: unknown;
+  try {
+    payload = contentType.includes('application/json') ? await res.json() : await res.text();
+  } catch (e) {
+    throw new ApiError(`HTTP ${res.status}: ответ не читается (${errorMessage(e)})`, res.status);
+  }
+  if (!res.ok) throw new ApiError(responseErrorMessage(res.status, payload), res.status);
   return payload as T;
 }
 
