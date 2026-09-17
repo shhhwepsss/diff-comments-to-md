@@ -3,6 +3,7 @@
 const { sendJson, readJsonBody } = require('../http');
 const { parseDescriptor } = require('../descriptor');
 const { storeFor } = require('../stores/factory');
+const { modeKeyOf } = require('../viewed');
 
 /**
  * POST { file, fingerprint, viewed: true } marks a file viewed;
@@ -15,7 +16,11 @@ const { storeFor } = require('../stores/factory');
  * mark a version nobody has seen.
  */
 async function set(req, res, ctx, url) {
-  const store = storeFor(parseDescriptor(url, ctx.defaults), ctx.homeDir);
+  const descriptor = parseDescriptor(url, ctx.defaults);
+  const store = storeFor(descriptor, ctx.homeDir);
+  // Which view the mark belongs to comes from the descriptor, not the body:
+  // it is the same descriptor /api/state answered with.
+  const modeKey = modeKeyOf(descriptor);
   const body = await readJsonBody(req);
   if (!body.file || typeof body.file !== 'string' || body.file === '__proto__') {
     sendJson(res, 400, { error: 'file обязателен' });
@@ -26,7 +31,7 @@ async function set(req, res, ctx, url) {
     return;
   }
   if (body.viewed === false) {
-    store.unsetViewed(body.file);
+    store.unsetViewed(body.file, modeKey);
     sendJson(res, 200, { file: body.file, viewed: false });
     return;
   }
@@ -34,7 +39,7 @@ async function set(req, res, ctx, url) {
     sendJson(res, 400, { error: 'Чтобы отметить файл просмотренным, нужен fingerprint из /api/state' });
     return;
   }
-  const record = store.setViewed(body.file, body.fingerprint);
+  const record = store.setViewed(body.file, modeKey, body.fingerprint);
   sendJson(res, 200, { file: body.file, viewed: true, fingerprint: record.fingerprint, viewedAt: record.viewedAt });
 }
 

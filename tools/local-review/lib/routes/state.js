@@ -5,7 +5,7 @@ const { parseDescriptor, MODES } = require('../descriptor');
 const { defaultBase } = require('../git');
 const { createSource } = require('../sources/factory');
 const { storeFor } = require('../stores/factory');
-const { isViewed } = require('../viewed');
+const { isViewed, modeKeyOf } = require('../viewed');
 
 function isFresh(url) {
   return url.searchParams.get('fresh') === '1';
@@ -56,7 +56,7 @@ async function getState(req, res, ctx, url) {
       comments: counts[f.path] || 0,
       fingerprint: f.fingerprint || null,
       // A mark made against another version of this file's diff no longer counts.
-      viewed: isViewed(viewed[f.path], f.fingerprint),
+      viewed: isViewed(viewed[f.path], modeKeyOf(descriptor), f.fingerprint),
     })),
     // Comments can outlive the diff they were written against; surface them
     // so nothing silently disappears from the UI.

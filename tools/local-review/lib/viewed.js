@@ -17,9 +17,33 @@ function fingerprintOf(parts) {
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 40);
 }
 
-/** The one invalidation rule: viewed only while the stored fingerprint is the current one. */
-function isViewed(record, fingerprint) {
-  return Boolean(record && fingerprint && record.fingerprint === fingerprint);
+/**
+ * The bucket a mark migrated from the first, pre-modes format sits in
+ * (lib/store.js migrateViewed). It counts in any view whose fingerprint it
+ * still matches, which is the view it was made in.
+ */
+const ANY_MODE = '*';
+
+/**
+ * Which view a mark belongs to. Each view diffs something else, so a file
+ * marked in one is genuinely unread in another — and a commit range keys by
+ * the range itself, because picking other commits is another diff again.
+ * Local and PR descriptors never share a store (lib/stores/factory.js), so
+ * the key does not repeat the source.
+ */
+function modeKeyOf(descriptor) {
+  if (descriptor.from && descriptor.to) return `commits:${descriptor.from}..${descriptor.to}`;
+  return descriptor.source === 'local' ? `mode:${descriptor.mode}` : 'pr:all';
+}
+
+/**
+ * The one invalidation rule: viewed only while this view's stored fingerprint
+ * is the current one. `bucket` is what the store keeps for this file.
+ */
+function isViewed(bucket, modeKey, fingerprint) {
+  if (!bucket || !fingerprint) return false;
+  const record = bucket[modeKey] || bucket[ANY_MODE];
+  return Boolean(record && record.fingerprint === fingerprint);
 }
 
 // Modes whose right-hand side is the worktree, not a blob git already has.
@@ -89,4 +113,4 @@ async function withLocalFingerprints(root, mode, files) {
   });
 }
 
-module.exports = { fingerprintOf, isViewed, withLocalFingerprints, hashWorktreeFiles };
+module.exports = { fingerprintOf, isViewed, modeKeyOf, withLocalFingerprints, hashWorktreeFiles, ANY_MODE };

@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { ANY_MODE } = require('./viewed');
 
 const STORE_DIR = '.local-review';
 const STORE_FILE = 'comments.json';
@@ -38,6 +39,23 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * The first shape of `viewed` was one record per file: { path: { fingerprint,
+ * viewedAt } }. Such a record predates the split into views, so it is kept
+ * under ANY_MODE and counts in whichever view its fingerprint still matches —
+ * which is the view it was made in, since every view fingerprints its own
+ * diff. Nothing is dropped and the format version does not move: a store that
+ * was already per-mode passes through untouched.
+ */
+function migrateViewed(viewed) {
+  const out = {};
+  for (const [file, value] of Object.entries(viewed)) {
+    if (!isPlainObject(value)) continue;
+    out[file] = typeof value.fingerprint === 'string' ? { [ANY_MODE]: value } : value;
+  }
+  return out;
+}
+
 class CommentStore {
   /**
    * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
@@ -58,7 +76,7 @@ class CommentStore {
       if (parsed && Array.isArray(parsed.comments)) {
         this.data = { version: parsed.version || 1, comments: parsed.comments };
         // Optional: files written before "viewed" existed simply have none.
-        if (isPlainObject(parsed.viewed)) this.data.viewed = parsed.viewed;
+        if (isPlainObject(parsed.viewed)) this.data.viewed = migrateViewed(parsed.viewed);
       }
     } catch (e) {
       if (e && e.code !== 'ENOENT') {
@@ -142,27 +160,46 @@ class CommentStore {
   }
 
   /**
-   * { [path]: { fingerprint, viewedAt } } — what was marked viewed and against
-   * which diff. Whether a mark still holds is decided by the caller against
-   * the current fingerprint (lib/viewed.js isViewed); a stale mark is left in
-   * place, so it is harmless and never needs a cleanup pass.
+   * { [path]: { [modeKey]: { fingerprint, viewedAt } } } — what was marked
+   * viewed, in which view, and against which diff. One bucket per view
+   * (lib/viewed.js modeKeyOf) so that marking a file in `base` does not erase
+   * the mark made on the same file in `working`. Whether a mark still holds
+   * is decided by the caller against the current fingerprint (lib/viewed.js
+   * isViewed); a stale mark is left in place, so it is harmless and never
+   * needs a cleanup pass.
    */
   viewedFiles() {
     return Object.assign({}, this.data.viewed || {});
   }
 
-  setViewed(file, fingerprint) {
+  setViewed(file, modeKey, fingerprint) {
     // Created on first use, so a review nobody marked keeps its file as-is.
     if (!this.data.viewed) this.data.viewed = {};
+    const bucket = isPlainObject(this.data.viewed[file]) ? this.data.viewed[file] : {};
     const record = { fingerprint: String(fingerprint), viewedAt: new Date().toISOString() };
-    this.data.viewed[file] = record;
+    bucket[modeKey] = record;
+    this.data.viewed[file] = bucket;
     this.save();
     return record;
   }
 
-  unsetViewed(file) {
-    if (!this.data.viewed || !Object.prototype.hasOwnProperty.call(this.data.viewed, file)) return false;
-    delete this.data.viewed[file];
+  /**
+   * Takes the mark off in this view. A mark migrated from the flat, pre-modes
+   * format (ANY_MODE) goes too: it is the mark the reviewer is looking at, and
+   * it has no view of its own to stay in.
+   */
+  unsetViewed(file, modeKey) {
+    const bucket = this.data.viewed && this.data.viewed[file];
+    if (!isPlainObject(bucket)) return false;
+    let removed = false;
+    for (const key of [modeKey, ANY_MODE]) {
+      if (Object.prototype.hasOwnProperty.call(bucket, key)) {
+        delete bucket[key];
+        removed = true;
+      }
+    }
+    if (!removed) return false;
+    if (Object.keys(bucket).length === 0) delete this.data.viewed[file];
     this.save();
     return true;
   }

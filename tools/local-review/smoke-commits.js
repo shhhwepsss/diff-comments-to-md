@@ -240,6 +240,17 @@ async function main() {
   ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'a.txt в том же коммите просмотрен');
   ok((await aIn(commits[0].sha, commits[0].sha)).viewed === false, 'a.txt в другом коммите (другой дифф) не просмотрен');
   ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'возврат к тому же коммиту — отметка на месте');
+
+  // Каждый диапазон — свой вид: отметка одного не трогает отметку другого.
+  const aRange = await aIn(commits[1].sha, commits[3].sha);
+  await call(
+    `/api/viewed?${commitsQ(commits[1].sha, commits[3].sha)}`,
+    json('POST', { file: 'a.txt', fingerprint: aRange.fingerprint, viewed: true })
+  );
+  ok((await aIn(commits[1].sha, commits[3].sha)).viewed === true, 'a.txt отмечен в диапазоне');
+  ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'отметка диапазона не стёрла отметку одного коммита');
+  await call(`/api/viewed?${commitsQ(commits[1].sha, commits[3].sha)}`, json('POST', { file: 'a.txt', viewed: false }));
+  ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'снятие в диапазоне не трогает отметку одного коммита');
   await call(`/api/viewed?${commitsQ(commits[1].sha, commits[1].sha)}`, json('POST', { file: 'a.txt', viewed: false }));
 
   console.log('\nдиапазон');
@@ -332,9 +343,21 @@ async function main() {
         }),
       },
       'pr view 30 --repo o/r --json baseRefName': { code: 0, stdout: JSON.stringify({ baseRefName: 'main' }) },
-      // Only hit by the "no range selected" check at the very end — exactly
-      // today's PR behaviour, with an (empty, for simplicity) whole-PR diff.
-      'pr diff 30 --repo o/r': { code: 0, stdout: '' },
+      // The whole-PR diff: the "no range selected" view, which keeps its own
+      // viewed marks (a different diff of the same file than any range).
+      'pr diff 30 --repo o/r': {
+        code: 0,
+        stdout: [
+          'diff --git a/x.txt b/x.txt',
+          'index 1111111..2222222 100644',
+          '--- a/x.txt',
+          '+++ b/x.txt',
+          '@@ -1 +1 @@',
+          '-первая версия',
+          '+вторая версия',
+          '',
+        ].join('\n'),
+      },
       [commitsListKey]: {
         code: 0,
         stdout: JSON.stringify([
@@ -430,6 +453,16 @@ async function main() {
   await prCall(`/api/viewed?${prQ(C2, C2)}`, json('POST', { file: 'x.txt', fingerprint: xSingle.fingerprint, viewed: true }));
   ok((await xIn(C2, C2)).viewed === true, 'PR: x.txt в диапазоне одного коммита просмотрен');
   ok((await xIn(C1, C2)).viewed === false, 'PR: x.txt в другом диапазоне (другой патч) не просмотрен');
+
+  // "Все изменения" — отдельный вид со своими отметками.
+  const wholeQ = 'source=pr&host=github.com&owner=o&repo=r&number=30';
+  const xWhole = async () => (await prCall(`/api/state?${wholeQ}`)).body.files.find((f) => f.path === 'x.txt');
+  ok((await xWhole()).viewed === false, 'PR: отметка диапазона не переносится на «Все изменения»');
+  await prCall(`/api/viewed?${wholeQ}`, json('POST', { file: 'x.txt', fingerprint: (await xWhole()).fingerprint, viewed: true }));
+  ok((await xWhole()).viewed === true, 'PR: x.txt отмечен в «Все изменения»');
+  ok((await xIn(C2, C2)).viewed === true, 'PR: отметка в «Все изменения» не стёрла отметку диапазона');
+  await prCall(`/api/viewed?${wholeQ}`, json('POST', { file: 'x.txt', viewed: false }));
+  ok((await xWhole()).viewed === false && (await xIn(C2, C2)).viewed === true, 'PR: снятие в «Все изменения» не трогает диапазон');
 
   console.log('\nPR: ошибки — 400 без пары from/to');
   const oneSided = await prCall(`/api/state?source=pr&host=github.com&owner=o&repo=r&number=30&from=${C1}`);
