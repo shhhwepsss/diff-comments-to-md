@@ -14,15 +14,34 @@
 }
 
 .rv-sidebar {
+  /* Width comes from FileSidebar (dragged, clamped, remembered). */
+  position: relative;
+  flex: none;
   width: 320px;
-  min-width: 220px;
-  max-width: 50vw;
-  resize: horizontal;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   border-right: var(--borderWidth-thin) solid var(--borderColor-default);
   background: var(--bgColor-default);
+}
+
+/* Drag strip on the sidebar's right edge; overlaps the border. */
+.rv-sidebar__resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rv-sidebar__resize:hover,
+.rv-sidebar__resize:focus-visible,
+body.rv-dragging-sidebar .rv-sidebar__resize {
+  background: var(--bgColor-accent-emphasis);
+  outline: none;
 }
 
 .rv-sidebar__head {
@@ -210,6 +229,12 @@
 
 .rv-pane-empty {
   padding: var(--base-size-24);
+}
+
+body.rv-dragging-sidebar,
+body.rv-dragging-sidebar * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 body.rv-dragging-lines,
