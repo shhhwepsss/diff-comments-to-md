@@ -154,10 +154,18 @@ head против base PR-а.
 
 Поле «репозиторий» **опциональное**:
 
-| Репозиторий | Команда | Ветка в выдаче |
-| --- | --- | --- |
-| задан | `gh pr list --repo o/r --search <q> --state <s> --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft` | есть |
-| пусто | `gh search prs --author=@me --state=<s> --json number,title,repository,author,state,updatedAt,url,isDraft` + строка запроса | нет, показывается `—` |
+| Репозиторий | Автор | Команда | Ветка в выдаче |
+| --- | --- | --- | --- |
+| задан | все | `gh pr list --repo o/r --search <q> --state <s> --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft` | есть |
+| задан | мои | то же плюс `--author @me` | есть |
+| пусто | мои | `gh search prs --author=@me --state=<s> --json number,title,repository,author,state,updatedAt,url,isDraft` + строка запроса | нет, показывается `—` |
+| пусто | все | то же, но `--involves=@me` вместо `--author=@me` | нет, показывается `—` |
+
+Фильтр по автору добавлен позже первой версии (#19). «Все» без репозитория —
+это `--involves=@me`: PR, где пользователь автор, исполнитель, упомянут или
+запрошен как ревьюер. Показать вообще все PR на GitHub нельзя и незачем,
+поэтому «все» здесь означает «все, где я участвую». Фильтр всегда уходит
+флагом `gh`, строка запроса пользователя не трогается.
 
 Причина расхождения: у `gh search prs` в списке полей `--json` нет
 `headRefName` (проверено на `gh 2.96.0`). Ветка в этом случае подтягивается
