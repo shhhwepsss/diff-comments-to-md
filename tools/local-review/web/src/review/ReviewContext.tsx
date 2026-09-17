@@ -5,6 +5,7 @@ import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
 import { createDraftStore, type DraftStore } from './drafts';
+import { withViewed } from './viewed';
 import {
   clampIndex,
   commitContextFor,
@@ -75,6 +76,8 @@ export type Review = {
   expandSelectionToOutside: () => void;
   dismissDirtyNotice: () => void;
   selectFile: (path: string) => void;
+  /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
+  setFileViewed: (path: string, viewed: boolean) => Promise<void>;
   openEditor: (anchor: EditorAnchor) => void;
   closeEditor: () => void;
   startEdit: (id: string) => void;
@@ -387,6 +390,22 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
     [descriptor, loadDiff, state],
   );
 
+  const setFileViewed = useCallback(
+    async (path: string, viewed: boolean) => {
+      const entry = state?.files.find((f) => f.path === path);
+      if (!entry || (viewed && !entry.fingerprint)) return;
+      // Flip first: the checkbox must answer the click, not the network.
+      setState((s) => (s ? withViewed(s, path, viewed) : s));
+      try {
+        await api.setViewed(descriptor, path, entry.fingerprint, viewed);
+      } catch (e) {
+        setState((s) => (s ? withViewed(s, path, !viewed) : s));
+        fail(e);
+      }
+    },
+    [descriptor, fail, state],
+  );
+
   const openEditor = useCallback((anchor: EditorAnchor) => {
     setEditingId(null);
     setEditor(anchor);
@@ -555,6 +574,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       expandSelectionToOutside,
       dismissDirtyNotice,
       selectFile,
+      setFileViewed,
       openEditor,
       closeEditor,
       startEdit,
@@ -597,6 +617,7 @@ export function ReviewProvider({ initial, children }: { initial: Descriptor; chi
       expandSelectionToOutside,
       dismissDirtyNotice,
       selectFile,
+      setFileViewed,
       openEditor,
       closeEditor,
       startEdit,

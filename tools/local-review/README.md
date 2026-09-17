@@ -303,13 +303,14 @@ DELETE: `?source=local&root=<путь>&mode=&base=` либо
 
 | Метод | Путь | Что делает |
 | --- | --- | --- |
-| GET | `/api/state?<дескриптор>` | список изменённых файлов + счётчики комментариев |
+| GET | `/api/state?<дескриптор>` | список изменённых файлов + счётчики комментариев; у файла `fingerprint` (версия его диффа) и `viewed` |
 | GET | `/api/diff?file=&<дескриптор>` | дифф одного файла с реальными номерами строк + полные тексты `oldText` / `newText` |
 | GET | `/api/comments?<дескриптор>` | все комментарии этого источника |
 | POST | `/api/comments?<дескриптор>` | создать `{file, startLine, endLine, text}`; общий комментарий — `{general: true, text}` (в хранилище `file: null`) |
 | PUT | `/api/comments/<id>?<дескриптор>` | изменить текст |
 | DELETE | `/api/comments/<id>?<дескриптор>` | удалить один |
 | POST | `/api/comments/clear-all?<дескриптор>` | удалить все, только с `{"confirm": true}` |
+| POST | `/api/viewed?<дескриптор>` | `{file, fingerprint, viewed: true}` — отметить просмотренным, `{file, viewed: false}` — снять; отметка перестаёт действовать, как только дифф файла меняется |
 | GET | `/api/export/text?<дескриптор>` | markdown-текст для буфера |
 | POST | `/api/export/file?<дескриптор>` | записать `review-<...>.md` |
 | GET | `/api/gh/status` | установлен ли `gh`, залогинен ли, под кем |

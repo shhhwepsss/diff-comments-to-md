@@ -47,6 +47,26 @@
   color: var(--fgColor-default);
 }
 
+.rv-sidebar__viewed {
+  font-weight: normal;
+  color: var(--fgColor-muted);
+}
+
+/* A viewed file reads as done: muted name, a check at the end of the row. */
+.rv-tree-name.is-viewed {
+  color: var(--fgColor-muted);
+}
+
+.rv-tree-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+}
+
+.rv-viewed-mark {
+  color: var(--fgColor-success);
+}
+
 .rv-sidebar__label {
   font-family: var(--fontStack-monospace);
   overflow: hidden;
@@ -154,6 +174,23 @@
   display: inline-flex;
   align-items: center;
   gap: var(--base-size-8);
+}
+
+.rv-file-header__viewed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: 2px var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  cursor: pointer;
+  user-select: none;
+}
+
+.rv-file-header__viewed.is-viewed {
+  background: var(--bgColor-accent-muted);
+  border-color: var(--borderColor-accent-muted);
 }
 
 .rv-diffstat {

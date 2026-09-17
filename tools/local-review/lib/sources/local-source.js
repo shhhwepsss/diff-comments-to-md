@@ -3,6 +3,7 @@
 const { listFiles, fileDiff } = require('../diff');
 const { listCommitFiles, commitFileDiff, rangeLabel } = require('../commits');
 const { descriptorKey } = require('../descriptor');
+const { withLocalFingerprints } = require('../viewed');
 
 function createLocalSource(descriptor) {
   const { root, mode, base, from, to } = descriptor;
@@ -15,9 +16,12 @@ function createLocalSource(descriptor) {
     async listFiles() {
       if (mode === 'commits') {
         const { files } = await listCommitFiles(root, from, to);
-        return { files, range: { label: rangeLabel(from, to) } };
+        return { files: await withLocalFingerprints(root, mode, files), range: { label: rangeLabel(from, to) } };
       }
-      return listFiles(root, mode, base); // -> { files, range }
+      const { files, range } = await listFiles(root, mode, base);
+      // Only the file list carries fingerprints: fileDiff re-lists files for
+      // every request and has no use for hashing the worktree again.
+      return { files: await withLocalFingerprints(root, mode, files), range };
     },
     async fileDiff(filePath, context) {
       if (mode === 'commits') return commitFileDiff(root, from, to, filePath, context);

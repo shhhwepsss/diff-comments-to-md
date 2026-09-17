@@ -49,7 +49,9 @@ function splitZ(buf) {
 /**
  * `git diff --raw -z -M` output, parsed.
  * Entries look like ":100644 100644 aaa bbb M\0path\0" and, for renames,
- * ":100644 100644 aaa bbb R096\0old\0new\0".
+ * ":100644 100644 aaa bbb R096\0old\0new\0". `aaa`/`bbb` are kept as
+ * oldBlob/newBlob for the "viewed" fingerprint (lib/viewed.js); `bbb` is all
+ * zeros when the new side exists only in the worktree.
  */
 function parseRawZ(tokens) {
   const files = [];
@@ -59,11 +61,13 @@ function parseRawZ(tokens) {
     const fields = token.slice(1).split(' ');
     const status = fields[fields.length - 1] || 'M';
     const kind = status[0];
+    const oldBlob = fields[2] || null;
+    const newBlob = fields[3] || null;
     if (kind === 'R' || kind === 'C') {
-      files.push({ path: tokens[i + 2], oldPath: tokens[i + 1], status, kind });
+      files.push({ path: tokens[i + 2], oldPath: tokens[i + 1], status, kind, oldBlob, newBlob });
       i += 2;
     } else {
-      files.push({ path: tokens[i + 1], oldPath: null, status, kind });
+      files.push({ path: tokens[i + 1], oldPath: null, status, kind, oldBlob, newBlob });
       i += 1;
     }
   }
@@ -79,7 +83,9 @@ async function listUntracked(repoRoot) {
 
 async function listFiles(repoRoot, mode, base) {
   const range = await resolveRange(repoRoot, mode, base);
-  const raw = await git(range.args.concat(['--raw', '-z', '-M', '--no-color']), repoRoot);
+  // --no-abbrev: blob ids feed the "viewed" fingerprint, and an abbreviation
+  // that grows with the repository would reset every mark for no reason.
+  const raw = await git(range.args.concat(['--raw', '-z', '-M', '--no-color', '--no-abbrev']), repoRoot);
   const files = parseRawZ(splitZ(raw));
 
   // Untracked files never show up in `git diff`; they are the most common thing

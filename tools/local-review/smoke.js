@@ -1635,6 +1635,155 @@ async function main() {
   const gCleared = await call(`/api/comments/clear-all?${cleanQ}`, json('POST', { confirm: true }));
   eq(gCleared.body.removed, 4, '«Очистить всё» удаляет и общие комментарии');
 
+  // ------------------------------------------------ просмотренные файлы
+  console.log('\nпросмотренные файлы: отметка живёт, пока не изменился дифф файла');
+  const viewedRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-viewed-'));
+  git(['init', '-q', '-b', 'main'], viewedRepo);
+  git(['config', 'user.email', 'smoke@example.com'], viewedRepo);
+  git(['config', 'user.name', 'Smoke Test'], viewedRepo);
+  git(['config', 'commit.gpgsign', 'false'], viewedRepo);
+  git(['config', 'core.autocrlf', 'false'], viewedRepo);
+  write(viewedRepo, '.gitignore', '.local-review/\n');
+  write(viewedRepo, 'one.txt', 'one\n');
+  write(viewedRepo, 'two.txt', 'two\n');
+  write(viewedRepo, 'gone.txt', 'gone\n');
+  git(['add', '-A'], viewedRepo);
+  git(['commit', '-q', '-m', 'init'], viewedRepo);
+  write(viewedRepo, 'one.txt', 'one\nedited\n');
+  write(viewedRepo, 'two.txt', 'two\nedited\n');
+  write(viewedRepo, 'new file.txt', 'новый\n');
+  fs.unlinkSync(path.join(viewedRepo, 'gone.txt'));
+
+  const vQ = (mode) => `source=local&root=${encodeURIComponent(viewedRepo)}&mode=${mode || 'working'}`;
+  const vStoreFile = path.join(viewedRepo, '.local-review', 'comments.json');
+  const vState = async (mode) => {
+    const res = await call(`/api/state?${vQ(mode)}`);
+    return new Map(res.body.files.map((f) => [f.path, f]));
+  };
+  const mark = (file, fingerprint, viewed, mode) =>
+    call(`/api/viewed?${vQ(mode)}`, json('POST', { file, fingerprint, viewed }));
+
+  const v0 = await vState();
+  ok(
+    [...v0.values()].every((f) => typeof f.fingerprint === 'string' && f.fingerprint.length > 0 && f.viewed === false),
+    'у каждого файла есть fingerprint, и сначала ни один не просмотрен',
+    JSON.stringify([...v0.values()])
+  );
+  ok(new Set([...v0.values()].map((f) => f.fingerprint)).size === v0.size, 'у разных файлов разные fingerprint');
+  const v0again = await vState();
+  ok(
+    [...v0.keys()].every((p) => v0again.get(p).fingerprint === v0.get(p).fingerprint),
+    'fingerprint стабилен, пока ничего не менялось'
+  );
+
+  for (const p of ['one.txt', 'two.txt', 'new file.txt', 'gone.txt']) {
+    const res = await mark(p, v0.get(p).fingerprint, true);
+    ok(res.status === 200 && res.body.viewed === true, `отметка «просмотрено»: ${p}`, JSON.stringify(res.body));
+  }
+  const v1 = await vState();
+  ok([...v1.values()].every((f) => f.viewed === true), 'после отметки все четыре файла просмотрены');
+  ok(!fs.existsSync(path.join(viewedRepo, 'pr')), 'отметки не создают ничего, кроме файла хранилища');
+  const vOnDisk = JSON.parse(fs.readFileSync(vStoreFile, 'utf8'));
+  eq(vOnDisk.version, 1, 'просмотренные файлы не меняют версию формата хранилища');
+  eq(vOnDisk.viewed['one.txt'].fingerprint, v0.get('one.txt').fingerprint, 'в хранилище лежит fingerprint отмеченного диффа');
+
+  // Invalidation: new content in one file resets only that file.
+  write(viewedRepo, 'one.txt', 'one\nedited again\n');
+  write(viewedRepo, 'new file.txt', 'новый\nи ещё строка\n');
+  const v2 = await vState();
+  ok(v2.get('one.txt').viewed === false, 'изменённый файл снова не просмотрен');
+  ok(v2.get('one.txt').fingerprint !== v0.get('one.txt').fingerprint, 'у изменённого файла новый fingerprint');
+  ok(v2.get('new file.txt').viewed === false, 'изменённый untracked-файл снова не просмотрен');
+  ok(v2.get('two.txt').viewed === true && v2.get('gone.txt').viewed === true, 'соседние неизменённые файлы остаются просмотренными');
+
+  // A new commit under an unchanged worktree file: the new side is the same
+  // blob, but HEAD (the old side) moved, so the diff is a different one.
+  write(viewedRepo, 'two.txt', 'two\ncommitted in between\n');
+  git(['add', 'two.txt'], viewedRepo);
+  git(['commit', '-q', '-m', 'commit two'], viewedRepo);
+  write(viewedRepo, 'two.txt', 'two\nedited\n');
+  const v3 = await vState();
+  ok(v3.get('two.txt').viewed === false, 'новый коммит под тем же содержимым файла сбрасывает отметку (сменилась старая сторона)');
+
+  // Staging alone does not change the file's content: working and staged agree.
+  const oneWorking = (await vState()).get('one.txt');
+  await mark('one.txt', oneWorking.fingerprint, true);
+  git(['add', 'one.txt'], viewedRepo);
+  ok((await vState()).get('one.txt').viewed === true, 'git add без правок не сбрасывает отметку в working');
+  ok((await vState('staged')).get('one.txt').viewed === true, 'тот же файл в режиме staged тоже просмотрен (тот же blob)');
+
+  const unmark = await mark('one.txt', undefined, false);
+  ok(unmark.status === 200 && unmark.body.viewed === false, 'снятие отметки -> 200');
+  ok((await vState()).get('one.txt').viewed === false, 'после снятия отметки файл не просмотрен');
+  ok((await mark('one.txt', undefined, false)).status === 200, 'повторное снятие отметки — не ошибка');
+
+  for (const [body, label] of [
+    [{ viewed: true, fingerprint: 'x' }, 'без file'],
+    [{ file: 'one.txt', viewed: true }, 'viewed:true без fingerprint'],
+    [{ file: 'one.txt', viewed: 'true', fingerprint: 'x' }, 'viewed:"true" (строка)'],
+    [{ file: '__proto__', viewed: true, fingerprint: 'x' }, 'file = __proto__'],
+  ]) {
+    const res = await call(`/api/viewed?${vQ()}`, json('POST', body));
+    ok(res.status === 400, `POST /api/viewed ${label} -> 400`, JSON.stringify(res.body));
+  }
+
+  // Comments and viewed marks share the store but not a lifecycle.
+  await call(`/api/comments?${vQ()}`, json('POST', { file: 'two.txt', startLine: 1, endLine: 1, text: 'к two' }));
+  const twoNow = (await vState()).get('two.txt');
+  await mark('two.txt', twoNow.fingerprint, true);
+  await call(`/api/comments/clear-all?${vQ()}`, json('POST', { confirm: true }));
+  ok((await vState()).get('two.txt').viewed === true, '«Очистить всё» удаляет комментарии, но не отметки');
+  eq(JSON.parse(fs.readFileSync(vStoreFile, 'utf8')).comments, [], 'комментарии из хранилища удалены');
+
+  const { fingerprintOf, isViewed } = require('./lib/viewed');
+  ok(isViewed({ fingerprint: 'a' }, 'a') === true, 'isViewed: совпадающий fingerprint -> просмотрен');
+  ok(isViewed({ fingerprint: 'a' }, 'b') === false, 'isViewed: другой fingerprint -> не просмотрен');
+  ok(isViewed(undefined, 'a') === false && isViewed({ fingerprint: '' }, '') === false, 'isViewed: нет отметки или пустой fingerprint -> не просмотрен');
+  ok(fingerprintOf(['M', null, 'a']) === fingerprintOf(['M', null, 'a']), 'fingerprintOf детерминирован');
+  ok(fingerprintOf(['M', 'a', null]) !== fingerprintOf(['M', null, 'a']), 'fingerprintOf различает поля по позиции');
+
+  console.log('\nпросмотренные файлы в PR-режиме');
+  const PR_VIEWED_DIFF = (appIndex, appLine) =>
+    [
+      'diff --git a/src/app.js b/src/app.js',
+      `index ${appIndex} 100644`,
+      '--- a/src/app.js',
+      '+++ b/src/app.js',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      `+${appLine}`,
+      'diff --git a/assets/logo.bin b/assets/logo.bin',
+      'index 3333333..4444444 100644',
+      'Binary files a/assets/logo.bin and b/assets/logo.bin differ',
+      '',
+    ].join('\n');
+  const prViewedQ = 'source=pr&host=github.com&owner=o&repo=r&number=40';
+  const prViewedFixture = (diffText) =>
+    ghFixtures({ [viewKeyFor(40)]: prView(40), 'pr diff 40 --repo o/r': { code: 0, stdout: diffText } }, home);
+  const prFiles = async () =>
+    new Map((await call(`/api/state?${prViewedQ}&fresh=1`)).body.files.map((f) => [f.path, f]));
+
+  prViewedFixture(PR_VIEWED_DIFF('1111111..2222222', 'new'));
+  const p0 = await prFiles();
+  for (const p of ['src/app.js', 'assets/logo.bin']) {
+    await call(`/api/viewed?${prViewedQ}`, json('POST', { file: p, fingerprint: p0.get(p).fingerprint, viewed: true }));
+  }
+  const p1 = await prFiles();
+  ok(p1.get('src/app.js').viewed && p1.get('assets/logo.bin').viewed, 'PR: отмеченные файлы просмотрены');
+  ok(
+    JSON.parse(fs.readFileSync(path.join(home, 'pr', 'github.com__o__r__40.json'), 'utf8')).viewed['src/app.js'],
+    'PR: отметка лежит в PR-хранилище'
+  );
+
+  // The author pushes: app.js gets a new line, the binary is untouched.
+  prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer'));
+  const p2 = await prFiles();
+  ok(p2.get('src/app.js').viewed === false, 'PR: после нового пуша изменённый файл снова не просмотрен');
+  ok(p2.get('assets/logo.bin').viewed === true, 'PR: неизменённый в пуше файл остаётся просмотренным');
+  // Same patch text, different blob (e.g. a binary replaced): header decides.
+  prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer').replace('3333333..4444444', '3333333..6666666'));
+  ok((await prFiles()).get('assets/logo.bin').viewed === false, 'PR: бинарный файл с новым blob снова не просмотрен');
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);
@@ -1644,6 +1793,7 @@ async function main() {
   }
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(clean, { recursive: true, force: true });
+  fs.rmSync(viewedRepo, { recursive: true, force: true });
   fs.rmSync(notRepo, { recursive: true, force: true });
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });

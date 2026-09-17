@@ -5,6 +5,7 @@ const { parseDescriptor, MODES } = require('../descriptor');
 const { defaultBase } = require('../git');
 const { createSource } = require('../sources/factory');
 const { storeFor } = require('../stores/factory');
+const { isViewed } = require('../viewed');
 
 function isFresh(url) {
   return url.searchParams.get('fresh') === '1';
@@ -20,6 +21,7 @@ async function getState(req, res, ctx, url) {
   // JSON error instead of an empty screen.
   const pr = descriptor.source === 'pr' ? await source.meta() : null;
   const counts = store.countsByFile();
+  const viewed = store.viewedFiles();
 
   // The client may send no base at all; answer with the revision Base mode
   // would actually use, so the header shows `origin/production` and not a
@@ -52,6 +54,9 @@ async function getState(req, res, ctx, url) {
       kind: f.kind,
       untracked: Boolean(f.untracked),
       comments: counts[f.path] || 0,
+      fingerprint: f.fingerprint || null,
+      // A mark made against another version of this file's diff no longer counts.
+      viewed: isViewed(viewed[f.path], f.fingerprint),
     })),
     // Comments can outlive the diff they were written against; surface them
     // so nothing silently disappears from the UI.

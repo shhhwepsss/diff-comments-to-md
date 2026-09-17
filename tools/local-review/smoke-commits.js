@@ -228,6 +228,20 @@ async function main() {
     JSON.stringify(mergeDiff.body.hunks)
   );
 
+  console.log('\nпросмотренные файлы в режиме коммитов');
+  const aIn = async (from, to) =>
+    (await call(`/api/state?${commitsQ(from, to)}`)).body.files.find((f) => f.path === 'a.txt');
+  const aSecond = await aIn(commits[1].sha, commits[1].sha);
+  const markA = await call(
+    `/api/viewed?${commitsQ(commits[1].sha, commits[1].sha)}`,
+    json('POST', { file: 'a.txt', fingerprint: aSecond.fingerprint, viewed: true })
+  );
+  ok(markA.status === 200, 'отметка файла в режиме коммитов -> 200', JSON.stringify(markA.body));
+  ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'a.txt в том же коммите просмотрен');
+  ok((await aIn(commits[0].sha, commits[0].sha)).viewed === false, 'a.txt в другом коммите (другой дифф) не просмотрен');
+  ok((await aIn(commits[1].sha, commits[1].sha)).viewed === true, 'возврат к тому же коммиту — отметка на месте');
+  await call(`/api/viewed?${commitsQ(commits[1].sha, commits[1].sha)}`, json('POST', { file: 'a.txt', viewed: false }));
+
   console.log('\nдиапазон');
   const range = await call(`/api/state?${commitsQ(commits[1].sha, commits[3].sha)}`);
   ok(
@@ -408,6 +422,14 @@ async function main() {
   const prSingleDiff = await prCall(`/api/diff?file=x.txt&${prQ(C2, C2)}`);
   eq(prSingleDiff.body.oldText, 'первая версия\n', 'PR: oldText берётся с реального первого родителя');
   eq(prSingleDiff.body.newText, 'вторая версия\n', 'PR: newText берётся с верхнего коммита диапазона');
+
+  console.log('\nPR: просмотренные файлы в диапазоне коммитов');
+  const xIn = async (from, to) =>
+    (await prCall(`/api/state?${prQ(from, to)}`)).body.files.find((f) => f.path === 'x.txt');
+  const xSingle = await xIn(C2, C2);
+  await prCall(`/api/viewed?${prQ(C2, C2)}`, json('POST', { file: 'x.txt', fingerprint: xSingle.fingerprint, viewed: true }));
+  ok((await xIn(C2, C2)).viewed === true, 'PR: x.txt в диапазоне одного коммита просмотрен');
+  ok((await xIn(C1, C2)).viewed === false, 'PR: x.txt в другом диапазоне (другой патч) не просмотрен');
 
   console.log('\nPR: ошибки — 400 без пары from/to');
   const oneSided = await prCall(`/api/state?source=pr&host=github.com&owner=o&repo=r&number=30&from=${C1}`);

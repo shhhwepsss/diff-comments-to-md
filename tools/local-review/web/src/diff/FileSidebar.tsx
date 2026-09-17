@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { CounterLabel, TextInput, TreeView } from '@primer/react';
 import {
+  CheckIcon,
   FileAddedIcon,
   FileDiffIcon,
   FileMovedIcon,
@@ -11,6 +12,7 @@ import {
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, type TreeNode } from './fileTree';
+import { viewedCount } from '../review/viewed';
 
 function StatusIcon({ file }: { file: FileEntry }) {
   const kind = (file.status || 'M')[0];
@@ -39,13 +41,18 @@ export function FileSidebar() {
   const visibleOrphans = needle ? orphans.filter((f) => f.path.toLowerCase().includes(needle)) : orphans;
   const tree = useMemo(() => buildTree(visible, (f) => f.path), [visible]);
 
-  const trailing = (path: string): ReactNode => {
+  const trailing = (path: string, viewed = false): ReactNode => {
     const n = counts.get(path) || 0;
-    return n ? (
-      <TreeView.TrailingVisual label={`комментариев: ${n}`}>
-        <CounterLabel>{n}</CounterLabel>
+    if (!n && !viewed) return null;
+    const label = [n ? `комментариев: ${n}` : '', viewed ? 'просмотрен' : ''].filter(Boolean).join(', ');
+    return (
+      <TreeView.TrailingVisual label={label}>
+        <span className="rv-tree-trailing">
+          {n ? <CounterLabel>{n}</CounterLabel> : null}
+          {viewed ? <CheckIcon className="rv-viewed-mark" /> : null}
+        </span>
       </TreeView.TrailingVisual>
-    ) : null;
+    );
   };
 
   const renderNode = (node: TreeNode<FileEntry>): ReactNode =>
@@ -68,8 +75,8 @@ export function FileSidebar() {
         <TreeView.LeadingVisual>
           <StatusIcon file={node.item} />
         </TreeView.LeadingVisual>
-        {node.name}
-        {trailing(node.path)}
+        <span className={node.item.viewed ? 'rv-tree-name is-viewed' : 'rv-tree-name'}>{node.name}</span>
+        {trailing(node.path, node.item.viewed)}
       </TreeView.Item>
     );
 
@@ -93,7 +100,10 @@ export function FileSidebar() {
     <nav className="rv-sidebar" aria-label="Файлы">
       <div className="rv-sidebar__head">
         <div className="rv-sidebar__range" title={state?.rangeLabel}>
-          <span className="rv-sidebar__count">Файлов: {files.length}</span>
+          <span className="rv-sidebar__count">
+            Файлов: {files.length}
+            {files.length > 0 && <span className="rv-sidebar__viewed"> · просмотрено {viewedCount(files)}</span>}
+          </span>
           {state?.rangeLabel && <span className="rv-sidebar__label">{state.rangeLabel}</span>}
         </div>
         <TextInput

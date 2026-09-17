@@ -34,6 +34,10 @@ function normalizeCommit(commit) {
   };
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 class CommentStore {
   /**
    * Takes an absolute path to the JSON file. The store is a dumb JSON blob on
@@ -53,6 +57,8 @@ class CommentStore {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.comments)) {
         this.data = { version: parsed.version || 1, comments: parsed.comments };
+        // Optional: files written before "viewed" existed simply have none.
+        if (isPlainObject(parsed.viewed)) this.data.viewed = parsed.viewed;
       }
     } catch (e) {
       if (e && e.code !== 'ENOENT') {
@@ -135,7 +141,36 @@ class CommentStore {
     return true;
   }
 
-  /** The one and only bulk delete. Callers must pass confirm:true explicitly. */
+  /**
+   * { [path]: { fingerprint, viewedAt } } — what was marked viewed and against
+   * which diff. Whether a mark still holds is decided by the caller against
+   * the current fingerprint (lib/viewed.js isViewed); a stale mark is left in
+   * place, so it is harmless and never needs a cleanup pass.
+   */
+  viewedFiles() {
+    return Object.assign({}, this.data.viewed || {});
+  }
+
+  setViewed(file, fingerprint) {
+    // Created on first use, so a review nobody marked keeps its file as-is.
+    if (!this.data.viewed) this.data.viewed = {};
+    const record = { fingerprint: String(fingerprint), viewedAt: new Date().toISOString() };
+    this.data.viewed[file] = record;
+    this.save();
+    return record;
+  }
+
+  unsetViewed(file) {
+    if (!this.data.viewed || !Object.prototype.hasOwnProperty.call(this.data.viewed, file)) return false;
+    delete this.data.viewed[file];
+    this.save();
+    return true;
+  }
+
+  /**
+   * The one and only bulk delete. Callers must pass confirm:true explicitly.
+   * Only comments go: viewed marks are not comments and stay.
+   */
   clearAll() {
     const removed = this.data.comments.length;
     this.data.comments = [];

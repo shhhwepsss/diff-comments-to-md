@@ -96,6 +96,12 @@ export const api = {
       jsonBody('POST', { confirm: true }),
     ),
 
+  setViewed: (d: Descriptor, file: string, fingerprint: string | null, viewed: boolean) =>
+    request<{ file: string; viewed: boolean }>(
+      `/api/viewed?${descriptorQuery(d)}`,
+      jsonBody('POST', viewed ? { file, fingerprint, viewed } : { file, viewed }),
+    ),
+
   exportText: (d: Descriptor) => request<string>(`/api/export/text?${descriptorQuery(d)}`),
   exportFile: (d: Descriptor) =>
     request<{ file: string; path: string; dir: string; count: number }>(`/api/export/file?${descriptorQuery(d)}`, {
