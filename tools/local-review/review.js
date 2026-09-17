@@ -2,10 +2,11 @@
 
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-const { findRepoRoot } = require('./lib/git');
+const { findRepoRoot, getGlobalConfig, setGlobalConfig } = require('./lib/git');
 const { resolveRange } = require('./lib/diff');
 const { CommentStore, STORE_DIR, STORE_FILE } = require('./lib/store');
 const { sendJson, getPublicDir } = require('./lib/http');
@@ -109,16 +110,32 @@ local-review — локальный просмотр git-диффа с комм�
 // Lines that already ignore the store at the repository root.
 const GITIGNORE_ENTRIES = [STORE_DIR, `${STORE_DIR}/`, `/${STORE_DIR}`, `/${STORE_DIR}/`, `**/${STORE_DIR}`, `**/${STORE_DIR}/`];
 
+/** `~` is git's spelling of the home directory, not the filesystem's. */
+function expandHome(value) {
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
+
 /**
- * Adds .local-review/ to the top-level .gitignore of the repository that
- * contains `dir`, if it is not already there. `dir` may be any folder inside
- * the repository: the line never goes to a nested .gitignore. Outside a git
- * repository nothing is written.
+ * The machine-wide ignore file. `core.excludesFile` wins when it is set;
+ * otherwise git's own default, $XDG_CONFIG_HOME/git/ignore (or
+ * ~/.config/git/ignore), which the caller then also records in the global
+ * config so the choice is visible in `git config --list`.
  */
-async function ensureGitignore(dir) {
-  const repoRoot = await findRepoRoot(dir);
-  if (!repoRoot) return { changed: false };
-  const file = path.join(repoRoot, '.gitignore');
+async function globalExcludesFile() {
+  const configured = await getGlobalConfig('core.excludesFile', process.cwd());
+  if (configured) return { file: path.resolve(expandHome(configured.trim())), configured: true };
+  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  return { file: path.join(base, 'git', 'ignore'), configured: false };
+}
+
+/**
+ * Appends `.local-review/` to an ignore file unless one of the spellings that
+ * already ignore it is there. A missing file is created, a missing trailing
+ * newline is added first, and CRLF is kept.
+ */
+function appendEntry(file) {
   const entry = `${STORE_DIR}/`;
   let content = '';
   try {
@@ -133,11 +150,50 @@ async function ensureGitignore(dir) {
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
   const prefix = content.length === 0 || content.endsWith('\n') ? '' : eol;
   try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, `${prefix}${entry}${eol}`, 'utf8');
     return { changed: true };
   } catch (e) {
     return { changed: false, error: e.message };
   }
+}
+
+/**
+ * Makes git ignore .local-review/, where the user asked for it to be ignored
+ * (gitignoreTarget in ~/.local-review/settings.json):
+ *
+ *  - 'project' (default): the top-level .gitignore of the repository that
+ *    contains `dir`. `dir` may be any folder inside it — the line never goes
+ *    to a nested .gitignore, and outside a repository nothing is written.
+ *  - 'global': the machine's ignore file, so the line never shows up in
+ *    anybody's diff. No repository is needed.
+ *
+ * Switching targets only ever adds a line to the new one; a line already
+ * written to the other file stays where it is (removing it could take a line
+ * the user put there, or edited, with it).
+ */
+async function ensureGitignore(dir) {
+  const target = config.readSettings().gitignoreTarget;
+  if (target === 'global') {
+    const { file, configured } = await globalExcludesFile();
+    const result = appendEntry(file);
+    if (result.error) return Object.assign({ target, file }, result);
+    if (!configured) {
+      // git reads ~/.config/git/ignore on its own, but only while
+      // core.excludesFile is unset; writing it down keeps the file in charge
+      // even if something sets that key later.
+      try {
+        await setGlobalConfig('core.excludesFile', file, process.cwd());
+      } catch (e) {
+        return { changed: result.changed, target, file, error: e.message };
+      }
+    }
+    return Object.assign({ target, file }, result);
+  }
+  const repoRoot = await findRepoRoot(dir);
+  if (!repoRoot) return { changed: false, target: 'project', file: null };
+  const file = path.join(repoRoot, '.gitignore');
+  return Object.assign({ target: 'project', file }, appendEntry(file));
 }
 
 function listen(server, port, host, attemptsLeft) {
@@ -204,7 +260,9 @@ async function start(options) {
 
   // No repository under cwd is no longer a reason to refuse: the UI opens on
   // the folder picker and the descriptor arrives with the first request.
-  const gitignore = repoRoot ? await ensureGitignore(repoRoot) : { changed: false };
+  // Outside a repository this is a no-op for the 'project' target, while the
+  // 'global' one needs no repository at all.
+  const gitignore = await ensureGitignore(repoRoot || options.cwd);
   const defaults = repoRoot
     ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
     : null;
@@ -255,7 +313,9 @@ async function main() {
   } else {
     console.log('  репозиторий     не выбран — выбери папку на странице «Папка»');
   }
-  if (started.gitignore.changed) console.log(`  .gitignore      добавлен ${STORE_DIR}/`);
+  if (started.gitignore.changed) {
+    console.log(`  игнор           ${STORE_DIR}/ добавлен в ${started.gitignore.file}`);
+  }
   if (started.port !== options.port) console.log(`  порт ${options.port} занят, взят ${started.port}`);
   console.log('\n  Ctrl+C — выход\n');
 

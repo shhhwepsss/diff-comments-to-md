@@ -108,10 +108,28 @@ async function gitShow(rev, filePath, cwd) {
   return res.stdout;
 }
 
+/**
+ * `git config --global --get <key>`, null when the key is unset. The scope is
+ * explicit on purpose: a machine-wide setting must not be read out of
+ * whichever repository the server happens to have been started in.
+ */
+async function getGlobalConfig(key, cwd) {
+  const out = await gitTry(['config', '--global', '--get', key], cwd);
+  const value = out ? out.trim() : '';
+  return value || null;
+}
+
+/** The only git write the tool ever makes, and only for core.excludesFile. */
+async function setGlobalConfig(key, value, cwd) {
+  await git(['config', '--global', key, value], cwd);
+}
+
 module.exports = {
   git,
   gitText,
   gitTry,
+  getGlobalConfig,
+  setGlobalConfig,
   findRepoRoot,
   hasHead,
   revExists,

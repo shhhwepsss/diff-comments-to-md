@@ -17,6 +17,7 @@ import type { Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
 import { useOptionalReview } from '../review/ReviewContext';
 import { GeneralComments } from './GeneralComments';
+import { GitignoreSettings } from './GitignoreSettings';
 import './header.css';
 
 const MODES: { value: Mode; label: string }[] = [
@@ -128,6 +129,8 @@ export function AppHeader({ route, theme, onTheme }: Props) {
             </Button>
           </div>
         )}
+
+        <GitignoreSettings />
 
         <ActionMenu>
           <ActionMenu.Anchor>

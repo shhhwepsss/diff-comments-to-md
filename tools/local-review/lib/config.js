@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const DIR_NAME = '.local-review';
 const RECENT_LIMIT = 10;
+const GITIGNORE_TARGETS = ['project', 'global'];
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
 function homeDir() {
@@ -14,6 +15,10 @@ function homeDir() {
 
 function statePath() {
   return path.join(homeDir(), 'state.json');
+}
+
+function settingsPath() {
+  return path.join(homeDir(), 'settings.json');
 }
 
 function exportsDir() {
@@ -40,12 +45,41 @@ function readState() {
   }
 }
 
-function writeState(next) {
+function writeJsonAtomic(file, value) {
   ensureHome();
-  const tmp = `${statePath()}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
-  fs.renameSync(tmp, statePath());
-  return next;
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
+  return value;
+}
+
+function writeState(next) {
+  return writeJsonAtomic(statePath(), next);
+}
+
+/**
+ * User preferences, kept apart from state.json: that file is rewritten on
+ * every screen change from whatever readState() returns, so a key it does not
+ * know about would be dropped. `gitignoreTarget` says where the
+ * `.local-review/` ignore line goes — into the repository's root .gitignore
+ * ('project', the default and the historical behaviour) or into the machine's
+ * global ignore file, core.excludesFile ('global').
+ */
+function readSettings() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
+    return {
+      gitignoreTarget:
+        parsed && GITIGNORE_TARGETS.includes(parsed.gitignoreTarget) ? parsed.gitignoreTarget : 'project',
+    };
+  } catch {
+    // Same as state.json: missing or corrupt just means defaults.
+    return { gitignoreTarget: 'project' };
+  }
+}
+
+function writeSettings(patch) {
+  return writeJsonAtomic(settingsPath(), Object.assign(readSettings(), patch));
 }
 
 function setLast(descriptor) {
@@ -73,13 +107,17 @@ function countStoredPrs() {
 module.exports = {
   homeDir,
   statePath,
+  settingsPath,
   exportsDir,
   ensureHome,
   readState,
   writeState,
+  readSettings,
+  writeSettings,
   setLast,
   addRecent,
   countStoredPrs,
   DIR_NAME,
   RECENT_LIMIT,
+  GITIGNORE_TARGETS,
 };
