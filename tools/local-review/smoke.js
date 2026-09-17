@@ -1648,14 +1648,11 @@ async function main() {
   await call('/api/session', json('POST', { descriptor: { source: 'pr', host: 'github.com', owner: 'o', repo: 'r', number: 26 } }));
   eq((await call('/api/settings')).body.copyPrompt, '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n', 'промпт переживает запись сессии');
 
+  const WITH_PROMPT = GENERAL_EXPORT + '\nИсправь замечания ниже.\nПо одному коммиту.\n';
   const pText = await call(`/api/export/text?${cleanQ}`);
-  eq(
-    pText.body,
-    'Исправь замечания ниже.\nПо одному коммиту.\n\n' + GENERAL_EXPORT,
-    'буфер: промпт первым, пустая строка, затем комментарии'
-  );
+  eq(pText.body, WITH_PROMPT, 'буфер: комментарии, пустая строка, промпт в конце');
   const pFile = await call(`/api/export/file?${cleanQ}`, { method: 'POST' });
-  eq(fs.readFileSync(pFile.body.path, 'utf8'), GENERAL_EXPORT, '.md-файл промпт не содержит');
+  eq(fs.readFileSync(pFile.body.path, 'utf8'), WITH_PROMPT, '.md-файл содержит тот же промпт, что и буфер');
   fs.rmSync(pFile.body.path, { force: true });
   eq(
     (await call(`/api/comments?${cleanQ}`)).body.comments.map((c) => c.id).sort(),
@@ -1663,12 +1660,16 @@ async function main() {
     'инвариант 1: экспорт с промптом комментарии не меняет'
   );
 
-  const { withPrompt } = require('./lib/export');
-  eq(withPrompt('Промпт', ''), 'Промпт\n', 'промпт без комментариев — только промпт');
-  eq(withPrompt(' \n ', 'a:L1\nt\n'), 'a:L1\nt\n', 'пробельный промпт текст не меняет');
+  const { exportMarkdown } = require('./lib/export');
+  eq(exportMarkdown([], 'Промпт'), 'Промпт\n', 'промпт без комментариев — только промпт');
+  eq(
+    exportMarkdown([{ id: 'g', file: null, startLine: null, endLine: null, text: 'Только общий', createdAt: 'x' }], ' \n '),
+    '## Общие комментарии\n\nТолько общий\n',
+    'пробельный промпт текст не меняет'
+  );
 
   await call('/api/settings', json('PUT', { copyPrompt: '' }));
-  eq((await call(`/api/export/text?${cleanQ}`)).body, GENERAL_EXPORT, 'очищенный промпт: буфер снова байт в байт как .md');
+  eq((await call(`/api/export/text?${cleanQ}`)).body, GENERAL_EXPORT, 'очищенный промпт: экспорт снова байт в байт прежний');
 
   const gCleared = await call(`/api/comments/clear-all?${cleanQ}`, json('POST', { confirm: true }));
   eq(gCleared.body.removed, 4, '«Очистить всё» удаляет и общие комментарии');

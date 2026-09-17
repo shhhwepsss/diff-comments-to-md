@@ -5,10 +5,10 @@ import { api } from '../api/client';
 import { useToast } from '../lib/toast';
 
 /**
- * The copy prompt: text «Скопировать всё» puts before the comments, e.g.
- * "Исправь замечания ревью ниже". It lives in ~/.local-review/settings.json,
- * so it is one for every folder and PR, and the server adds it to
- * /api/export/text; the .md file is not affected.
+ * The copy prompt: text the export puts after the comments, e.g. "Исправь
+ * замечания ревью выше". It lives in ~/.local-review/settings.json, so it is
+ * one for every folder and PR, and the server appends it to both the
+ * clipboard text and the .md file.
  *
  * The dialog reads the saved value every time it opens, and closing it
  * without «Сохранить» discards the edit.
@@ -40,7 +40,7 @@ export function CopyPromptSettings() {
     try {
       const saved = await api.saveSettings({ copyPrompt: text });
       setOpen(false);
-      toast(saved.copyPrompt.trim() ? 'Промпт сохранён — добавится при копировании' : 'Промпт очищен — копируются только комментарии');
+      toast(saved.copyPrompt.trim() ? 'Промпт сохранён — добавится в конец экспорта' : 'Промпт очищен — экспортируются только комментарии');
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -60,7 +60,7 @@ export function CopyPromptSettings() {
       {open && (
         <Dialog
           title="Промпт при копировании"
-          subtitle="Вставляется перед комментариями в «Скопировать всё». Пусто — копируются только комментарии. В .md-файл не попадает."
+          subtitle="Добавляется после комментариев — и в буфер, и в .md-файл. Пусто — экспортируются только комментарии."
           width="large"
           returnFocusRef={anchor}
           onClose={() => setOpen(false)}
@@ -74,7 +74,7 @@ export function CopyPromptSettings() {
             resize="vertical"
             rows={8}
             aria-label="Промпт при копировании"
-            placeholder={loading ? 'Загружаю…' : 'Например: Исправь замечания ревью ниже. Формат: путь:строка, затем комментарий.'}
+            placeholder={loading ? 'Загружаю…' : 'Например: Исправь замечания ревью выше. Формат: путь:строка, затем комментарий.'}
             disabled={loading}
             value={text}
             onChange={(e) => setText(e.target.value)}

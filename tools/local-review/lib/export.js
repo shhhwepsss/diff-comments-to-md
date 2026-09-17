@@ -77,15 +77,16 @@ function renderMarkdown(comments) {
 }
 
 /**
- * The clipboard text: the user's copy prompt (readSettings in lib/config.js),
- * a blank line, then the comments. The prompt goes first because it is an
- * instruction to whoever reads the comments ("fix the review below"). A blank
- * prompt changes nothing: the text stays byte-for-byte renderMarkdown's.
+ * What both the clipboard and the .md file get: the comments, a blank line,
+ * then the user's copy prompt (readSettings in lib/config.js) at the very
+ * end — an instruction about the review above it. A blank prompt changes
+ * nothing: the text stays byte-for-byte renderMarkdown's.
  */
-function withPrompt(prompt, markdown) {
-  const head = String(prompt || '').replace(/\r\n/g, '\n').trim();
-  if (!head) return markdown;
-  return markdown ? `${head}\n\n${markdown}` : `${head}\n`;
+function exportMarkdown(comments, prompt) {
+  const markdown = renderMarkdown(comments);
+  const tail = String(prompt || '').replace(/\r\n/g, '\n').trim();
+  if (!tail) return markdown;
+  return markdown ? `${markdown}\n${tail}\n` : `${tail}\n`;
 }
 
 function stamp(date) {
@@ -97,12 +98,16 @@ function stamp(date) {
   );
 }
 
-/** Writes review-<YYYY-MM-DD-HHmm>.md at the repo root. Read-only w.r.t. git. */
-function writeMarkdownFile(repoRoot, comments, date) {
+/**
+ * Writes review-<YYYY-MM-DD-HHmm>.md at the repo root. Read-only w.r.t. git.
+ * Takes the finished markdown, so the file and the clipboard cannot drift
+ * apart: both come from the same exportMarkdown() call site.
+ */
+function writeMarkdownFile(repoRoot, markdown, date) {
   const name = `review-${stamp(date)}.md`;
   const abs = path.join(repoRoot, name);
-  fs.writeFileSync(abs, renderMarkdown(comments), 'utf8');
+  fs.writeFileSync(abs, markdown, 'utf8');
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, commitLineOf, renderMarkdown, withPrompt, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, renderMarkdown, exportMarkdown, writeMarkdownFile, sortComments, stamp };

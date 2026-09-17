@@ -160,7 +160,7 @@ export type SessionResponse = {
 
 /** ~/.local-review/settings.json. */
 export type Settings = {
-  /** Put before the comments by «Скопировать всё»; empty = comments only. */
+  /** Appended after the comments in both exports; empty = comments alone. */
   copyPrompt: string;
 };
 

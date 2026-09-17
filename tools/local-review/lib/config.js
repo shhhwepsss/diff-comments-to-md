@@ -59,8 +59,8 @@ function writeState(next) {
 /**
  * User preferences, kept apart from state.json: that file is rewritten on
  * every screen change from whatever readState() returns, so a key it does not
- * know about would be dropped. `copyPrompt` is free text that «Скопировать
- * всё» puts before the comments; empty means "copy the comments only".
+ * know about would be dropped. `copyPrompt` is free text the export puts
+ * after the comments; empty means "the comments alone".
  */
 function readSettings() {
   try {
