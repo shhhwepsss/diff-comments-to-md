@@ -16,6 +16,7 @@ import {
 import type { Mode } from '../api/types';
 import { settingsHash, type Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
+import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview } from '../review/ReviewContext';
 import { GeneralComments } from './GeneralComments';
 import './header.css';
@@ -40,7 +41,7 @@ const THEMES: { value: ThemePref; label: string; icon: typeof SunIcon }[] = [
  * behind it as the confirmation.
  */
 function RepoLabel({ root }: { root: string }) {
-  const name = root.split(/[/\\]/).filter(Boolean).pop() || root;
+  const name = repoName(root);
   return (
     <span className="rv-header__root" title={root}>
       <RepoIcon size={16} />
@@ -86,9 +87,11 @@ export function AppHeader({ route, theme, onTheme }: Props) {
   return (
     <header className="rv-header">
       <div className="rv-header__row">
-        <a className="rv-header__brand" href="#/local" title="local-review">
+        {/* The brand names what is open, like the tab does; the product name
+            moves into the tooltip so it is still there to be found. */}
+        <a className="rv-header__brand" href="#/local" title={PRODUCT_NAME}>
           <CodeReviewIcon size={20} />
-          <span>local-review</span>
+          <span>{titleFor(route)}</span>
         </a>
 
         <UnderlineNav aria-label="Источник" className="rv-header__nav">

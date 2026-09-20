@@ -94,7 +94,8 @@ CodeMirror на коде находил случайные совпадения 
 
 ## 3. Фронт: экраны и компоненты Primer
 
-- **Шапка:** бренд; `UnderlineNav` «Папка» / «GitHub PR»; путь репо;
+- **Шапка:** бренд — имя открытого репозитория (для PR — `owner/repo #N`),
+  вне репозитория и в настройках `local-review`; то же и в `document.title`; `UnderlineNav` «Папка» / «GitHub PR»; путь репо;
   `SegmentedControl` working / staged / base + `TextInput` для base;
   `IconButton` reload; `CounterLabel` с числом комментариев; кнопки
   «Скопировать всё», «Сгенерировать .md», «Очистить всё» (danger);

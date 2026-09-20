@@ -30,6 +30,15 @@
   text-decoration: none;
 }
 
+/* The brand now carries a repository name, which can be long: it may shrink and
+   cut off, but never push the navigation off the row. */
+.rv-header__brand > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
 .rv-header__brand:hover {
   text-decoration: none;
   color: var(--fgColor-accent);
