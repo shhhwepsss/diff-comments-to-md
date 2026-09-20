@@ -16,7 +16,7 @@
     "dev:api": "node review.js --no-open --api-only --strict-port --port 4321",
     "dev:frontend": "vite --config tools/local-review/web/vite.config.mts",
     "build": "vite build --config tools/local-review/web/vite.config.mts",
-    "prepare": "yarn build",
+    "prepare": "vite build --config tools/local-review/web/vite.config.mts",
     "typecheck": "tsc -p tools/local-review/web",
     "test:web": "vitest run --config tools/local-review/web/vite.config.mts",
     "smoke": "node tools/local-review/smoke.js",

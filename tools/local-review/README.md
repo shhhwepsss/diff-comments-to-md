@@ -52,7 +52,7 @@
 Один раз после клонирования и после каждого `git pull`:
 
 ```bash
-yarn install   # ставит devDependencies и собирает UI (скрипт prepare → yarn build)
+yarn install   # ставит devDependencies и собирает UI (скрипт prepare зовёт vite build)
 ```
 
 Потом:

@@ -302,9 +302,14 @@ async function start(options) {
     // With --strict-port a busy port is the whole answer, and the dev who hit
     // it needs to know which process to stop, not a stack trace.
     if (options.strictPort && (err.code === 'EADDRINUSE' || err.code === 'EACCES')) {
-      const busy = new Error(
-        `Порт ${options.port} занят: останови чужой review (или задай --port <n>).`
-      );
+      // EADDRINUSE — порт кем-то занят, EACCES — его не дают слушать (права,
+      // зарезервированный диапазон). Советовать «останови чужой review» во
+      // втором случае не за чем — там останавливать нечего.
+      const why =
+        err.code === 'EADDRINUSE'
+          ? `Порт ${options.port} занят: останови чужой review (или задай --port <n>).`
+          : `Порт ${options.port} слушать не дают (${err.code}): выбери другой --port.`;
+      const busy = new Error(why);
       busy.userFacing = true;
       throw busy;
     }

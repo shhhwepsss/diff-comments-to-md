@@ -2296,6 +2296,7 @@ async function main() {
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(staticDir, { recursive: true, force: true });
+  fs.rmSync(emptyStatic, { recursive: true, force: true });
   console.log('\nвсе проверки зелёные\n');
   process.exit(0);
 }
