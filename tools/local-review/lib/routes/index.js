@@ -52,6 +52,13 @@ function createApp(ctx) {
         sendText(res, 405, 'Method not allowed');
         return;
       }
+      // --api-only: the UI lives on the Vite dev server. Serving a stale
+      // dist/ next to it is exactly the confusion the flag removes, so this
+      // port says where the UI is instead of quietly answering with an old one.
+      if (ctx.apiOnly) {
+        sendText(res, 404, 'Сервер запущен с --api-only: UI отдаёт vite (http://127.0.0.1:5173/).');
+        return;
+      }
       serveStatic(req, res, pathname);
       return;
     }
