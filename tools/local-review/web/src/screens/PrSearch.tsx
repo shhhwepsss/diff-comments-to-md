@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Banner, Button, FormControl, Heading, Select, Spinner, TextInput } from '@primer/react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Autocomplete, Banner, Button, FormControl, Heading, Select, Spinner, TextInput } from '@primer/react';
 import { GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon, MarkGithubIcon, SearchIcon } from '@primer/octicons-react';
 import { api, errorMessage, failureMessage } from '../api/client';
-import type { GhStatus, PrItem } from '../api/types';
+import type { GhStatus, PrItem, RepoItem } from '../api/types';
 import { formatDate } from '../lib/format';
+import { formatRepoPushed, matchesRepo } from '../lib/repoList';
 import { hashFor } from '../lib/hash';
 import { type PrAuthorFilter, parsePrAuthor, readPrAuthor, writePrAuthor } from '../lib/prAuthor';
 import { useToast } from '../lib/toast';
@@ -27,6 +28,9 @@ type Result = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message:
 export function PrSearch() {
   const [status, setStatus] = useState<GhStatus | null>(null);
   const [repo, setRepo] = useState('');
+  const [repos, setRepos] = useState<RepoItem[]>([]);
+  const [reposLoading, setReposLoading] = useState(false);
+  const [reposError, setReposError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [prState, setPrState] = useState('open');
   const [author, setAuthor] = useState<PrAuthorFilter>(readPrAuthor);
@@ -51,9 +55,21 @@ export function PrSearch() {
       .then((s) => {
         if (!alive) return;
         setStatus(s);
+        if (!s.installed || !s.authenticated) return;
         // The first search runs without a repository, with the remembered
         // author filter — the same value the select shows.
-        if (s.installed && s.authenticated) void search({ repo: '', q: '', state: 'open', author: readPrAuthor() });
+        void search({ repo: '', q: '', state: 'open', author: readPrAuthor() });
+        // The repository list is fetched beside that search, never in front of
+        // it: gh takes about a second and a half, and the results do not wait
+        // for the picker. A failure leaves the field a plain text input.
+        setReposLoading(true);
+        api
+          .repos()
+          .then((r) => alive && setRepos(r.items))
+          .catch((e) => alive && setReposError(errorMessage(e)))
+          .finally(() => {
+            if (alive) setReposLoading(false);
+          });
       })
       .catch((e) => {
         if (!alive) return;
@@ -69,6 +85,36 @@ export function PrSearch() {
 
   const ready = Boolean(status?.installed && status?.authenticated);
   const run = () => void search({ repo, q: query, state: prState, author });
+
+  // The id is the repository name: it is what the field holds, what the menu
+  // filters on and what the search sends, so nothing has to be looked up.
+  //
+  // A row deliberately carries `children` and no `text`. `text` is what Primer
+  // completes inline inside the field (AutocompleteInput.js:86-88, writing
+  // straight into the DOM node behind React's back), and it does that whenever
+  // the highlighted row's text starts with what is typed — which, with an
+  // empty field, is every row. The result was the first repository's name
+  // silently prepended to what the user then typed. Without `text` there is no
+  // suggestion to complete, and the field only ever holds what was typed or
+  // picked.
+  const repoOptions = useMemo(
+    () =>
+      repos.map((r) => ({
+        id: r.nameWithOwner,
+        children: (
+          <>
+            <span className="rv-mono">{r.nameWithOwner}</span>
+            <span className="rv-repo-option__date">{formatRepoPushed(r.pushedAt)}</span>
+          </>
+        ),
+      })),
+    [repos],
+  );
+
+  const pickRepo = (next: string) => {
+    setRepo(next);
+    void search({ repo: next, q: query, state: prState, author });
+  };
 
   return (
     <div className="rv-page">
@@ -99,15 +145,82 @@ export function PrSearch() {
               run();
             }}
           >
-            <FormControl>
+            <FormControl id="rv-repo">
               <FormControl.Label>Репозиторий</FormControl.Label>
-              <TextInput
-                placeholder="owner/repo — необязательно"
-                spellCheck={false}
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                className="rv-mono"
-              />
+              {/* Picker over the old text input: the list comes from gh, and a
+                  repository missing from it is still typed in by hand. Empty
+                  means "all my PRs", the same as before. */}
+              <Autocomplete>
+                <Autocomplete.Input
+                  placeholder="owner/repo — необязательно"
+                  spellCheck={false}
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  className="rv-mono"
+                  // Enter on a row highlighted with the arrows. Primer has
+                  // its own path for it — the input forwards the keypress to
+                  // the highlighted row (AutocompleteInput.js:72-80) — but the
+                  // row receives it through `onKeyPress` (ActionList/Item.js:
+                  // 373), and React 19 no longer has that prop: `keypress`
+                  // only survives inside its composition handling. So the key
+                  // would do nothing at all — Primer stops the event, and the
+                  // form never submits either. With no row highlighted it is
+                  // left alone and submits the form, searching what was typed.
+                  onKeyDown={(e) => {
+                    // Escape empties the field, and Primer does it by writing
+                    // into the DOM node (AutocompleteInput.js:50-53) — no
+                    // change event, so the state behind it would keep the old
+                    // repository and «Искать» would search for a name that is
+                    // no longer on screen.
+                    if (e.key === 'Escape') {
+                      setRepo('');
+                      return;
+                    }
+                    if (e.key !== 'Enter') return;
+                    const active = e.currentTarget.getAttribute('aria-activedescendant');
+                    if (!active) return;
+                    e.preventDefault();
+                    pickRepo(active);
+                    // Primer closes the menu when the field loses focus.
+                    e.currentTarget.blur();
+                  }}
+                  // The whole point of the picker is seeing the list without
+                  // typing first. Primer marks the prop deprecated but still
+                  // reads it (AutocompleteInput.js:9,21); if a future version
+                  // drops it, the menu opens on the first keystroke instead.
+                  openOnFocus
+                />
+                {/* The list is capped so it opens under the field: an
+                    unbounded overlay is taller than the window, and Primer
+                    then floats it somewhere else entirely. */}
+                <Autocomplete.Overlay width="large" height="medium">
+                  <Autocomplete.Menu
+                    aria-labelledby="rv-repo-label"
+                    items={repoOptions}
+                    selectedItemIds={repo ? [repo] : []}
+                    selectionVariant="single"
+                    loading={reposLoading}
+                    // Primer's own filter matches from the start of the text,
+                    // and the text here starts with the owner (lib/repoList.ts).
+                    filterFn={(item) => matchesRepo(item.id, repo)}
+                    emptyStateText={reposLoading ? false : 'Ничего не нашлось — впиши owner/repo целиком'}
+                    onSelectedChange={(item) => {
+                      // Only a pick counts. Primer toggles a selection, so
+                      // clicking the repository that is already in the field
+                      // reports "nothing selected" — which would empty the
+                      // field under a click that reads as "this one". The
+                      // field is cleared by erasing it or with Escape.
+                      const picked = Array.isArray(item) ? item[0] : item;
+                      if (picked) pickRepo(picked.id);
+                    }}
+                  />
+                </Autocomplete.Overlay>
+              </Autocomplete>
+              {reposError && (
+                <FormControl.Caption>
+                  Список репозиториев не загрузился — впиши owner/repo вручную. Причина: {reposError}
+                </FormControl.Caption>
+              )}
             </FormControl>
             <FormControl className="rv-pr-form__grow">
               <FormControl.Label>Запрос</FormControl.Label>
