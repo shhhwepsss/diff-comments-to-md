@@ -5,6 +5,7 @@ import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
+import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
@@ -49,6 +50,15 @@ export function App({ theme, onTheme }: Props) {
   // Zen is a diff-screen layout. On the pickers and in the settings it is
   // ignored, so leaving the diff can never cost the navigation.
   const zenActive = zen && diffScreen;
+  // The tab strip is the only place the open repository shows while the window
+  // is in the background, so the title follows the address, not the loaded
+  // review: it is right from the first paint and stays right in Zen, where the
+  // header that would otherwise say it is not drawn at all.
+  const title = titleFor(route);
+
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
 
   // The shortcut lives in ~/.local-review/settings.json, which only the
   // settings page writes: read it at boot and again on the way out of that
