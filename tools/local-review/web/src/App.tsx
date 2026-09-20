@@ -1,9 +1,11 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
 import { api, failureMessage } from './api/client';
 import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
+import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
+import { readZen, writeZen } from './lib/zen';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
@@ -18,6 +20,11 @@ function subscribeHash(cb: () => void) {
 
 const getHash = () => window.location.hash;
 
+/** True while a Primer dialog or side sheet is open: Esc belongs to it, not to Zen. */
+function portalOpen(): boolean {
+  return Boolean(document.getElementById('__primerPortalRoot__')?.childElementCount);
+}
+
 type Props = { theme: ThemePref; onTheme: (t: ThemePref) => void };
 
 export function App({ theme, onTheme }: Props) {
@@ -28,6 +35,53 @@ export function App({ theme, onTheme }: Props) {
   // explicit choice, the saved session is only the previous run's leftover.
   const [booted, setBooted] = useState(Boolean(hash));
   const toast = useToast();
+  const [zen, setZenState] = useState(readZen);
+  const [keys, setKeys] = useState<Keybindings>(KEYBINDING_DEFAULTS);
+
+  const setZen = useCallback((on: boolean) => {
+    setZenState(on);
+    writeZen(on);
+  }, []);
+
+  const route = routeFromHash(hash);
+  const onSettings = route.screen === 'settings';
+  const diffScreen = route.screen === 'diff';
+  // Zen is a diff-screen layout. On the pickers and in the settings it is
+  // ignored, so leaving the diff can never cost the navigation.
+  const zenActive = zen && diffScreen;
+
+  // The shortcut lives in ~/.local-review/settings.json, which only the
+  // settings page writes: read it at boot and again on the way out of that
+  // page. A failure here costs the shortcut, nothing else.
+  useEffect(() => {
+    if (onSettings) return;
+    let alive = true;
+    api
+      .settings()
+      .then((s) => alive && setKeys(keybindingsFrom(s.keybindings)))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [onSettings]);
+
+  useEffect(() => {
+    if (!diffScreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isTypingTarget(e.target) || portalOpen()) return;
+      if (e.key === 'Escape') {
+        if (!zen) return;
+        e.preventDefault();
+        setZen(false);
+        return;
+      }
+      if (!matchesEvent(keys.zen, e)) return;
+      e.preventDefault();
+      setZen(!zen);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [diffScreen, keys.zen, setZen, zen]);
 
   useEffect(() => {
     if (booted) return;
@@ -59,14 +113,12 @@ export function App({ theme, onTheme }: Props) {
     );
   }
 
-  const route = routeFromHash(hash);
-
   const shell = (
-    <div className="rv-app">
-      <AppHeader route={route} theme={theme} onTheme={onTheme} />
+    <div className={zenActive ? 'rv-app is-zen' : 'rv-app'}>
+      {!zenActive && <AppHeader route={route} theme={theme} onTheme={onTheme} />}
       <div className="rv-main">
         {route.screen === 'diff' ? (
-          <DiffScreen />
+          <DiffScreen zen={zenActive} onZen={setZen} />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
         ) : route.screen === 'pr' ? (

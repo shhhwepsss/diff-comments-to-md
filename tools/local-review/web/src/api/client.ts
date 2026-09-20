@@ -14,6 +14,9 @@ import type {
   ValidateResponse,
 } from './types';
 import type { PrAuthorFilter } from '../lib/prAuthor';
+import { keybindingsFrom } from '../lib/keybindings';
+
+const withKeybindings = (s: Settings): Settings => ({ ...s, keybindings: keybindingsFrom(s.keybindings) });
 
 export class ApiError extends Error {
   constructor(
@@ -165,8 +168,11 @@ export const api = {
   saveSession: (descriptor: Descriptor) =>
     request<{ ok: true; gitignore?: Gitignore }>('/api/session', jsonBody('POST', { descriptor })),
 
-  settings: () => request<Settings>('/api/settings'),
-  saveSettings: (patch: Partial<Settings>) => request<Settings>('/api/settings', jsonBody('PUT', patch)),
+  // `keybindings` is shaped here so every caller gets a complete map, even
+  // from an older server or a hand-edited settings.json.
+  settings: () => request<Settings>('/api/settings').then(withKeybindings),
+  saveSettings: (patch: Partial<Settings>) =>
+    request<Settings>('/api/settings', jsonBody('PUT', patch)).then(withKeybindings),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   searchPrs: (params: { repo?: string; q?: string; state: string; author: PrAuthorFilter }) => {

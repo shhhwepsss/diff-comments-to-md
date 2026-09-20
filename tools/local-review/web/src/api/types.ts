@@ -1,5 +1,7 @@
 // Shapes of the local-review HTTP API (tools/local-review/lib/routes/*).
 
+import type { Keybindings } from '../lib/keybindings';
+
 export type Mode = 'working' | 'staged' | 'base' | 'commits';
 
 export type LocalDescriptor = {
@@ -176,6 +178,8 @@ export type Settings = {
   copyPrompt: string;
   /** Where the `.local-review/` ignore line goes: repo root .gitignore or the machine-wide one. */
   gitignoreTarget: 'project' | 'global';
+  /** Shortcut per action, e.g. `{ zen: 'Ctrl+Shift+F' }`; '' means not bound. */
+  keybindings: Keybindings;
 };
 
 export type GhStatus = {

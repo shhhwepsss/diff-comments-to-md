@@ -7,6 +7,7 @@ import { useConfirm } from '../lib/confirm';
 import { useToast } from '../lib/toast';
 import { CopyPromptSection } from './CopyPromptSection';
 import { GitignoreSection } from './GitignoreSection';
+import { KeybindingsSection } from './KeybindingsSection';
 import './settings.css';
 
 /**
@@ -34,9 +35,20 @@ export function SettingsSection({
   );
 }
 
-/** The keys of `draft` that differ from what the server has. */
+/**
+ * The keys of `draft` that differ from what the server has. Object-valued
+ * settings (`keybindings`) are compared by content: editing one of them makes
+ * a new object every time, so identity would report a change that isn't one.
+ */
 function changedKeys(draft: Settings, saved: Settings): (keyof Settings)[] {
-  return (Object.keys(draft) as (keyof Settings)[]).filter((key) => draft[key] !== saved[key]);
+  return (Object.keys(draft) as (keyof Settings)[]).filter((key) => {
+    const a = draft[key];
+    const b = saved[key];
+    if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+      return JSON.stringify(a) !== JSON.stringify(b);
+    }
+    return a !== b;
+  });
 }
 
 /**
@@ -146,6 +158,7 @@ export function SettingsScreen({ back }: { back: string }) {
             value={draft.gitignoreTarget}
             onChange={(gitignoreTarget) => setDraft({ ...draft, gitignoreTarget })}
           />
+          <KeybindingsSection value={draft.keybindings} onChange={(keybindings) => setDraft({ ...draft, keybindings })} />
           {/* Следующая настройка — ещё одна управляемая секция здесь. */}
 
           <div className="rv-settings__actions rv-settings__actions--page">
