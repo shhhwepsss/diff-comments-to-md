@@ -29,6 +29,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/settings', handle: settings.get },
   { method: 'PUT', path: '/api/settings', handle: settings.put },
   { method: 'GET', path: '/api/gh/status', handle: ghRoutes.status },
+  { method: 'GET', path: '/api/gh/repos', handle: ghRoutes.repos },
   { method: 'GET', path: '/api/pr/search', handle: ghRoutes.search },
   { method: 'GET', path: '/api/pr/resolve', handle: ghRoutes.resolve },
 ];

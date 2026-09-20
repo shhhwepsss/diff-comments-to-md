@@ -8,6 +8,7 @@ import type {
   GhStatus,
   Gitignore,
   PrSearchResponse,
+  RepoListResponse,
   SessionResponse,
   Settings,
   StateResponse,
@@ -175,6 +176,7 @@ export const api = {
     request<Settings>('/api/settings', jsonBody('PUT', patch)).then(withKeybindings),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
+  repos: () => request<RepoListResponse>('/api/gh/repos'),
   searchPrs: (params: { repo?: string; q?: string; state: string; author: PrAuthorFilter }) => {
     const p = new URLSearchParams();
     if (params.repo) p.set('repo', params.repo);

@@ -212,3 +212,14 @@
 .rv-pr-icon--draft {
   color: var(--fgColor-muted);
 }
+
+/* A repository row: the name takes the width, the push date sits at the end. */
+.rv-repo-option__date {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--base-size-8);
+  white-space: nowrap;
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small);
+  font-variant-numeric: tabular-nums;
+}

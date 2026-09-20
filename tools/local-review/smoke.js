@@ -1135,6 +1135,52 @@ async function main() {
     JSON.stringify(badRepo.body)
   );
 
+  // ------------------------------------------- список репозиториев (#40)
+  console.log('\nсписок репозиториев (#40)');
+  // Ключ фикстуры — argv через пробел, ровно как его собирает lib/repos.js.
+  // Разойдётся с реальной командой — фикстура промахнётся кодом 98, и эти
+  // проверки упадут, а не тихо пройдут мимо.
+  const reposKey =
+    'api /user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100 ' +
+    '--jq [.[] | {nameWithOwner: .full_name, pushedAt: .pushed_at, isPrivate: .private}]';
+  ghFixtures(
+    {
+      [reposKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          { nameWithOwner: 'o/старый', pushedAt: '2020-01-01T00:00:00Z', isPrivate: false },
+          { nameWithOwner: 'o/свежий', pushedAt: '2026-09-20T12:00:00Z', isPrivate: true },
+          { nameWithOwner: 'o/свежий', pushedAt: '2026-09-20T12:00:00Z', isPrivate: true },
+          { nameWithOwner: 'o/без-пуша', pushedAt: null, isPrivate: false },
+          { pushedAt: '2026-09-20T12:00:00Z' },
+        ]),
+      },
+    },
+    home
+  );
+
+  const repoList = await call('/api/gh/repos');
+  eq(
+    repoList.status === 200 && repoList.body.items.map((r) => r.nameWithOwner).join(','),
+    'o/свежий,o/старый,o/без-пуша',
+    'список репозиториев: свежий пуш первым, дубликат схлопнут, строка без имени выброшена'
+  );
+  eq(repoList.body.items[0].isPrivate, true, 'приватность репозитория доезжает до экрана');
+  eq(repoList.body.items[2].pushedAt, null, 'репозиторий без даты пуша остаётся в списке');
+
+  ghFixtures(
+    {
+      [reposKey]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+    },
+    home
+  );
+  const reposFail = await call('/api/gh/repos');
+  ok(
+    reposFail.status === 404 && /не найден/i.test(reposFail.body.error),
+    'ошибка gh при списке репозиториев -> читаемое сообщение, а не 500',
+    JSON.stringify(reposFail.body)
+  );
+
   // -------------------------------------------------------- метаданные PR-а
   console.log('\nметаданные PR-а');
   const viewKey =

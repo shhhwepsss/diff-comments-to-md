@@ -190,6 +190,16 @@ export type GhStatus = {
   message: string | null;
 };
 
+/** One row of the repository picker on the PR screen (lib/repos.js). */
+export type RepoItem = {
+  nameWithOwner: string;
+  /** ISO date of the last push, or null when GitHub reports none. */
+  pushedAt: string | null;
+  isPrivate: boolean;
+};
+
+export type RepoListResponse = { items: RepoItem[] };
+
 export type PrItem = {
   host: string;
   owner: string | null;
