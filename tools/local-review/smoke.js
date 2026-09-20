@@ -242,6 +242,74 @@ async function main() {
     `${icoRes.status} ${icoRes.headers.get('content-type')}`
   );
 
+  // ------------------------------------------------- dev: --api-only / --strict-port
+  console.log('\nдев-режим (--api-only, --strict-port)');
+  const { parseArgs } = require('./review');
+  const devArgs = parseArgs(['--no-open', '--api-only', '--strict-port', '--port', '4321']);
+  ok(devArgs.apiOnly === true, '--api-only разбирается в options.apiOnly');
+  ok(devArgs.strictPort === true, '--strict-port разбирается в options.strictPort');
+  ok(devArgs.port === 4321 && devArgs.open === false, 'остальные флаги дев-запуска не сломаны');
+
+  // An unbuilt dist/ must stop the normal server and not the API-only one:
+  // in dev the UI comes from Vite, so there is nothing to build yet.
+  const emptyStatic = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-nodist-'));
+  process.env.LOCAL_REVIEW_STATIC_DIR = emptyStatic;
+  let unbuiltError = null;
+  try {
+    const bad = await start({ cwd: repo, mode: 'working', base: 'origin/main', port: 0, host: '127.0.0.1', open: false });
+    await new Promise((resolve) => bad.server.close(resolve));
+  } catch (err) {
+    unbuiltError = err;
+  }
+  ok(
+    unbuiltError && unbuiltError.userFacing && /UI не собран/.test(unbuiltError.message),
+    'без сборки обычный запуск падает с «UI не собран»',
+    unbuiltError && unbuiltError.message
+  );
+
+  const apiOnly = await start({
+    cwd: repo,
+    mode: 'working',
+    base: 'origin/main',
+    port: 0,
+    host: '127.0.0.1',
+    open: false,
+    apiOnly: true,
+  });
+  ok(true, '--api-only стартует без собранного UI');
+  const apiOnlyRoot = await fetch(`http://127.0.0.1:${apiOnly.port}/`);
+  const apiOnlyRootBody = await apiOnlyRoot.text();
+  ok(apiOnlyRoot.status === 404, '--api-only: GET / -> 404, а не чужой собранный UI', String(apiOnlyRoot.status));
+  ok(/vite/i.test(apiOnlyRootBody), '--api-only: ответ на / говорит, где искать UI', apiOnlyRootBody);
+  const apiOnlyState = await makeClient(apiOnly.port)('/api/state');
+  ok(apiOnlyState.status === 200, '--api-only: /api по-прежнему отвечает', String(apiOnlyState.status));
+
+  // Busy port: the default slides to the next free one, --strict-port refuses.
+  const busyPort = apiOnly.port;
+  let slid = null;
+  try {
+    slid = await start({ cwd: repo, mode: 'working', base: 'origin/main', port: busyPort, host: '127.0.0.1', open: false, apiOnly: true });
+    ok(slid.port !== busyPort, 'без --strict-port занятый порт молча уступает следующему', String(slid.port));
+  } finally {
+    if (slid) await new Promise((resolve) => slid.server.close(resolve));
+  }
+
+  let busyError = null;
+  try {
+    const strict = await start({ cwd: repo, mode: 'working', base: 'origin/main', port: busyPort, host: '127.0.0.1', open: false, apiOnly: true, strictPort: true });
+    await new Promise((resolve) => strict.server.close(resolve));
+  } catch (err) {
+    busyError = err;
+  }
+  ok(
+    busyError && busyError.userFacing && busyError.message.includes(String(busyPort)),
+    '--strict-port: занятый порт — понятная ошибка, а не переезд',
+    busyError && busyError.message
+  );
+
+  await new Promise((resolve) => apiOnly.server.close(resolve));
+  process.env.LOCAL_REVIEW_STATIC_DIR = staticDir;
+
   // ---------------------------------------------------------------- state
   console.log('state / diff');
   const state = await call('/api/state');

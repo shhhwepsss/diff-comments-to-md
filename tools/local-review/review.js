@@ -20,6 +20,11 @@ function parseArgs(argv) {
     port: 4321,
     mode: 'working',
     open: true,
+    // Dev mode: the UI comes from the Vite server, this process is API only.
+    apiOnly: false,
+    // A port that silently slides to the next free one breaks the Vite proxy,
+    // which is pinned to 4321; dev asks for the port it needs or nothing.
+    strictPort: false,
     host: '127.0.0.1',
     cwd: process.cwd(),
   };
@@ -55,6 +60,12 @@ function parseArgs(argv) {
         break;
       case '--host':
         options.host = next();
+        break;
+      case '--api-only':
+        options.apiOnly = true;
+        break;
+      case '--strict-port':
+        options.strictPort = true;
         break;
       case '--no-open':
         options.open = false;
@@ -99,8 +110,11 @@ local-review — локальный просмотр git-диффа с комм�
                        ветка по умолчанию у origin (origin/HEAD)
   --mode <m>           working | staged | base
   --port <n>           стартовый порт (по умолчанию 4321, занятый — берётся следующий)
+  --strict-port        не искать свободный порт: занятый --port — ошибка
   --host <addr>        адрес прослушивания (по умолчанию 127.0.0.1)
   --cwd <dir>          папка внутри репозитория (по умолчанию текущая)
+  --api-only           только /api, UI не отдавать и сборку не требовать
+                       (для разработки фронта: UI поднимает vite)
   --no-open            не открывать браузер
   -h, --help           эта справка
 
@@ -232,8 +246,9 @@ async function start(options) {
   // Fail before touching anything else: a UI that was never built is not a
   // git problem, a port problem, or a repo-selection problem, and should not
   // be diagnosed as one of those.
+  // --api-only serves no UI, so an unbuilt dist/ is not its problem.
   const staticDir = getPublicDir();
-  if (!fs.existsSync(path.join(staticDir, 'index.html'))) {
+  if (!options.apiOnly && !fs.existsSync(path.join(staticDir, 'index.html'))) {
     const err = new Error(
       `UI не собран: выполни \`npm run build\` (каталог ${staticDir})`
     );
@@ -267,7 +282,7 @@ async function start(options) {
     ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
     : null;
   const store = repoRoot ? new CommentStore(path.join(repoRoot, STORE_DIR, STORE_FILE)) : null;
-  const handler = createApp({ defaults, homeDir });
+  const handler = createApp({ defaults, homeDir, apiOnly: Boolean(options.apiOnly) });
 
   const server = http.createServer((req, res) => {
     Promise.resolve(handler(req, res)).catch((err) => {
@@ -280,7 +295,21 @@ async function start(options) {
     });
   });
 
-  const port = await listen(server, options.port, options.host, 50);
+  let port;
+  try {
+    port = await listen(server, options.port, options.host, options.strictPort ? 0 : 50);
+  } catch (err) {
+    // With --strict-port a busy port is the whole answer, and the dev who hit
+    // it needs to know which process to stop, not a stack trace.
+    if (options.strictPort && (err.code === 'EADDRINUSE' || err.code === 'EACCES')) {
+      const busy = new Error(
+        `Порт ${options.port} занят: останови чужой review (или задай --port <n>).`
+      );
+      busy.userFacing = true;
+      throw busy;
+    }
+    throw err;
+  }
   return { server, port, repoRoot, store, gitignore, homeDir, resolvedBase };
 }
 
@@ -301,7 +330,7 @@ async function main() {
 
   const url = `http://${options.host}:${started.port}/`;
   console.log('');
-  console.log(`  local-review    ${url}`);
+  console.log(`  local-review    ${url}${options.apiOnly ? '  (только API, UI — на vite)' : ''}`);
   if (started.repoRoot) {
     console.log(`  репозиторий     ${started.repoRoot}`);
     console.log(
@@ -319,7 +348,8 @@ async function main() {
   if (started.port !== options.port) console.log(`  порт ${options.port} занят, взят ${started.port}`);
   console.log('\n  Ctrl+C — выход\n');
 
-  if (options.open) openBrowser(url);
+  // Nothing to open in --api-only: this port answers /api and nothing else.
+  if (options.open && !options.apiOnly) openBrowser(url);
 }
 
 if (require.main === module) {
