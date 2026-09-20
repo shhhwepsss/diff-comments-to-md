@@ -250,7 +250,7 @@ async function start(options) {
   const staticDir = getPublicDir();
   if (!options.apiOnly && !fs.existsSync(path.join(staticDir, 'index.html'))) {
     const err = new Error(
-      `UI не собран: выполни \`npm run build\` (каталог ${staticDir})`
+      `UI не собран: выполни \`yarn build\` (каталог ${staticDir})`
     );
     err.userFacing = true;
     throw err;

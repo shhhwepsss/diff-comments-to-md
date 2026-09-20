@@ -12,10 +12,11 @@
   "scripts": {
     "review": "node review.js",
     "review:staged": "node review.js --staged",
-    "dev:server": "node review.js --no-open --port 4321",
+    "dev": "node tools/local-review/dev.js",
+    "dev:api": "node review.js --no-open --api-only --strict-port --port 4321",
     "dev:frontend": "vite --config tools/local-review/web/vite.config.mts",
     "build": "vite build --config tools/local-review/web/vite.config.mts",
-    "prepare": "npm run build",
+    "prepare": "yarn build",
     "typecheck": "tsc -p tools/local-review/web",
     "test:web": "vitest run --config tools/local-review/web/vite.config.mts",
     "smoke": "node tools/local-review/smoke.js",
