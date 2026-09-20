@@ -11,6 +11,7 @@ import {
   FileIcon,
   QuestionIcon,
   ScreenFullIcon,
+  ScreenNormalIcon,
 } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { failureMessage } from '../api/client';
@@ -315,9 +316,14 @@ export function DiffPane({ zen, onZen }: Props) {
         >
           Комментарий к файлу
         </Button>
-        {/* The way out of Zen is the floating button (DiffScreen), which is on
-            screen even with no file open — this one only goes in. */}
-        {!zen && (
+        {/* In Zen this is the way out, and it says so: the header is sticky, so
+            the button stays on screen while the file scrolls. With no file open
+            there is no header — DiffScreen puts a floating one there instead. */}
+        {zen ? (
+          <Button size="small" leadingVisual={ScreenNormalIcon} onClick={() => onZen(false)}>
+            Выйти из Zen <span className="rv-file-header__kbd">Esc</span>
+          </Button>
+        ) : (
           <IconButton
             size="small"
             icon={ScreenFullIcon}

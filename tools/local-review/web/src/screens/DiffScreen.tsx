@@ -1,4 +1,4 @@
-import { IconButton, Link, Spinner, StateLabel } from '@primer/react';
+import { Button, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
@@ -48,18 +48,16 @@ function PrHeader({ pr }: { pr: PrMeta }) {
 }
 
 /**
- * The way out of Zen that is always on screen. The toggle in the file header
- * is gone in Zen and would be missing anyway with no file open, so without
- * this button the mode would have no visible exit — only Esc.
+ * The way out of Zen when there is no file header to put it in: no file
+ * chosen, an empty history, a failed load. With a file open the button lives
+ * in the file header instead (DiffPane), where it never covers the diff.
  */
 function ZenExit({ onZen }: { onZen: (on: boolean) => void }) {
   return (
     <div className="rv-zen-exit">
-      <IconButton
-        icon={ScreenNormalIcon}
-        aria-label="Выйти из Zen (Esc)"
-        onClick={() => onZen(false)}
-      />
+      <Button leadingVisual={ScreenNormalIcon} onClick={() => onZen(false)}>
+        Выйти из Zen <span className="rv-file-header__kbd">Esc</span>
+      </Button>
     </div>
   );
 }
@@ -67,7 +65,7 @@ function ZenExit({ onZen }: { onZen: (on: boolean) => void }) {
 type Props = { zen: boolean; onZen: (on: boolean) => void };
 
 export function DiffScreen({ zen, onZen }: Props) {
-  const { state, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
+  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
 
   if (!state && loading) {
     return (
@@ -118,7 +116,7 @@ export function DiffScreen({ zen, onZen }: Props) {
       {/* Zen drops everything above the diff. Not rendering beats hiding: the
           commit rail owns key handlers and state of its own. */}
       {zen ? (
-        <ZenExit onZen={onZen} />
+        !activeFile && <ZenExit onZen={onZen} />
       ) : (
         <>
           <CommitRail />

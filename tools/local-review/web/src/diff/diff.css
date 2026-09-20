@@ -422,26 +422,27 @@ body.rv-dragging-lines * {
   border-right: none;
 }
 
-/* Always on screen in Zen, including with no file open: without it the mode
-   would have no visible way out. Fixed, so it does not depend on which of the
-   diff screen's branches is rendered. */
+/* The way out of Zen when there is no file header to hold it: no file chosen,
+   an empty history, a failed load. Fixed, so it does not depend on which of
+   the diff screen's branches is rendered — and fully opaque, because a way out
+   nobody notices is the same as no way out. */
 .rv-zen-exit {
   position: fixed;
   right: var(--base-size-16);
   bottom: var(--base-size-16);
   z-index: 10;
-  opacity: 0.45;
-  border-radius: 999px;
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-default);
   box-shadow: var(--shadow-floating-small);
-  transition: opacity 0.12s ease-in-out;
 }
 
-.rv-zen-exit:hover,
-.rv-zen-exit:focus-within {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rv-zen-exit { transition: none; }
+/* The Esc hint inside the Zen buttons, in both places they live. */
+.rv-file-header__kbd {
+  margin-left: var(--base-size-6);
+  padding: 0 var(--base-size-4);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-small, 3px);
 }
