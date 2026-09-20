@@ -58,3 +58,26 @@
   border-radius: var(--borderRadius-medium);
   background: var(--bgColor-inset);
 }
+
+/* Горячие клавиши: одна строка на действие. */
+.rv-keybindings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+
+.rv-keybinding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-12);
+}
+
+.rv-keybinding__label {
+  min-width: 240px;
+}
+
+.rv-keybinding__value {
+  min-width: 180px;
+  font-family: var(--fontStack-monospace);
+}

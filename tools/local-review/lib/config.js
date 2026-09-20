@@ -7,6 +7,8 @@ const path = require('node:path');
 const DIR_NAME = '.local-review';
 const RECENT_LIMIT = 10;
 const GITIGNORE_TARGETS = ['project', 'global'];
+/** Actions a keyboard shortcut can be bound to. Nothing is bound by default. */
+const KEYBINDING_ACTIONS = ['zen'];
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
 function homeDir() {
@@ -65,8 +67,28 @@ function writeState(next) {
  * says where the `.local-review/` ignore line goes — into the repository's
  * root .gitignore ('project', the default and the historical behaviour) or
  * into the machine's global ignore file, core.excludesFile ('global').
+ * `keybindings` maps an action to the shortcut the user assigned to it;
+ * an empty string means the action has no shortcut, which is the default.
  */
-const SETTINGS_DEFAULTS = { copyPrompt: '', gitignoreTarget: 'project' };
+function defaultKeybindings() {
+  return KEYBINDING_ACTIONS.reduce((acc, action) => Object.assign(acc, { [action]: '' }), {});
+}
+
+const SETTINGS_DEFAULTS = { copyPrompt: '', gitignoreTarget: 'project', keybindings: defaultKeybindings() };
+
+/**
+ * Keeps only known actions with string values. The file can be edited by hand,
+ * so anything else falls back to "not bound" instead of reaching the browser.
+ * The spelling of a shortcut is the front-end's business; the server stores it.
+ */
+function readKeybindings(value) {
+  const out = defaultKeybindings();
+  if (!value || typeof value !== 'object') return out;
+  for (const action of KEYBINDING_ACTIONS) {
+    if (typeof value[action] === 'string') out[action] = value[action];
+  }
+  return out;
+}
 
 function readSettings() {
   try {
@@ -77,15 +99,20 @@ function readSettings() {
         parsed && GITIGNORE_TARGETS.includes(parsed.gitignoreTarget)
           ? parsed.gitignoreTarget
           : SETTINGS_DEFAULTS.gitignoreTarget,
+      keybindings: readKeybindings(parsed && parsed.keybindings),
     };
   } catch {
     // Same as state.json: missing or corrupt just means defaults.
-    return { ...SETTINGS_DEFAULTS };
+    return { ...SETTINGS_DEFAULTS, keybindings: defaultKeybindings() };
   }
 }
 
+/** `keybindings` is merged action by action, so a patch for one never drops the rest. */
 function writeSettings(patch) {
-  return writeJsonAtomic(settingsPath(), { ...readSettings(), ...patch });
+  const current = readSettings();
+  const next = { ...current, ...patch };
+  if (patch && patch.keybindings) next.keybindings = readKeybindings({ ...current.keybindings, ...patch.keybindings });
+  return writeJsonAtomic(settingsPath(), next);
 }
 
 function setLast(descriptor) {
@@ -126,4 +153,5 @@ module.exports = {
   DIR_NAME,
   RECENT_LIMIT,
   GITIGNORE_TARGETS,
+  KEYBINDING_ACTIONS,
 };

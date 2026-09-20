@@ -1,6 +1,6 @@
-import { Link, Spinner, StateLabel } from '@primer/react';
+import { Button, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
+import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import type { PrMeta } from '../api/types';
 import { FileSidebar } from '../diff/FileSidebar';
@@ -47,8 +47,25 @@ function PrHeader({ pr }: { pr: PrMeta }) {
   );
 }
 
-export function DiffScreen() {
-  const { state, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
+/**
+ * The way out of Zen when there is no file header to put it in: no file
+ * chosen, an empty history, a failed load. With a file open the button lives
+ * in the file header instead (DiffPane), where it never covers the diff.
+ */
+function ZenExit({ onZen }: { onZen: (on: boolean) => void }) {
+  return (
+    <div className="rv-zen-exit">
+      <Button leadingVisual={ScreenNormalIcon} onClick={() => onZen(false)}>
+        Выйти из Zen <span className="rv-file-header__kbd">Esc</span>
+      </Button>
+    </div>
+  );
+}
+
+type Props = { zen: boolean; onZen: (on: boolean) => void };
+
+export function DiffScreen({ zen, onZen }: Props) {
+  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
 
   if (!state && loading) {
     return (
@@ -63,7 +80,7 @@ export function DiffScreen() {
   if (!state && commitsEmpty) {
     return (
       <div className="rv-diff-screen">
-        <DirtyBanner />
+        {zen ? <ZenExit onZen={onZen} /> : <DirtyBanner />}
         <div className="rv-center">
           <Blankslate spacious>
             <Blankslate.Visual>
@@ -81,6 +98,7 @@ export function DiffScreen() {
   if (!state) {
     return (
       <div className="rv-center">
+        {zen && <ZenExit onZen={onZen} />}
         <Blankslate spacious>
           <Blankslate.Visual>
             <AlertIcon size={24} />
@@ -95,15 +113,23 @@ export function DiffScreen() {
 
   return (
     <div className="rv-diff-screen">
-      <CommitRail />
-      <DirtyBanner />
-      {state.pr && <PrHeader pr={state.pr} />}
+      {/* Zen drops everything above the diff. Not rendering beats hiding: the
+          commit rail owns key handlers and state of its own. */}
+      {zen ? (
+        !activeFile && <ZenExit onZen={onZen} />
+      ) : (
+        <>
+          <CommitRail />
+          <DirtyBanner />
+          {state.pr && <PrHeader pr={state.pr} />}
+        </>
+      )}
       {/* A reload keeps the previous files on screen; dim them and say what is
           loading, so a fresh commit pick doesn't look like it did nothing. */}
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar />
         <main className="rv-content">
-          <DiffPane />
+          <DiffPane zen={zen} onZen={onZen} />
         </main>
         {loading && (
           <div className="rv-reload" role="status">

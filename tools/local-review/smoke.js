@@ -1849,6 +1849,19 @@ async function main() {
   const emptyPatch = await call('/api/settings', json('PUT', {}));
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
+  // ------------------------------------------------------ горячие клавиши (#22)
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":""}', 'GET /api/settings: по умолчанию клавиша не задана');
+  eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
+    'PUT /api/settings: неизвестное действие -> 400');
+  eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
+    'PUT /api/settings: сочетание не строка -> 400');
+  eq((await call('/api/settings', json('PUT', { keybindings: 'Ctrl+K' }))).status, 400,
+    'PUT /api/settings: keybindings не объект -> 400');
+  const boundZen = await call('/api/settings', json('PUT', { keybindings: { zen: 'Ctrl+Shift+F' } }));
+  eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
+  eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
+  await call('/api/settings', json('PUT', { keybindings: { zen: '' } }));
+
   const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
   ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));
   ok(fs.existsSync(path.join(home, 'settings.json')), 'промпт лежит в <home>/settings.json');

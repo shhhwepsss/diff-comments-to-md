@@ -1,7 +1,18 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Button, Checkbox, CounterLabel, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
+import { Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, CodeIcon, CommentIcon, EyeClosedIcon, EyeIcon, FileBinaryIcon, FileIcon, QuestionIcon } from '@primer/octicons-react';
+import {
+  AlertIcon,
+  CodeIcon,
+  CommentIcon,
+  EyeClosedIcon,
+  EyeIcon,
+  FileBinaryIcon,
+  FileIcon,
+  QuestionIcon,
+  ScreenFullIcon,
+  ScreenNormalIcon,
+} from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { failureMessage } from '../api/client';
 import { useToast } from '../lib/toast';
@@ -102,7 +113,9 @@ function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: 
   return null;
 }
 
-export function DiffPane() {
+type Props = { zen: boolean; onZen: (on: boolean) => void };
+
+export function DiffPane({ zen, onZen }: Props) {
   const review = useReview();
   const { activeFile, activeDiff, comments, editor, editingId, state, commitsMode, commitSel, commits } = review;
   const [wrap, setWrap] = useState(readWrap);
@@ -303,6 +316,21 @@ export function DiffPane() {
         >
           Комментарий к файлу
         </Button>
+        {/* In Zen this is the way out, and it says so: the header is sticky, so
+            the button stays on screen while the file scrolls. With no file open
+            there is no header — DiffScreen puts a floating one there instead. */}
+        {zen ? (
+          <Button size="small" leadingVisual={ScreenNormalIcon} onClick={() => onZen(false)}>
+            Выйти из Zen <span className="rv-file-header__kbd">Esc</span>
+          </Button>
+        ) : (
+          <IconButton
+            size="small"
+            icon={ScreenFullIcon}
+            aria-label="Zen: скрыть всё, кроме диффа"
+            onClick={() => onZen(true)}
+          />
+        )}
         {fileEntry && (
           <label
             className={'rv-file-header__viewed' + (fileEntry.viewed ? ' is-viewed' : '')}
@@ -383,9 +411,6 @@ export function DiffPane() {
       )}
       {diff && !reason && !rendered && (
         <>
-          <div className="rv-hint rv-diff-hint">
-            По номерам строк: клик — строка, протяжка или Shift+клик — диапазон.
-          </div>
           <div className="rv-diff-frame">
             <DiffEditor
               path={activeFile}
