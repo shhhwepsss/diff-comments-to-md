@@ -87,9 +87,11 @@ export function AppHeader({ route, theme, onTheme }: Props) {
   return (
     <header className="rv-header">
       <div className="rv-header__row">
-        {/* The brand names what is open, like the tab does; the product name
-            moves into the tooltip so it is still there to be found. */}
-        <a className="rv-header__brand" href="#/local" title={PRODUCT_NAME}>
+        {/* The brand names what is open, like the tab does, so the tooltip is
+            the place the name goes when it is too long to fit. The link itself
+            still leads to the folder picker, and that is what it is announced
+            as: read out as the repository it would be a promise to open it. */}
+        <a className="rv-header__brand" href="#/local" title={titleFor(route)} aria-label={PRODUCT_NAME}>
           <CodeReviewIcon size={20} />
           <span>{titleFor(route)}</span>
         </a>
