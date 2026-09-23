@@ -14,20 +14,86 @@ const { spawn } = require('node:child_process');
  * run with the current node binary when it names a .js file.
  */
 
-// Windows PowerShell 5.1 ships everywhere and can reach WinForms. The owner
-// form is TopMost so the dialog is not hidden behind the browser window.
+// Windows PowerShell 5.1 ships everywhere. WinForms' FolderBrowserDialog is
+// the old tree-only window, so this goes straight to the Explorer dialog
+// (IFileOpenDialog with FOS_PICKFOLDERS): address bar, search, quick access.
+// IFileDialog is declared only up to GetResult: a COM interface may stop
+// early, the vtable order before that point is what matters.
+// The owner form is TopMost so the dialog is not hidden behind the browser.
 // Stdout is switched to UTF-8 so Cyrillic paths survive the pipe; progress
 // records are silenced so they do not end up in an error message as CLIXML.
 const WINDOWS_SCRIPT = `
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class LocalReviewFolderPicker {
+  [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+  class FileOpenDialog {}
+
+  [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IFileDialog {
+    [PreserveSig] int Show(IntPtr parent);
+    void SetFileTypes(uint count, IntPtr filters);
+    void SetFileTypeIndex(uint index);
+    void GetFileTypeIndex(out uint index);
+    void Advise(IntPtr events, out uint cookie);
+    void Unadvise(uint cookie);
+    void SetOptions(uint options);
+    void GetOptions(out uint options);
+    void SetDefaultFolder(IShellItem item);
+    void SetFolder(IShellItem item);
+    void GetFolder(out IShellItem item);
+    void GetCurrentSelection(out IShellItem item);
+    void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+    void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+    void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+    void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+    void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+    void GetResult(out IShellItem item);
+  }
+
+  [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellItem {
+    void BindToHandler(IntPtr bindContext, ref Guid handler, ref Guid iid, out IntPtr result);
+    void GetParent(out IShellItem parent);
+    void GetDisplayName(uint form, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+  }
+
+  const uint FOS_PICKFOLDERS = 0x20;
+  const uint FOS_FORCEFILESYSTEM = 0x40;
+  const uint SIGDN_FILESYSPATH = 0x80058000;
+  const int ERROR_CANCELLED = unchecked((int)0x800704C7);
+
+  // null when the dialog was closed without choosing.
+  public static string Pick(IntPtr owner, string title) {
+    IFileDialog dialog = (IFileDialog)new FileOpenDialog();
+    try {
+      uint options;
+      dialog.GetOptions(out options);
+      dialog.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+      dialog.SetTitle(title);
+      int hr = dialog.Show(owner);
+      if (hr == ERROR_CANCELLED) return null;
+      Marshal.ThrowExceptionForHR(hr);
+      IShellItem item;
+      dialog.GetResult(out item);
+      string path;
+      item.GetDisplayName(SIGDN_FILESYSPATH, out path);
+      return path;
+    } finally {
+      Marshal.ReleaseComObject(dialog);
+    }
+  }
+}
+'@
 $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }
-$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Выбери корень git-репозитория'
-$dialog.ShowNewFolderButton = $false
-if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }
+$picked = [LocalReviewFolderPicker]::Pick($owner.Handle, 'Выбери корень git-репозитория')
 $owner.Dispose()
+if ($picked) { [Console]::Out.Write($picked) }
 `;
 
 // osascript reports a cancel as "User canceled. (-128)" on stderr, exit 1.
