@@ -24,6 +24,7 @@ const ROUTES = [
   { method: 'POST', path: '/api/export/file', handle: exportRoutes.exportFile },
   { method: 'GET', path: '/api/browse', handle: browseRoutes.browse },
   { method: 'GET', path: '/api/local/validate', handle: browseRoutes.validate },
+  { method: 'POST', path: '/api/local/pick-folder', handle: browseRoutes.pickFolder },
   { method: 'GET', path: '/api/session', handle: session.get },
   { method: 'POST', path: '/api/session', handle: session.post },
   { method: 'GET', path: '/api/settings', handle: settings.get },

@@ -159,6 +159,13 @@ function noGh() {
   delete process.env.LOCAL_REVIEW_GH_FIXTURES;
 }
 
+const FIXTURE_FOLDER_DIALOG = path.join(__dirname, 'smoke-fixtures', 'folder-dialog-fixture.js');
+
+/** What the fake folder dialog prints and exits with on its next run. */
+function folderDialogResult(result) {
+  process.env.LOCAL_REVIEW_FOLDER_DIALOG_RESULT = JSON.stringify(result);
+}
+
 function json(method, payload) {
   return {
     method,
@@ -719,6 +726,61 @@ async function main() {
     'не-git каталог -> ok:false с читаемым текстом',
     JSON.stringify(vNot.body)
   );
+
+  // ------------------------------------- системный диалог выбора папки
+  console.log('\nсистемный диалог выбора папки (подставной бинарь)');
+  process.env.LOCAL_REVIEW_FOLDER_DIALOG_BIN = FIXTURE_FOLDER_DIALOG;
+  const pickedDir = path.join(os.tmpdir(), 'моя папка');
+  folderDialogResult({ code: 0, stdout: pickedDir + '\r\n' });
+  const pickOk = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(
+    pickOk.status === 200 && pickOk.body.path === pickedDir && !pickOk.body.cancelled,
+    'выбранная папка -> 200 с путём без хвостового перевода строки (кириллица и пробел целы)',
+    JSON.stringify(pickOk.body)
+  );
+  folderDialogResult({ code: 0, stdout: '' });
+  const pickEmpty = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(
+    pickEmpty.status === 200 && pickEmpty.body.cancelled === true && !pickEmpty.body.path,
+    'пустой вывод -> отмена',
+    JSON.stringify(pickEmpty.body)
+  );
+  folderDialogResult({ code: 1, stderr: '0:42: execution error: User canceled. (-128)\n' });
+  const pickCancel = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(
+    pickCancel.status === 200 && pickCancel.body.cancelled === true,
+    'код 1 без вывода (отмена в osascript/zenity) -> отмена',
+    JSON.stringify(pickCancel.body)
+  );
+  folderDialogResult({ code: 2, stderr: 'dialog exploded\n' });
+  const pickFail = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(
+    pickFail.status === 500 && /dialog exploded/.test(pickFail.body.error),
+    'сбой диалога -> 500 с текстом stderr',
+    JSON.stringify(pickFail.body)
+  );
+  process.env.LOCAL_REVIEW_FOLDER_DIALOG_BIN = path.join(os.tmpdir(), 'definitely-no-dialog-here-12345');
+  const pickMissing = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(
+    pickMissing.status === 500 && /диалог/i.test(pickMissing.body.error),
+    'нет программы диалога -> 500 с читаемым текстом',
+    JSON.stringify(pickMissing.body)
+  );
+  process.env.LOCAL_REVIEW_FOLDER_DIALOG_BIN = FIXTURE_FOLDER_DIALOG;
+  folderDialogResult({ code: 0, stdout: pickedDir, delayMs: 400 });
+  const [pickA, pickB] = await Promise.all([
+    call('/api/local/pick-folder', { method: 'POST' }),
+    new Promise((r) => setTimeout(r, 100)).then(() => call('/api/local/pick-folder', { method: 'POST' })),
+  ]);
+  ok(
+    pickA.status === 200 && pickB.status === 409,
+    'второй диалог, пока открыт первый -> 409',
+    `${pickA.status} / ${pickB.status}`
+  );
+  const pickAfter = await call('/api/local/pick-folder', { method: 'POST' });
+  ok(pickAfter.status === 200, 'после закрытия диалога можно открыть новый', String(pickAfter.status));
+  delete process.env.LOCAL_REVIEW_FOLDER_DIALOG_BIN;
+  delete process.env.LOCAL_REVIEW_FOLDER_DIALOG_RESULT;
 
   // empty diff -> empty file list, no crash
   const clean = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-clean-'));

@@ -153,6 +153,9 @@ export type ValidateResponse = {
   error: string | null;
 };
 
+/** POST /api/local/pick-folder: the system dialog either returns a folder or was closed. */
+export type PickFolderResponse = { path: string } | { cancelled: true };
+
 export type RecentRepo = { root: string };
 
 export type SessionResponse = {
