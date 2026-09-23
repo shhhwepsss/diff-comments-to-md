@@ -37,6 +37,7 @@ export function LocalPicker() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState('');
+  const [picking, setPicking] = useState(false);
 
   const browse = useCallback(
     async (path?: string) => {
@@ -96,6 +97,21 @@ export function LocalPicker() {
     }
   };
 
+  // An empty field has nothing to open, so the button asks the OS for a folder.
+  const pickAndOpen = async () => {
+    setPicking(true);
+    try {
+      const picked = await api.pickFolder();
+      if (!('path' in picked)) return; // closed without choosing: nothing to say
+      setManual(picked.path);
+      await openFolder(picked.path);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setPicking(false);
+    }
+  };
+
   return (
     <div className="rv-page">
       <div className="rv-page__head">
@@ -103,7 +119,7 @@ export function LocalPicker() {
           Локальная папка
         </Heading>
         <p className="rv-page__hint">
-          Выбери корень git-репозитория. Клик по строке — зайти внутрь, «Открыть» — открыть эту папку.
+          Выбери корень git-репозитория. Клик по строке — зайти внутрь, «Открыть» — открыть эту папку. «Открыть» у пустого поля внизу — системный диалог выбора папки.
         </p>
       </div>
 
@@ -157,7 +173,7 @@ export function LocalPicker() {
         className="rv-manual"
         onSubmit={(e) => {
           e.preventDefault();
-          void openFolder(manual);
+          void (manual.trim() ? openFolder(manual) : pickAndOpen());
         }}
       >
         <FormControl className="rv-manual__field">
@@ -171,7 +187,7 @@ export function LocalPicker() {
             className="rv-mono"
           />
         </FormControl>
-        <Button type="submit" variant="primary">
+        <Button type="submit" variant="primary" loading={picking}>
           Открыть
         </Button>
       </form>

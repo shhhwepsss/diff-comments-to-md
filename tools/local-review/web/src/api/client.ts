@@ -7,6 +7,7 @@ import type {
   DiffResponse,
   GhStatus,
   Gitignore,
+  PickFolderResponse,
   PrSearchResponse,
   RepoListResponse,
   SessionResponse,
@@ -164,6 +165,7 @@ export const api = {
   browse: (path?: string) =>
     request<BrowseResponse>('/api/browse' + (path ? `?path=${encodeURIComponent(path)}` : '')),
   validateRoot: (root: string) => request<ValidateResponse>(`/api/local/validate?root=${encodeURIComponent(root)}`),
+  pickFolder: () => request<PickFolderResponse>('/api/local/pick-folder', { method: 'POST' }),
 
   session: () => request<SessionResponse>('/api/session'),
   saveSession: (descriptor: Descriptor) =>
