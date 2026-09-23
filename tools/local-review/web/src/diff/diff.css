@@ -50,6 +50,44 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
 }
 
+.rv-sidebar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+}
+
+.rv-rules-toggle {
+  position: relative;
+  flex: none;
+}
+
+.rv-rules-toggle .is-open {
+  background: var(--control-bgColor-active);
+}
+
+/* Rules still apply while their fields are folded away; the dot says so. */
+.rv-rules-toggle__dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fgColor-accent);
+  pointer-events: none;
+}
+
+.rv-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+
+.rv-rules label {
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
 .rv-sidebar__range {
   display: flex;
   flex-direction: column;
@@ -117,6 +155,33 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   font-size: var(--text-body-size-small);
   font-weight: var(--base-text-weight-semibold, 600);
   color: var(--fgColor-muted);
+}
+
+.rv-sidebar__section--toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  width: calc(100% - 2 * var(--base-size-8));
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rv-sidebar__section--toggle:hover {
+  color: var(--fgColor-default);
+}
+
+/* Files hidden by rules stay reachable but read as set aside. */
+.rv-hidden-files {
+  opacity: 0.6;
+}
+
+.rv-hidden-files:hover,
+.rv-hidden-files:focus-within {
+  opacity: 1;
 }
 
 .rv-status {
