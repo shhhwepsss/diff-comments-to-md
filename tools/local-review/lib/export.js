@@ -36,12 +36,12 @@ function textOf(comment) {
 }
 
 /**
- * The line right after the anchor for a comment written in commits mode and
- * not on the latest commit alone: `<from>..<to>` (or bare `<to>` when it is
- * a single commit), plus ` · <label>` when the client sent one. A comment
- * with no `commit` context (every comment from working / staged / base, and
- * one left on just the latest commit) has no such line — its block is
- * exactly `anchor\ntext`, unchanged from before commits mode existed.
+ * The line right after the anchor for a comment written in commits mode:
+ * `<from>..<to>` (or bare `<to>` when it is a single commit), plus
+ * ` · <label>` when the client sent one. A comment with no `commit` context
+ * (every comment from working / staged / base, and one left on just the
+ * latest commit before commits mode started recording it) has no such line —
+ * its block is exactly `anchor\ntext`, unchanged from before commits mode.
  */
 function commitLineOf(comment) {
   const ctx = comment.commit;

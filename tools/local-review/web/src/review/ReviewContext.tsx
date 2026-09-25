@@ -7,6 +7,7 @@ import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
 import { withViewed } from './viewed';
+import { isStale, openTarget, viewKindOf, type AgeContext } from './commentAge';
 import {
   clampIndex,
   commitContextFor,
@@ -67,6 +68,16 @@ export type Review = {
   commitSel: CommitSelection | null;
   /** Comments whose commit context falls outside the current selection. */
   outsideCount: number;
+  /** What «старый комментарий» is measured against: the view and the branch history. */
+  age: AgeContext;
+  /** File comments written against code other than the code on screen. */
+  staleIds: Set<string>;
+  /** The comment the «all comments» panel points at; also highlighted in the diff. */
+  currentCommentId: string | null;
+  /** A pending «scroll the diff to this comment»; `nonce` makes a repeat request new. */
+  reveal: { commentId: string; nonce: number } | null;
+  /** The view «Открыть в <коммит>» left; set while that old commit is on screen. */
+  returnTo: Descriptor | null;
 
   reload: () => void;
   setMode: (mode: Mode) => void;
@@ -77,6 +88,14 @@ export type Review = {
   /** Grows the selection to cover every comment currently outside it. */
   expandSelectionToOutside: () => void;
   dismissDirtyNotice: () => void;
+  setCurrentComment: (id: string | null) => void;
+  /** Opens the comment's file (if another) and scrolls the diff to it. */
+  revealComment: (id: string) => void;
+  /** Commits view on the commit a stale comment was written against, then its line. */
+  openCommentCommit: (id: string) => void;
+  /** Back to the view «Открыть в» left. */
+  returnFromCommit: () => void;
+  dismissReturn: () => void;
   selectFile: (path: string) => void;
   /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
@@ -146,11 +165,17 @@ export function ReviewProvider({
   const [dirtyNoticeDismissed, setDirtyNoticeDismissed] = useState(false);
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [commitsLoading, setCommitsLoading] = useState(false);
+  // Branch history outside commits mode, only to tell stale comments apart.
+  const [ageHistory, setAgeHistory] = useState<{ commits: Commit[]; truncated: boolean }>({ commits: [], truncated: false });
+  const [currentCommentId, setCurrentCommentId] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ commentId: string; nonce: number } | null>(null);
+  const [returnTo, setReturnTo] = useState<Descriptor | null>(null);
 
   // Responses for a file or descriptor the user already left must not land.
   const diffSeq = useRef(0);
   const stateSeq = useRef(0);
   const commitsSeq = useRef(0);
+  const ageSeq = useRef(0);
   const activeFileRef = useRef<string | null>(null);
   activeFileRef.current = activeFile;
   // Back/Forward needs the file list without re-subscribing on every load.
@@ -182,10 +207,23 @@ export function ReviewProvider({
     [fail],
   );
 
+  // Quietly: without the history nothing is marked stale, the diff still works.
+  const loadAgeHistory = useCallback(async (d: Descriptor, fresh: boolean) => {
+    const seq = ++ageSeq.current;
+    try {
+      const data = await api.commits(commitsListDescriptor(d), fresh);
+      if (seq === ageSeq.current) setAgeHistory({ commits: data.commits || [], truncated: Boolean(data.truncated) });
+    } catch {
+      if (seq === ageSeq.current) setAgeHistory({ commits: [], truncated: false });
+    }
+  }, []);
+
   const load = useCallback(
     async (d: Descriptor, keepFile: string | null, fresh: boolean) => {
       const seq = ++stateSeq.current;
       setLoading(true);
+      // Commits mode keeps its own history (the rail's); every other view needs it fetched.
+      if (!isCommitsMode(d)) void loadAgeHistory(d, fresh);
       try {
         const [next, commentData] = await Promise.all([api.state(d, fresh), api.comments(d)]);
         if (seq !== stateSeq.current) return;
@@ -219,7 +257,7 @@ export function ReviewProvider({
         if (seq === stateSeq.current) setLoading(false);
       }
     },
-    [fail, loadDiff],
+    [fail, loadDiff, loadAgeHistory],
   );
 
   /**
@@ -354,6 +392,7 @@ export function ReviewProvider({
       }
       commitsSeq.current += 1;
       setCommitsLoading(false);
+      setReturnTo(null);
       const wasCommits = descriptorRef.current.source === 'local' && descriptorRef.current.mode === 'commits';
       updateLocal((d) => (d.mode === mode ? null : { ...d, mode, from: undefined, to: undefined }));
       if (wasCommits) setCommitSel(null);
@@ -380,6 +419,7 @@ export function ReviewProvider({
       }
       commitsSeq.current += 1;
       setCommitsLoading(false);
+      setReturnTo(null);
       if (!current.from && !current.to) return; // already showing "Все изменения"
       const next: Descriptor = { ...current, from: undefined, to: undefined };
       descriptorRef.current = next;
@@ -419,6 +459,56 @@ export function ReviewProvider({
 
   const dismissDirtyNotice = useCallback(() => setDirtyNoticeDismissed(true), []);
 
+  const commitsMode = useMemo(() => isCommitsMode(descriptor), [descriptor]);
+  const age = useMemo<AgeContext>(
+    () => ({
+      view: viewKindOf(descriptor),
+      history: commitsMode ? commits : ageHistory.commits,
+      truncated: commitsMode ? commitsTruncated : ageHistory.truncated,
+      sel: commitSel,
+    }),
+    [descriptor, commitsMode, commits, commitsTruncated, ageHistory, commitSel],
+  );
+  const ageRef = useRef(age);
+  ageRef.current = age;
+
+  const openCommentCommit = useCallback(
+    (id: string) => {
+      const c = commentsRef.current.find((x) => x.id === id);
+      if (!c || c.file === null) return;
+      const { history, truncated } = ageRef.current;
+      const target = openTarget(c, history, truncated);
+      if (!target) return;
+      const file = c.file;
+      // Only the first jump remembers where to return: a second one from the
+      // old commit still leads back to where the reviewer started.
+      setReturnTo((prev) => prev ?? descriptorRef.current);
+      setCurrentCommentId(id);
+      void enterCommitsMode(false, { from: history[target.from].sha, to: history[target.to].sha, file }).then(() =>
+        setReveal((r) => ({ commentId: id, nonce: (r?.nonce ?? 0) + 1 })),
+      );
+    },
+    [enterCommitsMode],
+  );
+
+  const returnFromCommit = useCallback(() => {
+    const target = returnTo;
+    setReturnTo(null);
+    if (!target) return;
+    commitsSeq.current += 1;
+    if (isCommitsMode(target)) {
+      void enterCommitsMode(false, { from: target.from, to: target.to, file: activeFileRef.current });
+      return;
+    }
+    setCommitsLoading(false);
+    setCommitSel(null);
+    descriptorRef.current = target;
+    setDescriptor(target);
+    void load(target, activeFileRef.current, false);
+  }, [returnTo, enterCommitsMode, load]);
+
+  const dismissReturn = useCallback(() => setReturnTo(null), []);
+
   /** Opens `path` without touching history — the Back/Forward handler's way in. */
   const openFile = useCallback(
     (d: Descriptor, path: string) => {
@@ -439,6 +529,22 @@ export function ReviewProvider({
       openFile(descriptor, path);
     },
     [descriptor, openFile],
+  );
+
+  const commentsRef = useRef<Comment[]>([]);
+  commentsRef.current = comments;
+
+  const setCurrentComment = useCallback((id: string | null) => setCurrentCommentId(id), []);
+
+  const revealComment = useCallback(
+    (id: string) => {
+      const c = commentsRef.current.find((x) => x.id === id);
+      if (!c || c.file === null) return;
+      setCurrentCommentId(id);
+      if (c.file !== activeFileRef.current) selectFile(c.file);
+      setReveal((r) => ({ commentId: id, nonce: (r?.nonce ?? 0) + 1 }));
+    },
+    [selectFile],
   );
 
   const setFileViewed = useCallback(
@@ -629,7 +735,10 @@ export function ReviewProvider({
     }
   }, [comments.length, confirm, descriptor, fail, refreshComments, toast]);
 
-  const commitsMode = useMemo(() => isCommitsMode(descriptor), [descriptor]);
+  const staleIds = useMemo(
+    () => new Set(comments.filter((c) => c.file !== null && isStale(c, age)).map((c) => c.id)),
+    [comments, age],
+  );
   const commitsEmpty = commitsMode && commits.length === 0;
   const outsideCount = useMemo(
     () => (commitsMode && commitSel ? outsideComments(commits, commitSel, comments).length : 0),
@@ -659,6 +768,11 @@ export function ReviewProvider({
       commitsLoading,
       commitSel,
       outsideCount,
+      age,
+      staleIds,
+      currentCommentId,
+      reveal,
+      returnTo,
       reload,
       setMode,
       setBase,
@@ -666,6 +780,11 @@ export function ReviewProvider({
       setCommitSelection,
       expandSelectionToOutside,
       dismissDirtyNotice,
+      setCurrentComment,
+      revealComment,
+      openCommentCommit,
+      returnFromCommit,
+      dismissReturn,
       selectFile,
       setFileViewed,
       openEditor,
@@ -702,6 +821,11 @@ export function ReviewProvider({
       commitsLoading,
       commitSel,
       outsideCount,
+      age,
+      staleIds,
+      currentCommentId,
+      reveal,
+      returnTo,
       reload,
       setMode,
       setBase,
@@ -709,6 +833,11 @@ export function ReviewProvider({
       setCommitSelection,
       expandSelectionToOutside,
       dismissDirtyNotice,
+      setCurrentComment,
+      revealComment,
+      openCommentCommit,
+      returnFromCommit,
+      dismissReturn,
       selectFile,
       setFileViewed,
       openEditor,

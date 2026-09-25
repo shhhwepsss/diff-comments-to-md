@@ -1,12 +1,14 @@
-import { Button, Link, Spinner, StateLabel } from '@primer/react';
+import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
-import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon } from '@primer/octicons-react';
+import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import type { PrMeta } from '../api/types';
 import { FileSidebar } from '../diff/FileSidebar';
 import { DiffPane } from '../diff/DiffPane';
 import { CommitRail } from '../commits/CommitRail';
 import { DirtyBanner } from '../commits/DirtyBanner';
+import { CommentsPanel } from '../comments/CommentsPanel';
+import { selHi, selLo } from '../review/commitSelection';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -62,9 +64,47 @@ function ZenExit({ onZen }: { onZen: (on: boolean) => void }) {
   );
 }
 
-type Props = { zen: boolean; onZen: (on: boolean) => void };
+const MODE_LABEL = { working: 'Рабочая копия', staged: 'Staged', base: 'Base', commits: 'Коммиты' } as const;
 
-export function DiffScreen({ zen, onZen }: Props) {
+/**
+ * Shown after «Открыть в <коммит>» from the comments panel: the diff now shows
+ * old code, and the way back must not be a hunt for the right tab.
+ */
+function OldCommitBanner() {
+  const review = useReview();
+  const { returnTo, commitsMode, commits, commitSel } = review;
+  if (!returnTo || !commitsMode || !commitSel) return null;
+  const lo = commits[selLo(commitSel)];
+  const hi = commits[selHi(commitSel)];
+  if (!lo || !hi) return null;
+  const range = lo === hi ? lo.short : `${lo.short}..${hi.short}`;
+  const back =
+    returnTo.source === 'local'
+      ? MODE_LABEL[returnTo.mode]
+      : returnTo.from && returnTo.to
+        ? 'Коммиты'
+        : 'Все изменения';
+  return (
+    <div className="rv-old-commit" role="status">
+      <div className="rv-old-commit__body">
+        Открыт коммит <code>{range}</code>, к которому написан комментарий. Дифф показывает код на тот момент.
+      </div>
+      <Button size="small" onClick={review.returnFromCommit}>
+        Вернуться к «{back}»
+      </Button>
+      <IconButton icon={XIcon} aria-label="Остаться здесь и скрыть плашку" size="small" variant="invisible" onClick={review.dismissReturn} />
+    </div>
+  );
+}
+
+type Props = {
+  zen: boolean;
+  onZen: (on: boolean) => void;
+  commentsPanel: boolean;
+  onCommentsPanel: (open: boolean) => void;
+};
+
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel }: Props) {
   const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
 
   if (!state && loading) {
@@ -124,13 +164,15 @@ export function DiffScreen({ zen, onZen }: Props) {
           {state.pr && <PrHeader pr={state.pr} />}
         </>
       )}
+      <OldCommitBanner />
       {/* A reload keeps the previous files on screen; dim them and say what is
           loading, so a fresh commit pick doesn't look like it did nothing. */}
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar />
         <main className="rv-content">
-          <DiffPane zen={zen} onZen={onZen} />
+          <DiffPane zen={zen} onZen={onZen} panelOpen={commentsPanel} />
         </main>
+        {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
         {loading && (
           <div className="rv-reload" role="status">
             <div className="rv-reload__bar" />

@@ -103,3 +103,27 @@
 .rv-general .rv-comment + .rv-comment-form {
   margin-top: 0;
 }
+
+/* Written against other code (another commit, or before a commit): kept on
+   its line, but greyed and labelled with the commit it belongs to. */
+.rv-comment--stale {
+  border-style: dashed;
+}
+
+.rv-comment--stale .rv-comment__body,
+.rv-comment--stale .rv-comment__anchor {
+  color: var(--fgColor-muted);
+}
+
+.commit-chip--stale {
+  font-family: var(--fontStack-sansSerif, inherit);
+  color: var(--fgColor-attention);
+  border-color: var(--borderColor-attention-muted);
+  white-space: normal;
+}
+
+/* The comment the «all comments» panel points at. */
+.rv-comment.is-current {
+  border-color: var(--borderColor-accent-emphasis);
+  box-shadow: 0 0 0 1px var(--borderColor-accent-emphasis);
+}

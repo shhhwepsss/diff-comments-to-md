@@ -53,7 +53,7 @@ function parseCommitLog(text) {
     const line = record.replace(/^[\r\n]+/, '');
     if (!line.trim()) continue;
     const f = line.split(FIELD);
-    if (f.length < 7) continue;
+    if (f.length < 8) continue;
     const parents = f[2].trim() ? f[2].trim().split(/\s+/) : [];
     commits.push({
       sha: f[0],
@@ -61,8 +61,11 @@ function parseCommitLog(text) {
       parents,
       author: f[3],
       date: f[4],
-      subject: f[5],
-      body: f[6].replace(/\s+$/, ''),
+      // Committer date: a rebase or amend makes a new commit, and comments
+      // written before it must count as written against older code.
+      committedAt: f[5],
+      subject: f[6],
+      body: f[7].replace(/\s+$/, ''),
       merge: parents.length > 1,
       root: parents.length === 0,
     });
@@ -84,7 +87,7 @@ async function listCommits(repoRoot, base, limit) {
   }
 
   const max = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : DEFAULT_LIMIT;
-  const format = ['%H', '%h', '%P', '%an', '%aI', '%s', '%b'].join(FIELD) + RECORD;
+  const format = ['%H', '%h', '%P', '%an', '%aI', '%cI', '%s', '%b'].join(FIELD) + RECORD;
   const run = async (rangeArg) =>
     parseCommitLog(
       await gitText(

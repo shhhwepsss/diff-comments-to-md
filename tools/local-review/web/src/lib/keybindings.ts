@@ -31,13 +31,16 @@ export type KeyEventLike = {
 };
 
 /** Actions a shortcut can be bound to, with the label the settings page shows. */
-export const KEYBINDING_ACTIONS = [{ id: 'zen', label: 'Zen: скрыть всё, кроме диффа' }] as const;
+export const KEYBINDING_ACTIONS = [
+  { id: 'zen', label: 'Zen: скрыть всё, кроме диффа' },
+  { id: 'commentsPanel', label: 'Панель всех комментариев' },
+] as const;
 
 export type KeybindingAction = (typeof KEYBINDING_ACTIONS)[number]['id'];
 
 export type Keybindings = Record<KeybindingAction, string>;
 
-export const KEYBINDING_DEFAULTS: Keybindings = { zen: '' };
+export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '' };
 
 const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {
   CTRL: 'ctrl',

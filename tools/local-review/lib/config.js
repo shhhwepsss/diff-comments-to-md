@@ -8,7 +8,7 @@ const DIR_NAME = '.local-review';
 const RECENT_LIMIT = 10;
 const GITIGNORE_TARGETS = ['project', 'global'];
 /** Actions a keyboard shortcut can be bound to. Nothing is bound by default. */
-const KEYBINDING_ACTIONS = ['zen'];
+const KEYBINDING_ACTIONS = ['zen', 'commentsPanel'];
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
 function homeDir() {

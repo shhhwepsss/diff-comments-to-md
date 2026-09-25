@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -33,14 +33,33 @@ type Props = {
   renderBlock: (key: string) => ReactNode;
   /** A click or drag over line numbers finished on this range. */
   onSelectLines: (range: LineRange) => void;
+  /** Scroll these lines to the middle and flash them; a new `nonce` asks again. */
+  reveal?: { from: number; to: number; nonce: number } | null;
+  /** The reveal with this nonce is done — the caller stops passing it. */
+  onRevealed?: (nonce: number) => void;
 };
+
+const FLASH_MS = 1600;
 
 /**
  * One read-only unified diff of a file: the new text is the document, the old
  * text is the merge view's original. Comments render inside it as React
  * portals.
  */
-export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, blocks, selected, renderBlock, onSelectLines }: Props) {
+export function DiffEditor({
+  path,
+  oldText,
+  newText,
+  hunks,
+  deletedFile,
+  wrap,
+  blocks,
+  selected,
+  renderBlock,
+  onSelectLines,
+  reveal = null,
+  onRevealed,
+}: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const registry = useMemo(() => new PortalRegistry(), []);
@@ -48,8 +67,28 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
   const toast = useToast();
 
   // Latest props for handlers created once per view.
-  const latest = useRef({ blocks, selected, wrap, onSelectLines });
-  latest.current = { blocks, selected, wrap, onSelectLines };
+  const latest = useRef({ blocks, selected, wrap, onSelectLines, reveal, onRevealed });
+  latest.current = { blocks, selected, wrap, onSelectLines, reveal, onRevealed };
+
+  // The editor is created asynchronously (the language chunk), so a reveal
+  // asked for before that runs once the view exists.
+  const flashTimer = useRef<number | undefined>(undefined);
+  const applyReveal = useCallback(() => {
+    const v = view.current;
+    const r = latest.current.reveal;
+    if (!v || !r) return;
+    const doc = v.state.doc;
+    const line = doc.line(Math.min(Math.max(1, r.from), doc.lines));
+    v.dispatch({
+      effects: [EditorView.scrollIntoView(line.from, { y: 'center' }), setSelectedLines.of({ from: r.from, to: r.to })],
+    });
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      if (!drag.current) view.current?.dispatch({ effects: setSelectedLines.of(latest.current.selected) });
+    }, FLASH_MS);
+    latest.current.onRevealed?.(r.nonce);
+  }, []);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   // Drag over line numbers: anchor line + current line, painted live.
   const drag = useRef<{ anchor: number; current: number } | null>(null);
@@ -149,6 +188,7 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
       v.dispatch({
         effects: [setBlocks.of(latest.current.blocks), setSelectedLines.of(latest.current.selected)],
       });
+      applyReveal();
     };
 
     // The language package is a lazy chunk; wait for it (cached after the
@@ -175,7 +215,11 @@ export function DiffEditor({ path, oldText, newText, hunks, deletedFile, wrap, b
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal]);
+
+  useEffect(() => {
+    if (reveal) applyReveal();
+  }, [reveal?.nonce, applyReveal]);
 
   const blocksKey = blocks.map((b) => `${b.key}@${b.line}`).join('|');
   useEffect(() => {

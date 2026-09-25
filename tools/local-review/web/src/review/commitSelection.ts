@@ -139,15 +139,14 @@ export function expandToComments(commits: Commit[], count: number, sel: CommitSe
 }
 
 /**
- * The `commit` payload a new comment should carry. A comment written while
- * only the latest commit is selected needs none — that's the same as "no
- * commits mode" for export/visibility purposes.
+ * The `commit` payload a new comment should carry: always, the latest commit
+ * included. Without it a comment on the latest commit could not be told from
+ * one on uncommitted changes, and would turn stale in this very view
+ * (review/commentAge.ts).
  */
 export function commitContextFor(commits: Commit[], sel: CommitSelection): CommitContext | undefined {
-  const last = lastIndex(commits.length);
   const lo = selLo(sel);
   const hi = selHi(sel);
-  if (lo === hi && lo === last) return undefined;
   const l = commits[lo];
   const h = commits[hi];
   if (!l || !h) return undefined;

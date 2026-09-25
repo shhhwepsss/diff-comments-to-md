@@ -23,7 +23,7 @@ import type { Block } from './cm/blocks';
 import { stripFinalNewline, type LineRange } from './lineMap';
 import { markdownToRender } from './markdownFile';
 import { setFileHidden, visibleComments, type HiddenFiles } from './hiddenComments';
-import { insideSelection } from '../review/commitSelection';
+import { staleTarget } from '../review/commentAge';
 import './diff.css';
 
 const WRAP_KEY = 'local-review:wrap';
@@ -113,11 +113,16 @@ function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: 
   return null;
 }
 
-type Props = { zen: boolean; onZen: (on: boolean) => void };
+type Props = {
+  zen: boolean;
+  onZen: (on: boolean) => void;
+  /** The comments panel is open: its current comment is highlighted here. */
+  panelOpen: boolean;
+};
 
-export function DiffPane({ zen, onZen }: Props) {
+export function DiffPane({ zen, onZen, panelOpen }: Props) {
   const review = useReview();
-  const { activeFile, activeDiff, comments, editor, editingId, state, commitsMode, commitSel, commits } = review;
+  const { activeFile, activeDiff, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
   const [wrap, setWrap] = useState(readWrap);
   const toast = useToast();
   // Source diff or rendered markdown, per file path; source is the default.
@@ -145,14 +150,13 @@ export function DiffPane({ zen, onZen }: Props) {
     }
   };
 
-  // Comments outside the selected commit range are hidden here; the header
-  // counts them separately ("N вне выбора") instead of just dropping them.
-  const fileComments = useMemo(
-    () =>
-      comments.filter(
-        (c) => c.file === activeFile && (!commitsMode || !commitSel || insideSelection(commits, commitSel, c.commit)),
-      ),
-    [comments, activeFile, commitsMode, commitSel, commits],
+  // Every comment of the file, stale ones too: written against other code
+  // (another commit, or before a commit), they stay on their line in grey
+  // with the commit they belong to (review/commentAge.ts).
+  const fileComments = useMemo(() => comments.filter((c) => c.file === activeFile), [comments, activeFile]);
+  const staleLabel = useCallback(
+    (c: Comment) => (staleIds.has(c.id) ? staleTarget(c, age.history, age.truncated) : null),
+    [staleIds, age],
   );
   const diff = activeDiff?.kind === 'ready' ? activeDiff.diff : null;
   const reason = diff ? unavailableReason(diff) : null;
@@ -197,6 +201,9 @@ export function DiffPane({ zen, onZen }: Props) {
     <CommentCard
       key={c.id}
       comment={c}
+      stale={staleLabel(c)}
+      current={panelOpen && currentCommentId === c.id}
+      onSelect={() => review.setCurrentComment(c.id)}
       editing={editingId === c.id}
       onEdit={() => review.startEdit(c.id)}
       onCancelEdit={review.cancelEdit}
@@ -228,8 +235,48 @@ export function DiffPane({ zen, onZen }: Props) {
       return c ? renderComment(c) : null;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [byKey, editingId, editorHere, selected?.from, selected?.to],
+    [byKey, editingId, editorHere, selected?.from, selected?.to, staleLabel, panelOpen, currentCommentId],
   );
+
+  // «Scroll to this comment», asked by the comments panel. A handled nonce is
+  // not passed again, so reopening the file later does not jump back.
+  const handledReveal = useRef(0);
+  const [, setRevealTick] = useState(0);
+  const markRevealed = useCallback((nonce: number) => {
+    handledReveal.current = nonce;
+    setRevealTick(nonce);
+  }, []);
+  const pending = reveal && reveal.nonce !== handledReveal.current ? comments.find((c) => c.id === reveal.commentId) : undefined;
+  const revealHere = pending && pending.file === activeFile ? pending : null;
+  // The reviewer went to another file before the diff got there: the request
+  // is dropped, or revisiting the file later would jump for no reason.
+  useEffect(() => {
+    if (pending && reveal && activeFile !== null && pending.file !== activeFile) markRevealed(reveal.nonce);
+  }, [pending, reveal, activeFile, markRevealed]);
+  useEffect(() => {
+    if (!revealHere || !activeFile) return;
+    // A comment can only be scrolled to where it is drawn: the code view, with
+    // the file's comments shown.
+    setRenderedFiles((prev) => (prev[activeFile] ? { ...prev, [activeFile]: false } : prev));
+    setHiddenFiles((prev) => setFileHidden(prev, activeFile, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal?.nonce, revealHere?.id, activeFile]);
+  const revealAnchored = revealHere && anchored.some((c) => c.id === revealHere.id) ? revealHere : null;
+  const revealAbove = revealHere && unanchored.some((c) => c.id === revealHere.id) ? revealHere : null;
+  const diffSettled = activeDiff !== null && activeDiff.kind !== 'loading';
+  useEffect(() => {
+    if (!revealAbove || !reveal || !diffSettled) return;
+    document.getElementById(`rv-comment-${revealAbove.id}`)?.scrollIntoView({ block: 'center' });
+    markRevealed(reveal.nonce);
+  }, [revealAbove, reveal, diffSettled, markRevealed]);
+  const editorReveal =
+    revealAnchored && reveal && !rendered
+      ? {
+          from: revealAnchored.startLine ?? (revealAnchored.endLine as number),
+          to: revealAnchored.endLine as number,
+          nonce: reveal.nonce,
+        }
+      : null;
 
   const onSelectLines = useCallback(
     (r: LineRange) => {
@@ -423,6 +470,8 @@ export function DiffPane({ zen, onZen }: Props) {
               selected={selected}
               renderBlock={renderBlock}
               onSelectLines={onSelectLines}
+              reveal={editorReveal}
+              onRevealed={markRevealed}
             />
           </div>
         </>
