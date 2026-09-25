@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActionList, ActionMenu, Button, CounterLabel, IconButton, SegmentedControl, TextInput, UnderlineNav } from '@primer/react';
 import {
   CodeReviewIcon,
+  CommentIcon,
   CopyIcon,
   DeviceDesktopIcon,
   DownloadIcon,
@@ -70,9 +71,16 @@ function BaseInput({ value, onCommit }: { value: string; onCommit: (v: string) =
   );
 }
 
-type Props = { route: Route; theme: ThemePref; onTheme: (t: ThemePref) => void };
+type Props = {
+  route: Route;
+  theme: ThemePref;
+  onTheme: (t: ThemePref) => void;
+  /** The «all comments» panel beside the diff is open. */
+  commentsPanel: boolean;
+  onCommentsPanel: (open: boolean) => void;
+};
 
-export function AppHeader({ route, theme, onTheme }: Props) {
+export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPanel }: Props) {
   const review = useOptionalReview();
   const source = route.screen === 'diff' ? route.descriptor.source : route.screen;
   const local = review && review.descriptor.source === 'local' ? review.descriptor : null;
@@ -109,9 +117,17 @@ export function AppHeader({ route, theme, onTheme }: Props) {
 
         {review && (
           <div className="rv-header__actions">
-            <span className="rv-header__count" title="Комментариев всего">
+            {/* Opens the panel beside the diff; the count stays in the label. */}
+            <Button
+              size="small"
+              leadingVisual={CommentIcon}
+              aria-pressed={commentsPanel}
+              className={'rv-header__count' + (commentsPanel ? ' is-on' : '')}
+              title={commentsPanel ? 'Закрыть панель комментариев' : 'Все комментарии ревью'}
+              onClick={() => onCommentsPanel(!commentsPanel)}
+            >
               Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
-            </span>
+            </Button>
             {review.commitsMode && review.outsideCount > 0 && (
               <button
                 type="button"

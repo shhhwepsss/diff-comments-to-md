@@ -87,14 +87,44 @@ type CardProps = {
   /** Unsaved edit text to resume from instead of the saved text. */
   draft?: string;
   onDraftChange?: (text: string) => void;
+  /** Written against other code: what it was written against («к a41f9c2»). */
+  stale?: string | null;
+  /** The one the comments panel points at. */
+  current?: boolean;
+  /** A click anywhere on the card (the panel follows it). */
+  onSelect?: () => void;
 };
 
-export function CommentCard({ comment, editing, onEdit, onCancelEdit, onSave, onDelete, draft, onDraftChange }: CardProps) {
+/** «к a41f9c2 · строка могла сместиться» — the comment was written against other code. */
+export function StaleChip({ target }: { target: string }) {
   return (
-    <div className="rv-comment">
+    <span className="commit-chip commit-chip--stale" title="Комментарий написан к другому состоянию кода: строка могла сместиться">
+      {target} · строка могла сместиться
+    </span>
+  );
+}
+
+export function CommentCard({
+  comment,
+  editing,
+  onEdit,
+  onCancelEdit,
+  onSave,
+  onDelete,
+  draft,
+  onDraftChange,
+  stale = null,
+  current = false,
+  onSelect,
+}: CardProps) {
+  const cls = 'rv-comment' + (stale !== null ? ' rv-comment--stale' : '') + (current ? ' is-current' : '');
+  return (
+    <div className={cls} id={`rv-comment-${comment.id}`} onClick={onSelect}>
       <div className="rv-comment__head">
         <span className="rv-comment__anchor">{anchorLabel(comment)}</span>
-        {comment.commit && (
+        {stale !== null ? (
+          <StaleChip target={stale} />
+        ) : comment.commit && (
           <span className="commit-chip" title="Коммит, в котором написан комментарий">
             {comment.commit.from === comment.commit.to ? comment.commit.to : `${comment.commit.from}..${comment.commit.to}`}
           </span>

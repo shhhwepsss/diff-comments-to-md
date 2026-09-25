@@ -243,8 +243,8 @@ describe('expandToComments', () => {
 describe('commitContextFor', () => {
   const commits = makeCommits();
 
-  it('omits context for the latest-commit-only selection', () => {
-    expect(commitContextFor(commits, { anchor: 9, head: 9 })).toBeUndefined();
+  it('records the latest commit too', () => {
+    expect(commitContextFor(commits, { anchor: 9, head: 9 })).toEqual({ from: 'c9', to: 'c9', label: 'Commit 9' });
   });
 
   it('labels a single non-latest commit with its subject', () => {

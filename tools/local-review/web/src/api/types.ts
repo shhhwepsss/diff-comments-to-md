@@ -116,6 +116,8 @@ export type Commit = {
   author: string;
   /** ISO timestamp. */
   date: string;
+  /** Committer date, ISO; a rebase or amend moves it. Empty from an older server. */
+  committedAt?: string;
   subject: string;
   body: string;
   merge: boolean;

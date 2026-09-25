@@ -7,6 +7,7 @@ import type { ThemePref } from './lib/theme';
 import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
 import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
+import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
@@ -42,6 +43,11 @@ export function App({ theme, onTheme }: Props) {
   const setZen = useCallback((on: boolean) => {
     setZenState(on);
     writeZen(on);
+  }, []);
+  const [commentsPanel, setCommentsPanelState] = useState(readCommentsPanel);
+  const setCommentsPanel = useCallback((open: boolean) => {
+    setCommentsPanelState(open);
+    writeCommentsPanel(open);
   }, []);
 
   const route = routeFromHash(hash);
@@ -85,13 +91,18 @@ export function App({ theme, onTheme }: Props) {
         setZen(false);
         return;
       }
+      if (matchesEvent(keys.commentsPanel, e)) {
+        e.preventDefault();
+        setCommentsPanel(!commentsPanel);
+        return;
+      }
       if (!matchesEvent(keys.zen, e)) return;
       e.preventDefault();
       setZen(!zen);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [diffScreen, keys.zen, setZen, zen]);
+  }, [diffScreen, keys.zen, keys.commentsPanel, setZen, zen, commentsPanel, setCommentsPanel]);
 
   useEffect(() => {
     if (booted) return;
@@ -125,10 +136,12 @@ export function App({ theme, onTheme }: Props) {
 
   const shell = (
     <div className={zenActive ? 'rv-app is-zen' : 'rv-app'}>
-      {!zenActive && <AppHeader route={route} theme={theme} onTheme={onTheme} />}
+      {!zenActive && (
+        <AppHeader route={route} theme={theme} onTheme={onTheme} commentsPanel={commentsPanel} onCommentsPanel={setCommentsPanel} />
+      )}
       <div className="rv-main">
         {route.screen === 'diff' ? (
-          <DiffScreen zen={zenActive} onZen={setZen} />
+          <DiffScreen zen={zenActive} onZen={setZen} commentsPanel={commentsPanel} onCommentsPanel={setCommentsPanel} />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
         ) : route.screen === 'pr' ? (

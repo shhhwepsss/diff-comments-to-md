@@ -39,6 +39,7 @@ function mapGhCommit(entry) {
     parents,
     author: author.name || (entry.author && entry.author.login) || '',
     date: author.date || '',
+    committedAt: (commit.committer && commit.committer.date) || author.date || '',
     subject: lines[0] || '',
     body: lines.slice(1).join('\n').replace(/^\s+/, ''),
     merge: parents.length > 1,

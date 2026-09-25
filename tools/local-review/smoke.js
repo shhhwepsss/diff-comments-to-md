@@ -1958,7 +1958,7 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":""}', 'GET /api/settings: по умолчанию клавиша не задана');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":""}', 'GET /api/settings: по умолчанию клавиши не заданы');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -1968,7 +1968,9 @@ async function main() {
   const boundZen = await call('/api/settings', json('PUT', { keybindings: { zen: 'Ctrl+Shift+F' } }));
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
-  await call('/api/settings', json('PUT', { keybindings: { zen: '' } }));
+  const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C' }, 'клавиша панели комментариев сохраняется рядом с Zen');
+  await call('/api/settings', json('PUT', { keybindings: { zen: '', commentsPanel: '' } }));
 
   const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
   ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));

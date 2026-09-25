@@ -171,6 +171,11 @@ async function main() {
   );
   ok(commits[0].root === true, 'первый коммит помечен root');
   ok(
+    commits.every((c) => !Number.isNaN(Date.parse(c.committedAt)) && c.subject && !c.subject.includes('T')),
+    'у каждого коммита есть committedAt (дата коммиттера), поля не съехали',
+    JSON.stringify(commits.map((c) => [c.committedAt, c.subject]))
+  );
+  ok(
     commits.filter((c) => c.merge).length === 1,
     'мердж-коммит помечен merge',
     JSON.stringify(commits.map((c) => c.merge))
@@ -370,6 +375,7 @@ async function main() {
             sha: C2,
             commit: {
               author: { name: 'Octo Cat', date: '2026-09-02T10:00:00Z' },
+              committer: { name: 'GitHub', date: '2026-09-03T12:00:00Z' },
               message: 'второй коммит PR-а\n\nтело сообщения',
             },
             parents: [{ sha: C1 }],
@@ -419,6 +425,11 @@ async function main() {
     prHistory.body.commits.map((c) => c.sha),
     [C1, C2],
     'коммиты PR-а от старого к новому'
+  );
+  eq(
+    prHistory.body.commits.map((c) => c.committedAt),
+    ['2026-09-01T10:00:00Z', '2026-09-03T12:00:00Z'],
+    'committedAt PR-а: дата коммиттера, без неё — дата автора'
   );
   ok(prHistory.body.commits[0].root === true, 'первый коммит PR-а помечен root (родителей нет)');
   eq(prHistory.body.dirty, { dirty: false, files: 0 }, 'у PR-а незакоммиченных изменений не бывает');
