@@ -69,8 +69,10 @@ describe('ownCommit', () => {
     expect(ownCommit(comment('2024-01-05T12:00:01Z'), history)).toBeNull();
   });
 
-  it('a commit at the very same instant is not "after"', () => {
-    expect(ownCommit(comment('2024-01-05T12:00:00Z'), history)).toBeNull();
+  it('a commit in the same second counts as after the comment (commit dates are whole seconds)', () => {
+    // c4 really happened at 12:00:00.800, git stores 12:00:00.
+    expect(ownCommit(comment('2024-01-05T12:00:00.500Z'), history)).toBe(4);
+    expect(ownCommit(comment('2024-01-05T12:00:01.000Z'), history)).toBeNull();
   });
 
   it('compares instants, not strings, across time zones', () => {

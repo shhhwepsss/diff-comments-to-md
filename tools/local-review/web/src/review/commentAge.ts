@@ -45,7 +45,11 @@ export function ownCommit(comment: Comment, history: Commit[], truncated = false
   if (comment.commit?.to) return indexOfSha(history, comment.commit.to);
   const created = time(comment.createdAt);
   if (Number.isNaN(created)) return null;
-  const i = history.findIndex((c) => time(c.committedAt) > created);
+  // Commit dates are whole seconds, createdAt has milliseconds: within the
+  // same second the order is unknown. Staged → comment → commit is the usual
+  // flow, so a commit in the comment's own second counts as made after it.
+  const createdSecond = Math.floor(created / 1000) * 1000;
+  const i = history.findIndex((c) => time(c.committedAt) >= createdSecond);
   if (i === -1) return null;
   if (i === 0 && truncated) return -1;
   return i;

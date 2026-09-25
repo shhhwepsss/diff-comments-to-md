@@ -248,6 +248,11 @@ export function DiffPane({ zen, onZen, panelOpen }: Props) {
   }, []);
   const pending = reveal && reveal.nonce !== handledReveal.current ? comments.find((c) => c.id === reveal.commentId) : undefined;
   const revealHere = pending && pending.file === activeFile ? pending : null;
+  // The reviewer went to another file before the diff got there: the request
+  // is dropped, or revisiting the file later would jump for no reason.
+  useEffect(() => {
+    if (pending && reveal && activeFile !== null && pending.file !== activeFile) markRevealed(reveal.nonce);
+  }, [pending, reveal, activeFile, markRevealed]);
   useEffect(() => {
     if (!revealHere || !activeFile) return;
     // A comment can only be scrolled to where it is drawn: the code view, with
