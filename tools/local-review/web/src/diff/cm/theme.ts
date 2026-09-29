@@ -157,6 +157,9 @@ export const githubTheme = EditorView.theme({
     fontFamily: 'var(--fontStack-sansSerif)',
     whiteSpace: 'normal',
     cursor: 'auto',
+    // Cards sit inside `.cm-content`, whose transparent caret is inherited;
+    // without this the comment textarea has no visible caret.
+    caretColor: 'auto',
   },
 });
 
