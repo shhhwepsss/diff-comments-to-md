@@ -122,6 +122,28 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-success);
 }
 
+/* A folder's «просмотрено» button shows on hover or keyboard focus of its
+   row; once the whole folder is viewed it stays, green, as the folder's mark.
+   Scoped to the row's own container so hovering a child row does not light
+   up every parent folder. */
+.rv-dir-viewed:not(.is-all) {
+  opacity: 0;
+}
+
+.PRIVATE_TreeView-item-container:hover .rv-dir-viewed,
+[role='treeitem']:focus-visible > .PRIVATE_TreeView-item-container .rv-dir-viewed {
+  opacity: 1;
+}
+
+.rv-dir-viewed.is-all {
+  color: var(--fgColor-success);
+}
+
+.rv-dir-progress {
+  font-size: var(--text-body-size-small, 12px);
+  color: var(--fgColor-muted);
+}
+
 .rv-sidebar__label {
   font-family: var(--fontStack-monospace);
   overflow: hidden;

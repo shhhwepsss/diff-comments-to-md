@@ -45,3 +45,13 @@ function toNodes<T>(dir: MutableDir<T>, prefix: string): TreeNode<T>[] {
   }
   return out;
 }
+
+/** Every file under the nodes, in the order the tree shows them. */
+export function filesOf<T>(nodes: readonly TreeNode<T>[]): T[] {
+  const out: T[] = [];
+  for (const node of nodes) {
+    if (node.type === 'dir') out.push(...filesOf(node.children));
+    else out.push(node.item);
+  }
+  return out;
+}

@@ -1958,7 +1958,8 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":""}', 'GET /api/settings: по умолчанию клавиши не заданы');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V"}',
+    'GET /api/settings: по умолчанию задана только клавиша «просмотрено»');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -1969,8 +1970,12 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C' }, 'клавиша панели комментариев сохраняется рядом с Zen');
-  await call('/api/settings', json('PUT', { keybindings: { zen: '', commentsPanel: '' } }));
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V' },
+    'клавиша панели комментариев сохраняется рядом с Zen');
+  const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
+  eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
+  eq((await call('/api/settings')).body.keybindings.viewedFile, '', 'снятая клавиша по умолчанию не возвращается');
+  await call('/api/settings', json('PUT', { keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V' } }));
 
   const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
   ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));

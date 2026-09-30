@@ -7,8 +7,12 @@ const path = require('node:path');
 const DIR_NAME = '.local-review';
 const RECENT_LIMIT = 10;
 const GITIGNORE_TARGETS = ['project', 'global'];
-/** Actions a keyboard shortcut can be bound to. Nothing is bound by default. */
-const KEYBINDING_ACTIONS = ['zen', 'commentsPanel'];
+/**
+ * Actions a keyboard shortcut can be bound to, with the shortcut each ships
+ * with; '' means unbound. Mirrors KEYBINDING_DEFAULTS in web/src/lib/keybindings.ts.
+ */
+const KEYBINDING_DEFAULTS = { zen: '', commentsPanel: '', viewedFile: 'Alt+V' };
+const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_DEFAULTS);
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
 function homeDir() {
@@ -68,10 +72,12 @@ function writeState(next) {
  * root .gitignore ('project', the default and the historical behaviour) or
  * into the machine's global ignore file, core.excludesFile ('global').
  * `keybindings` maps an action to the shortcut the user assigned to it;
- * an empty string means the action has no shortcut, which is the default.
+ * an empty string means the action has no shortcut. An action missing from
+ * the file gets its KEYBINDING_DEFAULTS shortcut; one the user cleared stays
+ * '' — cleared is a choice, not a gap.
  */
 function defaultKeybindings() {
-  return KEYBINDING_ACTIONS.reduce((acc, action) => Object.assign(acc, { [action]: '' }), {});
+  return { ...KEYBINDING_DEFAULTS };
 }
 
 const SETTINGS_DEFAULTS = { copyPrompt: '', gitignoreTarget: 'project', keybindings: defaultKeybindings() };

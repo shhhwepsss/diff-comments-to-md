@@ -132,15 +132,21 @@ describe('keybindingsFrom', () => {
   });
 
   it('normalizes what it keeps and drops unknown actions', () => {
-    expect(keybindingsFrom({ zen: 'shift+ctrl+f', nope: 'Ctrl+Q' })).toEqual({ zen: 'Ctrl+Shift+F', commentsPanel: '' });
+    expect(keybindingsFrom({ zen: 'shift+ctrl+f', nope: 'Ctrl+Q' })).toEqual({ zen: 'Ctrl+Shift+F', commentsPanel: '', viewedFile: 'Alt+V' });
   });
 
   it('an unusable binding becomes unbound, not an error', () => {
-    expect(keybindingsFrom({ zen: 'Ctrl+Escape' })).toEqual({ zen: '', commentsPanel: '' });
+    expect(keybindingsFrom({ zen: 'Ctrl+Escape' })).toEqual({ zen: '', commentsPanel: '', viewedFile: 'Alt+V' });
   });
 
   it('ships the comments panel unbound, like Zen', () => {
     expect(KEYBINDING_DEFAULTS.commentsPanel).toBe('');
-    expect(keybindingsFrom({ commentsPanel: 'alt+c' })).toEqual({ zen: '', commentsPanel: 'Alt+C' });
+    expect(keybindingsFrom({ commentsPanel: 'alt+c' })).toEqual({ zen: '', commentsPanel: 'Alt+C', viewedFile: 'Alt+V' });
+  });
+
+  it('ships the viewed-file shortcut bound to Alt+V, and keeps it cleared once cleared', () => {
+    expect(KEYBINDING_DEFAULTS.viewedFile).toBe('Alt+V');
+    expect(keybindingsFrom({}).viewedFile).toBe('Alt+V');
+    expect(keybindingsFrom({ viewedFile: '' }).viewedFile).toBe('');
   });
 });

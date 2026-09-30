@@ -15,12 +15,12 @@ import {
 } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
-import { buildTree, type TreeNode } from './fileTree';
+import { buildTree, filesOf, type TreeNode } from './fileTree';
 import { compileRule, hasRules, matchesSearch, passesRules, type FileRules } from './fileFilter';
 import { viewHash, wantsNativeLink } from '../lib/hash';
 import { SIDEBAR_PANE, SIDEBAR_WIDTH_KEY } from './sidebarWidth';
 import { ResizeHandle, usePaneWidth } from './paneResize';
-import { viewedCount } from '../review/viewed';
+import { folderViewed, viewedCount } from '../review/viewed';
 
 function StatusIcon({ file }: { file: FileEntry }) {
   const kind = (file.status || 'M')[0];
@@ -133,15 +133,52 @@ export function FileSidebar() {
     review.selectFile(path);
   };
 
-  const renderNode = (node: TreeNode<FileEntry>): ReactNode =>
-    node.type === 'dir' ? (
-      <TreeView.Item id={`dir:${node.path}`} key={`dir:${node.path}`} title={node.path} defaultExpanded>
+  // A folder is marked through the files the tree shows in it, so a search or
+  // a rule that hides a file also keeps the folder action off that file.
+  const renderDir = (node: Extract<TreeNode<FileEntry>, { type: 'dir' }>): ReactNode => {
+    const inside = filesOf(node.children);
+    const viewed = folderViewed(inside);
+    const markable = inside.filter((f) => f.fingerprint);
+    const label = viewed === 'all' ? `Снять отметку «просмотрено» с ${node.name}` : `Отметить ${node.name} просмотренной`;
+    const paths = inside.map((f) => f.path);
+    return (
+      <TreeView.Item
+        id={`dir:${node.path}`}
+        key={`dir:${node.path}`}
+        title={node.path}
+        defaultExpanded
+        secondaryActions={
+          markable.length > 0
+            ? [
+                {
+                  label,
+                  icon: CheckIcon,
+                  className: viewed === 'all' ? 'rv-dir-viewed is-all' : 'rv-dir-viewed',
+                  onClick: () => void review.setFilesViewed(paths, viewed !== 'all'),
+                },
+              ]
+            : undefined
+        }
+      >
         <TreeView.LeadingVisual>
           <TreeView.DirectoryIcon />
         </TreeView.LeadingVisual>
-        {node.name}
+        <span className={viewed === 'all' ? 'rv-tree-name is-viewed' : 'rv-tree-name'}>{node.name}</span>
+        {viewed === 'some' && (
+          <TreeView.TrailingVisual label={`просмотрено ${viewedCount(markable)} из ${markable.length}`}>
+            <span className="rv-dir-progress">
+              {viewedCount(markable)}/{markable.length}
+            </span>
+          </TreeView.TrailingVisual>
+        )}
         <TreeView.SubTree>{node.children.map(renderNode)}</TreeView.SubTree>
       </TreeView.Item>
+    );
+  };
+
+  const renderNode = (node: TreeNode<FileEntry>): ReactNode =>
+    node.type === 'dir' ? (
+      renderDir(node)
     ) : (
       <TreeView.Item
         as="a"

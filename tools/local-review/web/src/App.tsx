@@ -5,6 +5,7 @@ import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
+import { portalOpen } from './lib/portal';
 import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
 import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
@@ -21,11 +22,6 @@ function subscribeHash(cb: () => void) {
 }
 
 const getHash = () => window.location.hash;
-
-/** True while a Primer dialog or side sheet is open: Esc belongs to it, not to Zen. */
-function portalOpen(): boolean {
-  return Boolean(document.getElementById('__primerPortalRoot__')?.childElementCount);
-}
 
 type Props = { theme: ThemePref; onTheme: (t: ThemePref) => void };
 
@@ -141,7 +137,13 @@ export function App({ theme, onTheme }: Props) {
       )}
       <div className="rv-main">
         {route.screen === 'diff' ? (
-          <DiffScreen zen={zenActive} onZen={setZen} commentsPanel={commentsPanel} onCommentsPanel={setCommentsPanel} />
+          <DiffScreen
+            zen={zenActive}
+            onZen={setZen}
+            commentsPanel={commentsPanel}
+            onCommentsPanel={setCommentsPanel}
+            viewedKey={keys.viewedFile}
+          />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
         ) : route.screen === 'pr' ? (

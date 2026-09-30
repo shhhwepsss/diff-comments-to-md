@@ -9,6 +9,7 @@ import { CommentForm, StaleChip } from '../diff/CommentCard';
 import { ResizeHandle, usePaneWidth } from '../diff/paneResize';
 import { formatDate } from '../lib/format';
 import { isTypingTarget } from '../lib/keybindings';
+import { portalOpen } from '../lib/portal';
 import { COMMENTS_PANEL_WIDTH, COMMENTS_PANEL_WIDTH_KEY } from '../lib/commentsPanel';
 import { countByKind, filterItems, GROUP_LABEL, PANEL_FILTERS, panelItems, stepId, type PanelFilter, type PanelItem } from './panelList';
 import './comments-panel.css';
@@ -21,11 +22,6 @@ function lineLabel(c: Comment): string {
 function baseName(path: string): string {
   const i = path.lastIndexOf('/');
   return i === -1 ? path : path.slice(i + 1);
-}
-
-/** True while a Primer dialog or side sheet is open: its keys are its own. */
-function portalOpen(): boolean {
-  return Boolean(document.getElementById('__primerPortalRoot__')?.childElementCount);
 }
 
 /**
