@@ -6,7 +6,8 @@ import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
-import { withViewed } from './viewed';
+import { nextUnviewed, withViewedMany } from './viewed';
+import { buildTree, filesOf } from '../diff/fileTree';
 import { isStale, openTarget, viewKindOf, type AgeContext } from './commentAge';
 import {
   clampIndex,
@@ -99,6 +100,13 @@ export type Review = {
   selectFile: (path: string) => void;
   /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
+  /** The same for several files — a folder marked from the sidebar. */
+  setFilesViewed: (paths: readonly string[], viewed: boolean) => Promise<void>;
+  /**
+   * The «просмотрено» shortcut: unmarks the open file if it is viewed;
+   * otherwise marks it and opens the next unviewed file in sidebar order.
+   */
+  toggleActiveViewed: () => void;
   openEditor: (anchor: EditorAnchor) => void;
   closeEditor: () => void;
   startEdit: (id: string) => void;
@@ -547,24 +555,55 @@ export function ReviewProvider({
     [selectFile],
   );
 
-  const setFileViewed = useCallback(
-    async (path: string, viewed: boolean) => {
-      // The fingerprint and the view must be the ones on screen right now: an
+  const setFilesViewed = useCallback(
+    async (paths: readonly string[], viewed: boolean) => {
+      // The fingerprints and the view must be the ones on screen right now: an
       // address step (see `restore` below) can have changed both since this
-      // callback was created.
-      const entry = stateRef.current?.files.find((f) => f.path === path);
-      if (!entry || (viewed && !entry.fingerprint)) return;
+      // callback was created. Only files whose flag actually flips are sent.
+      const wanted = new Set(paths);
+      const entries = (stateRef.current?.files ?? []).filter(
+        (f) => wanted.has(f.path) && f.viewed !== viewed && (!viewed || f.fingerprint),
+      );
+      if (entries.length === 0) return;
+      const changed = entries.map((f) => f.path);
       // Flip first: the checkbox must answer the click, not the network.
-      setState((s) => (s ? withViewed(s, path, viewed) : s));
-      try {
-        await api.setViewed(descriptorRef.current, path, entry.fingerprint, viewed);
-      } catch (e) {
-        setState((s) => (s ? withViewed(s, path, !viewed) : s));
-        toast(failureMessage(viewed ? 'Не удалось отметить файл просмотренным' : 'Не удалось снять отметку', e), true);
-      }
+      setState((s) => (s ? withViewedMany(s, changed, viewed) : s));
+      const descriptorNow = descriptorRef.current;
+      const results = await Promise.allSettled(
+        entries.map((f) => api.setViewed(descriptorNow, f.path, f.fingerprint, viewed)),
+      );
+      const failed = entries.filter((_, i) => results[i].status === 'rejected').map((f) => f.path);
+      if (failed.length === 0) return;
+      setState((s) => (s ? withViewedMany(s, failed, !viewed) : s));
+      const first = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      const what = viewed ? 'Не удалось отметить просмотренным' : 'Не удалось снять отметку';
+      const subject = failed.length === 1 ? failed[0] : `файлов: ${failed.length}`;
+      toast(failureMessage(`${what}: ${subject}`, first?.reason), true);
     },
     [toast],
   );
+
+  const setFileViewed = useCallback(
+    (path: string, viewed: boolean) => setFilesViewed([path], viewed),
+    [setFilesViewed],
+  );
+
+  const toggleActiveViewed = useCallback(() => {
+    const path = activeFileRef.current;
+    const files = stateRef.current?.files ?? [];
+    const entry = files.find((f) => f.path === path);
+    if (!path || !entry) return;
+    if (entry.viewed) {
+      void setFilesViewed([path], false);
+      return;
+    }
+    if (!entry.fingerprint) return;
+    // Worked out before the mark lands, so the file being marked is skipped
+    // by nextUnviewed as the current one rather than by its (stale) flag.
+    const next = nextUnviewed(files, filesOf(buildTree(files, (f) => f.path)).map((f) => f.path), path);
+    void setFilesViewed([path], true);
+    if (next) selectFile(next);
+  }, [setFilesViewed, selectFile]);
 
   /**
    * Back/Forward (and a hand-edited address) re-open what the address names.
@@ -787,6 +826,8 @@ export function ReviewProvider({
       dismissReturn,
       selectFile,
       setFileViewed,
+      setFilesViewed,
+      toggleActiveViewed,
       openEditor,
       closeEditor,
       startEdit,
@@ -840,6 +881,8 @@ export function ReviewProvider({
       dismissReturn,
       selectFile,
       setFileViewed,
+      setFilesViewed,
+      toggleActiveViewed,
       openEditor,
       closeEditor,
       startEdit,

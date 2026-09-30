@@ -1,8 +1,8 @@
 // User-assigned keyboard shortcuts.
 //
 // A binding is stored as one canonical string — `Ctrl+Shift+F` — with the
-// modifiers in a fixed order. Empty string means "not bound", which is the
-// default for every action: the app ships with no shortcut at all.
+// modifiers in a fixed order. Empty string means "not bound". Most actions
+// ship unbound; KEYBINDING_DEFAULTS names the few that come with a shortcut.
 //
 // The key half comes from `KeyboardEvent.code`, never from `.key`: `code` is
 // the physical key, so a binding made on a Latin layout still fires on a
@@ -34,13 +34,14 @@ export type KeyEventLike = {
 export const KEYBINDING_ACTIONS = [
   { id: 'zen', label: 'Zen: скрыть всё, кроме диффа' },
   { id: 'commentsPanel', label: 'Панель всех комментариев' },
+  { id: 'viewedFile', label: 'Отметить файл просмотренным и открыть следующий' },
 ] as const;
 
 export type KeybindingAction = (typeof KEYBINDING_ACTIONS)[number]['id'];
 
 export type Keybindings = Record<KeybindingAction, string>;
 
-export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '' };
+export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '', viewedFile: 'Alt+V' };
 
 const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {
   CTRL: 'ctrl',

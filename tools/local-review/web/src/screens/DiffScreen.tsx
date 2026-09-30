@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -9,6 +10,8 @@ import { CommitRail } from '../commits/CommitRail';
 import { DirtyBanner } from '../commits/DirtyBanner';
 import { CommentsPanel } from '../comments/CommentsPanel';
 import { selHi, selLo } from '../review/commitSelection';
+import { isTypingTarget, matchesEvent } from '../lib/keybindings';
+import { portalOpen } from '../lib/portal';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -102,10 +105,24 @@ type Props = {
   onZen: (on: boolean) => void;
   commentsPanel: boolean;
   onCommentsPanel: (open: boolean) => void;
+  /** The «просмотрено» shortcut; lives here and not in App, because it needs the review. */
+  viewedKey: string;
 };
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel }: Props) {
-  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading } = useReview();
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey }: Props) {
+  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
+    useReview();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isTypingTarget(e.target) || portalOpen()) return;
+      if (!matchesEvent(viewedKey, e)) return;
+      e.preventDefault();
+      toggleActiveViewed();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewedKey, toggleActiveViewed]);
 
   if (!state && loading) {
     return (

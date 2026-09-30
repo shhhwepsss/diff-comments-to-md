@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { descriptorQuery } from '../api/client';
 import { descriptorFromHash, viewHash } from '../lib/hash';
 import type { Descriptor, FileEntry, StateResponse } from '../api/types';
-import { viewedCount, withViewed } from './viewed';
+import { folderViewed, nextUnviewed, viewedCount, withViewed, withViewedMany } from './viewed';
 
 function file(path: string, patch: Partial<FileEntry> = {}): FileEntry {
   return { path, status: 'M', kind: 'M', untracked: false, comments: 0, fingerprint: `fp:${path}`, viewed: false, ...patch };
@@ -87,5 +87,67 @@ describe('viewedCount', () => {
   it('counts viewed files only', () => {
     expect(viewedCount([file('a', { viewed: true }), file('b'), file('c', { viewed: true })])).toBe(2);
     expect(viewedCount([])).toBe(0);
+  });
+});
+
+describe('withViewedMany', () => {
+  it('marks every listed file that has a fingerprint and skips the rest', () => {
+    const s = state([file('a'), file('b', { fingerprint: null }), file('c'), file('d')]);
+    expect(withViewedMany(s, ['a', 'b', 'c'], true).files.map((f) => f.viewed)).toEqual([true, false, true, false]);
+  });
+
+  it('unmarks a whole list, including files already unmarked', () => {
+    const s = state([file('a', { viewed: true }), file('b'), file('c', { viewed: true })]);
+    expect(withViewedMany(s, ['a', 'b'], false).files.map((f) => f.viewed)).toEqual([false, false, true]);
+  });
+
+  it('returns the same state when nothing changes', () => {
+    const s = state([file('a', { viewed: true }), file('b', { fingerprint: null })]);
+    expect(withViewedMany(s, ['a', 'b', 'missing'], true)).toBe(s);
+    expect(withViewedMany(s, [], false)).toBe(s);
+  });
+});
+
+describe('folderViewed', () => {
+  it('is all, some or none by viewed files', () => {
+    expect(folderViewed([file('a', { viewed: true }), file('b', { viewed: true })])).toBe('all');
+    expect(folderViewed([file('a', { viewed: true }), file('b')])).toBe('some');
+    expect(folderViewed([file('a'), file('b')])).toBe('none');
+  });
+
+  it('ignores files that can never be marked', () => {
+    expect(folderViewed([file('a', { viewed: true }), file('b', { fingerprint: null })])).toBe('all');
+    expect(folderViewed([file('a', { fingerprint: null })])).toBe('none');
+    expect(folderViewed([])).toBe('none');
+  });
+});
+
+describe('nextUnviewed', () => {
+  const order = ['a', 'b', 'c', 'd'];
+
+  it('picks the next unviewed file after the current one', () => {
+    const files = [file('a'), file('b', { viewed: true }), file('c'), file('d')];
+    expect(nextUnviewed(files, order, 'a')).toBe('c');
+  });
+
+  it('wraps around to the start', () => {
+    const files = [file('a'), file('b', { viewed: true }), file('c', { viewed: true }), file('d')];
+    expect(nextUnviewed(files, order, 'd')).toBe('a');
+  });
+
+  it('skips files that cannot be marked', () => {
+    const files = [file('a'), file('b', { fingerprint: null }), file('c')];
+    expect(nextUnviewed(files, ['a', 'b', 'c'], 'a')).toBe('c');
+  });
+
+  it('never returns the current file, and gives null when nothing is left', () => {
+    const files = [file('a'), file('b', { viewed: true })];
+    expect(nextUnviewed(files, ['a', 'b'], 'a')).toBeNull();
+  });
+
+  it('starts from the top when the current file is not in the order', () => {
+    const files = [file('a', { viewed: true }), file('b'), file('c')];
+    expect(nextUnviewed(files, ['a', 'b', 'c'], 'gone')).toBe('b');
+    expect(nextUnviewed([file('a', { viewed: true }), file('c')], ['a', 'c'], 'gone')).toBe('c');
   });
 });
