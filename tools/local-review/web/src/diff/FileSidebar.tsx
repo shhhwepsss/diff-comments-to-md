@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { CounterLabel, FormControl, IconButton, TextInput, TreeView } from '@primer/react';
 import {
   CheckIcon,
@@ -16,7 +16,7 @@ import {
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, filesOf, type TreeNode } from './fileTree';
-import { compileRule, hasRules, matchesSearch, passesRules, type FileRules } from './fileFilter';
+import type { FileFilter } from './useFileFilter';
 import { viewHash, wantsNativeLink } from '../lib/hash';
 import { SIDEBAR_PANE, SIDEBAR_WIDTH_KEY } from './sidebarWidth';
 import { ResizeHandle, usePaneWidth } from './paneResize';
@@ -31,9 +31,7 @@ function StatusIcon({ file }: { file: FileEntry }) {
   return <FileDiffIcon className="rv-status rv-status--modified" aria-label="изменён" />;
 }
 
-// Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
-const NO_ORPHANS: OrphanFile[] = [];
 
 type RuleFieldProps = {
   id: string;
@@ -67,14 +65,19 @@ function RuleField({ id, label, placeholder, value, error, onChange }: RuleField
   );
 }
 
-export function FileSidebar() {
+export function FileSidebar({ filter }: { filter: FileFilter }) {
   const review = useReview();
   const { state, comments, activeFile } = review;
-  const [search, setSearch] = useState('');
-  // Rules are session-only: they live here and die with a reload.
-  const [include, setInclude] = useState('');
-  const [exclude, setExclude] = useState('');
+  const { search, setSearch, include, setInclude, exclude, setExclude, includeRule, excludeRule, rulesActive } = filter;
+  const { shown, hidden, shownOrphans, hiddenOrphans } = filter;
   const [rulesOpen, setRulesOpen] = useState(false);
+  // The feed of all files changes the current file by scrolling; keep its row
+  // in sight here. 'nearest' moves nothing when the row is already visible.
+  useEffect(() => {
+    if (!activeFile) return;
+    const row = ['file', 'orphan', 'hidden', 'hidden-orphan'].map((prefix) => document.getElementById(`${prefix}:${activeFile}`)).find(Boolean);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [activeFile]);
   const [hiddenOpen, setHiddenOpen] = useState(true);
   const [width, setWidth] = usePaneWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_PANE);
 
@@ -84,28 +87,7 @@ export function FileSidebar() {
     return m;
   }, [comments]);
 
-  const includeRule = useMemo(() => compileRule(include), [include]);
-  const excludeRule = useMemo(() => compileRule(exclude), [exclude]);
-  const rules: FileRules = useMemo(
-    () => ({ include: includeRule.regex, exclude: excludeRule.regex }),
-    [includeRule, excludeRule],
-  );
-  const rulesActive = hasRules(rules);
-
   const files = state?.files ?? NO_FILES;
-  const orphans = state?.orphanFiles ?? NO_ORPHANS;
-  // Search narrows everything; rules only decide between the tree and the
-  // hidden section, so a file hidden by a rule can still be found.
-  const { shown, hidden, shownOrphans, hiddenOrphans } = useMemo(() => {
-    const foundFiles = files.filter((f) => matchesSearch(f.path, search));
-    const foundOrphans = orphans.filter((f) => matchesSearch(f.path, search));
-    return {
-      shown: foundFiles.filter((f) => passesRules(f.path, rules)),
-      hidden: foundFiles.filter((f) => !passesRules(f.path, rules)),
-      shownOrphans: foundOrphans.filter((f) => passesRules(f.path, rules)),
-      hiddenOrphans: foundOrphans.filter((f) => !passesRules(f.path, rules)),
-    };
-  }, [files, orphans, search, rules]);
   const hiddenCount = hidden.length + hiddenOrphans.length;
   const tree = useMemo(() => buildTree(shown, (f) => f.path), [shown]);
 

@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { useFileDiff } from '../review/useFileDiff';
-import type { Comment } from '../api/types';
+import type { Comment, FileEntry } from '../api/types';
+import type { ViewMode } from '../lib/viewMode';
 import { Empty, FileDiff, type FileDiffActions, type FormDraft } from './FileDiff';
+import { FileFeed, type FeedFile } from './FileFeed';
+import { buildTree, filesOf } from './fileTree';
+import type { FileFilter } from './useFileFilter';
 import { setFileHidden, type HiddenFiles } from './hiddenComments';
 import { staleTarget } from '../review/commentAge';
 import './diff.css';
@@ -25,6 +29,10 @@ type Props = {
   onZen: (on: boolean) => void;
   /** The comments panel is open: its current comment is highlighted here. */
   panelOpen: boolean;
+  /** One file at a time, or all of them in one scroll; null until it is known. */
+  viewMode: ViewMode | null;
+  /** The sidebar's search and rules: the feed shows the same files. */
+  filter: FileFilter;
 };
 
 /**
@@ -32,7 +40,8 @@ type Props = {
  * made per file, the unsaved form text, which «scroll to this comment» request
  * is already done — and hands each file its own slice of the review.
  */
-export function DiffPane({ zen, onZen, panelOpen }: Props) {
+export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
+  const single = viewMode === 'single';
   const review = useReview();
   const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
   const activeDiff = useFileDiff(diffs, activeFile);
@@ -101,10 +110,11 @@ export function DiffPane({ zen, onZen, panelOpen }: Props) {
   }, []);
   const pending = reveal && reveal.nonce !== handledReveal.current ? comments.find((c) => c.id === reveal.commentId) : undefined;
   // The reviewer went to another file before the diff got there: the request
-  // is dropped, or revisiting the file later would jump for no reason.
+  // is dropped, or revisiting the file later would jump for no reason. Not in
+  // the feed: there the comment's file is on screen whichever file is current.
   useEffect(() => {
-    if (pending && reveal && activeFile !== null && pending.file !== activeFile) markRevealed(reveal.nonce);
-  }, [pending, reveal, activeFile, markRevealed]);
+    if (single && pending && reveal && activeFile !== null && pending.file !== activeFile) markRevealed(reveal.nonce);
+  }, [single, pending, reveal, activeFile, markRevealed]);
   const pendingReveal = useMemo(
     () => (pending && reveal ? { comment: pending, nonce: reveal.nonce } : null),
     [pending, reveal],
@@ -116,7 +126,77 @@ export function DiffPane({ zen, onZen, panelOpen }: Props) {
     [openEditor, closeEditor, createComment, startEdit, cancelEdit, updateComment, deleteComment, setCurrentComment, setFileViewed],
   );
 
-  if (!state) return null;
+  // The feed shows what the sidebar's tree shows, in the tree's order, and
+  // then the files that are out of the diff but still have comments.
+  const feedFiles = useMemo<FeedFile[]>(
+    () => [
+      ...filesOf(buildTree(filter.shown, (f) => f.path)).map((entry) => ({ path: entry.path, entry, orphan: false })),
+      ...filter.shownOrphans.map((f) => ({ path: f.path, entry: undefined, orphan: true })),
+    ],
+    [filter.shown, filter.shownOrphans],
+  );
+
+  // Leaving the feed on a file it never loaded (collapsed, or still on its
+  // way): open it the way a click in the sidebar would.
+  const { selectFile } = review;
+  useEffect(() => {
+    if (single && activeFile && activeDiff === null) selectFile(activeFile);
+  }, [single, activeFile, activeDiff, selectFile]);
+
+  if (!state || viewMode === null) return null;
+
+  /** One file's slice of the review; every value is stable while that file's part is unchanged. */
+  const propsFor = (path: string, entry: FileEntry | undefined) => {
+    const fileComments = commentsByFile.get(path) ?? NO_COMMENTS;
+    const has = (id: string | null) => id !== null && fileComments.some((c) => c.id === id);
+    return {
+      path,
+      entry,
+      comments: fileComments,
+      editor: editor && editor.file === path ? editor : null,
+      editingId: has(editingId) ? editingId : null,
+      currentCommentId: panelOpen && has(currentCommentId) ? currentCommentId : null,
+      reveal: pendingReveal && pendingReveal.comment.file === path ? pendingReveal : null,
+      onRevealed: markRevealed,
+      staleLabel,
+      draft,
+      wrap,
+      onWrap: toggleWrap,
+      rendered: Boolean(renderedFiles[path]),
+      onRendered: setRendered,
+      commentsHidden: Boolean(hiddenFiles[path]),
+      onCommentsHidden: setCommentsHidden,
+      externalImages: Boolean(externalImageFiles[path]),
+      onExternalImages: loadExternalImages,
+      zen,
+      onZen,
+    };
+  };
+
+  if (!single) {
+    if (state.files.length === 0 && state.orphanFiles.length === 0) {
+      return (
+        <Empty icon={FileIcon} title="Изменений нет">
+          Дифф пуст.
+        </Empty>
+      );
+    }
+    return (
+      <div className="rv-diff-pane">
+        <FileFeed
+          files={feedFiles}
+          diffs={diffs}
+          activeFile={activeFile}
+          fileFocus={review.fileFocus}
+          onCurrentFile={review.setCurrentFile}
+          reveal={pendingReveal}
+          editorFile={editor?.file ?? null}
+          actions={actions}
+          fileProps={(file) => propsFor(file.path, file.entry)}
+        />
+      </div>
+    );
+  }
 
   if (!activeFile) {
     return state.files.length ? (
@@ -128,35 +208,9 @@ export function DiffPane({ zen, onZen, panelOpen }: Props) {
     );
   }
 
-  const fileComments = commentsByFile.get(activeFile) ?? NO_COMMENTS;
-  const has = (id: string | null) => id !== null && fileComments.some((c) => c.id === id);
-
   return (
     <div className="rv-diff-pane">
-      <FileDiff
-        path={activeFile}
-        entry={state.files.find((f) => f.path === activeFile)}
-        diff={activeDiff}
-        comments={fileComments}
-        editor={editor && editor.file === activeFile ? editor : null}
-        editingId={has(editingId) ? editingId : null}
-        currentCommentId={panelOpen && has(currentCommentId) ? currentCommentId : null}
-        reveal={pendingReveal && pendingReveal.comment.file === activeFile ? pendingReveal : null}
-        onRevealed={markRevealed}
-        staleLabel={staleLabel}
-        draft={draft}
-        wrap={wrap}
-        onWrap={toggleWrap}
-        rendered={Boolean(renderedFiles[activeFile])}
-        onRendered={setRendered}
-        commentsHidden={Boolean(hiddenFiles[activeFile])}
-        onCommentsHidden={setCommentsHidden}
-        externalImages={Boolean(externalImageFiles[activeFile])}
-        onExternalImages={loadExternalImages}
-        zen={zen}
-        onZen={onZen}
-        actions={actions}
-      />
+      <FileDiff {...propsFor(activeFile, state.files.find((f) => f.path === activeFile))} diff={activeDiff} actions={actions} />
     </div>
   );
 }

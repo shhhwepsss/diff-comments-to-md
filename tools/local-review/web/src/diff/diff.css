@@ -252,6 +252,45 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   border-radius: var(--borderRadius-medium) var(--borderRadius-medium) 0 0;
 }
 
+/* ---------------------------------------------------------------------------
+   The feed of all files: every file of the diff stacked in one scroll. Each
+   file's header pins while that file is on screen, because a sticky element
+   stays inside its own section.
+   --------------------------------------------------------------------------- */
+
+.rv-feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-16);
+}
+
+/* A collapsed file is its header alone, so the header closes the box. */
+.rv-file.is-collapsed .rv-file-header {
+  border-radius: var(--borderRadius-medium);
+}
+
+/* Holds the place of a diff that is not loaded yet. */
+.rv-file-placeholder {
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-top: none;
+  border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
+  background: var(--bgColor-default);
+}
+
+.rv-file-retry {
+  display: block;
+  margin-top: var(--base-size-8);
+}
+
+/* Tall enough for the last file to scroll up to the top like any other. */
+.rv-feed__end {
+  min-height: 60vh;
+  padding-top: var(--base-size-8);
+  text-align: center;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
 .rv-file-header__path {
   display: flex;
   align-items: baseline;
@@ -507,6 +546,17 @@ body.rv-dragging-lines * {
 .rv-app.is-zen .rv-file-comments {
   border-left: none;
   border-right: none;
+}
+
+/* With the frames gone, the header's own bottom border is what separates the
+   files of the feed; no gap, so nothing shows through between them. */
+.rv-app.is-zen .rv-feed {
+  gap: 0;
+}
+
+.rv-app.is-zen .rv-file-placeholder {
+  border: none;
+  border-radius: 0;
 }
 
 /* The way out of Zen when there is no file header to hold it: no file chosen,

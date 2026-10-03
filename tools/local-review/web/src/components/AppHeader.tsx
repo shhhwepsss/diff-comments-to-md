@@ -17,6 +17,7 @@ import {
 import type { Mode } from '../api/types';
 import { settingsHash, type Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
+import type { ViewMode } from '../lib/viewMode';
 import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview } from '../review/ReviewContext';
 import { GeneralComments } from './GeneralComments';
@@ -78,9 +79,33 @@ type Props = {
   /** The «all comments» panel beside the diff is open. */
   commentsPanel: boolean;
   onCommentsPanel: (open: boolean) => void;
+  /** One file at a time, or all of them in one scroll; null until it is known. */
+  viewMode: ViewMode | null;
+  onViewMode: (mode: ViewMode) => void;
 };
 
-export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPanel }: Props) {
+const VIEW_MODES: { value: ViewMode; label: string }[] = [
+  { value: 'single', label: 'Один файл' },
+  { value: 'all', label: 'Все файлы' },
+];
+
+/** At the far end of the row: it changes how the diff is laid out, not which diff it is. */
+function ViewModeSwitch({ value, onChange }: { value: ViewMode | null; onChange: (mode: ViewMode) => void }) {
+  return (
+    <>
+      <div className="rv-header__spacer" />
+      <SegmentedControl aria-label="Режим просмотра" size="small" onChange={(i) => onChange(VIEW_MODES[i].value)}>
+        {VIEW_MODES.map((m) => (
+          <SegmentedControl.Button key={m.value} selected={m.value === value}>
+            {m.label}
+          </SegmentedControl.Button>
+        ))}
+      </SegmentedControl>
+    </>
+  );
+}
+
+export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPanel, viewMode, onViewMode }: Props) {
   const review = useOptionalReview();
   const source = route.screen === 'diff' ? route.descriptor.source : route.screen;
   const local = review && review.descriptor.source === 'local' ? review.descriptor : null;
@@ -199,6 +224,7 @@ export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPane
           </SegmentedControl>
           {local.mode === 'base' && <BaseInput value={local.base} onCommit={review.setBase} />}
           <IconButton icon={SyncIcon} aria-label="Перечитать дифф" size="small" onClick={review.reload} />
+          <ViewModeSwitch value={viewMode} onChange={onViewMode} />
         </div>
       )}
       {review && review.descriptor.source === 'pr' && (
@@ -214,6 +240,7 @@ export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPane
             <SegmentedControl.Button selected={commitsTab}>Коммиты</SegmentedControl.Button>
           </SegmentedControl>
           <IconButton icon={SyncIcon} aria-label="Перечитать PR" size="small" onClick={review.reload} />
+          <ViewModeSwitch value={viewMode} onChange={onViewMode} />
         </div>
       )}
     </header>

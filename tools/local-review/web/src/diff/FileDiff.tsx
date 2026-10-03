@@ -3,6 +3,8 @@ import { Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner, 
 import { Blankslate } from '@primer/react/experimental';
 import {
   AlertIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CodeIcon,
   CommentIcon,
   EyeClosedIcon,
@@ -117,7 +119,7 @@ export type FileDiffActions = {
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
 };
 
-type Props = {
+export type FileDiffProps = {
   path: string;
   /** The file's row of the diff; absent for a file that is not in the diff. */
   entry: FileEntry | undefined;
@@ -148,6 +150,14 @@ type Props = {
   zen: boolean;
   onZen: (on: boolean) => void;
   actions: FileDiffActions;
+  /** Only the header is drawn. Feed only: a file shown alone is never collapsed. */
+  collapsed?: boolean;
+  /** Given in the feed: the header gets a collapse/expand button. */
+  onCollapse?: (path: string, collapsed: boolean) => void;
+  /** Height held for a diff nobody has asked for yet, so the feed keeps its length. */
+  placeholderHeight?: number;
+  /** Given in the feed, where a failed diff is not reloaded by reopening the file. */
+  onRetry?: (path: string) => void;
 };
 
 /**
@@ -178,7 +188,11 @@ export const FileDiff = memo(function FileDiff({
   zen,
   onZen,
   actions,
-}: Props) {
+  collapsed = false,
+  onCollapse,
+  placeholderHeight,
+  onRetry,
+}: FileDiffProps) {
   const toast = useToast();
   const wrapLabelId = useId();
 
@@ -274,10 +288,29 @@ export const FileDiff = memo(function FileDiff({
   );
 
   const oldPath = diff?.oldPath ?? entry?.oldPath ?? null;
+  // The file list knows the counts before the diff is loaded (and for a
+  // collapsed file it never is); the diff itself has the last word.
+  const stat = diff
+    ? diff.binary
+      ? null
+      : { additions: diff.additions || 0, deletions: diff.deletions || 0 }
+    : entry && entry.additions != null && entry.deletions != null
+      ? { additions: entry.additions, deletions: entry.deletions }
+      : null;
 
   return (
-    <section className="rv-file">
+    <section className={collapsed ? 'rv-file is-collapsed' : 'rv-file'} data-path={path}>
       <div className="rv-file-header">
+        {onCollapse && (
+          <IconButton
+            size="small"
+            variant="invisible"
+            icon={collapsed ? ChevronRightIcon : ChevronDownIcon}
+            aria-label={collapsed ? 'Развернуть файл' : 'Свернуть файл'}
+            aria-expanded={!collapsed}
+            onClick={() => onCollapse(path, !collapsed)}
+          />
+        )}
         <div className="rv-file-header__path" title={oldPath ? `${oldPath} → ${path}` : path}>
           {oldPath && oldPath !== path ? (
             <>
@@ -287,10 +320,10 @@ export const FileDiff = memo(function FileDiff({
           ) : null}
           <span>{path}</span>
         </div>
-        {diff && !diff.binary && (
+        {stat && (
           <span className="rv-diffstat">
-            <span className="rv-diffstat__add">+{diff.additions || 0}</span>
-            <span className="rv-diffstat__del">−{diff.deletions || 0}</span>
+            <span className="rv-diffstat__add">+{stat.additions}</span>
+            <span className="rv-diffstat__del">−{stat.deletions}</span>
           </span>
         )}
         {comments.length > 0 && (
@@ -299,7 +332,7 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         <div className="rv-file-header__spacer" />
-        {comments.length > 0 && (
+        {!collapsed && comments.length > 0 && (
           <Button
             size="small"
             leadingVisual={commentsHidden ? EyeIcon : EyeClosedIcon}
@@ -309,7 +342,7 @@ export const FileDiff = memo(function FileDiff({
             {commentsHidden ? 'Показать комментарии' : 'Скрыть комментарии'}
           </Button>
         )}
-        {markdown && (
+        {!collapsed && markdown && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.Button selected={!rendered} leadingVisual={CodeIcon}>
               Код
@@ -319,7 +352,7 @@ export const FileDiff = memo(function FileDiff({
             </SegmentedControl.Button>
           </SegmentedControl>
         )}
-        {showsEditor && !rendered && (
+        {!collapsed && showsEditor && !rendered && (
           <span className="rv-file-header__wrap">
             <span id={wrapLabelId} className="rv-hint">
               Перенос строк
@@ -357,6 +390,16 @@ export const FileDiff = memo(function FileDiff({
         )}
       </div>
 
+      {!collapsed && body()}
+    </section>
+  );
+
+  function body() {
+    return (
+      <>
+      {activeDiff === null && placeholderHeight !== undefined && (
+        <div className="rv-file-placeholder" style={{ height: placeholderHeight }} aria-hidden="true" />
+      )}
       {(unanchored.length > 0 || (editor && !editorInDoc)) && (
         <div className="rv-file-comments">
           {unanchored.length > 0 && <div className="rv-hint">Комментарии к файлу / вне текущего текста файла</div>}
@@ -378,6 +421,13 @@ export const FileDiff = memo(function FileDiff({
       {activeDiff?.kind === 'error' && (
         <Empty icon={AlertIcon} title="Не удалось загрузить дифф">
           {activeDiff.message}
+          {onRetry && (
+            <span className="rv-file-retry">
+              <Button size="small" onClick={() => onRetry(path)}>
+                Повторить
+              </Button>
+            </span>
+          )}
         </Empty>
       )}
       {rendered && markdown && (
@@ -430,6 +480,7 @@ export const FileDiff = memo(function FileDiff({
           />
         </div>
       )}
-    </section>
-  );
+      </>
+    );
+  }
 });

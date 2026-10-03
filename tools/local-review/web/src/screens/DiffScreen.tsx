@@ -3,7 +3,9 @@ import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
-import type { PrMeta } from '../api/types';
+import type { FileEntry, OrphanFile, PrMeta } from '../api/types';
+import type { ViewMode } from '../lib/viewMode';
+import { useFileFilter } from '../diff/useFileFilter';
 import { FileSidebar } from '../diff/FileSidebar';
 import { DiffPane } from '../diff/DiffPane';
 import { CommitRail } from '../commits/CommitRail';
@@ -107,11 +109,19 @@ type Props = {
   onCommentsPanel: (open: boolean) => void;
   /** The «просмотрено» shortcut; lives here and not in App, because it needs the review. */
   viewedKey: string;
+  /** One file at a time, or all of them in one scroll; null until it is known. */
+  viewMode: ViewMode | null;
 };
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey }: Props) {
+// Stable empties, so the filtering memo doesn't rerun while state is loading.
+const NO_FILES: FileEntry[] = [];
+const NO_ORPHANS: OrphanFile[] = [];
+
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode }: Props) {
   const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
     useReview();
+  // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
+  const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -185,9 +195,9 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       {/* A reload keeps the previous files on screen; dim them and say what is
           loading, so a fresh commit pick doesn't look like it did nothing. */}
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
-        <FileSidebar />
+        <FileSidebar filter={filter} />
         <main className="rv-content">
-          <DiffPane zen={zen} onZen={onZen} panelOpen={commentsPanel} />
+          <DiffPane zen={zen} onZen={onZen} panelOpen={commentsPanel} viewMode={viewMode} filter={filter} />
         </main>
         {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
         {loading && (
