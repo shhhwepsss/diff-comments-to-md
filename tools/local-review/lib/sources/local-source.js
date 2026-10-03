@@ -1,6 +1,6 @@
 'use strict';
 
-const { listFiles, fileDiff } = require('../diff');
+const { listFiles, fileDiff, numstat, withLineCounts } = require('../diff');
 const { listCommitFiles, commitFileDiff, rangeLabel } = require('../commits');
 const { descriptorKey } = require('../descriptor');
 const { withLocalFingerprints } = require('../viewed');
@@ -15,13 +15,16 @@ function createLocalSource(descriptor) {
     // because git is re-read on every call anyway.
     async listFiles() {
       if (mode === 'commits') {
-        const { files } = await listCommitFiles(root, from, to);
-        return { files: await withLocalFingerprints(root, mode, files), range: { label: rangeLabel(from, to) } };
+        const { files, args } = await listCommitFiles(root, from, to);
+        const counted = withLineCounts(files, await numstat(root, args));
+        return { files: await withLocalFingerprints(root, mode, counted), range: { label: rangeLabel(from, to) } };
       }
       const { files, range } = await listFiles(root, mode, base);
-      // Only the file list carries fingerprints: fileDiff re-lists files for
-      // every request and has no use for hashing the worktree again.
-      return { files: await withLocalFingerprints(root, mode, files), range };
+      // Only the file list carries fingerprints and line counts: fileDiff
+      // re-lists files for every request and has no use for hashing the
+      // worktree, or for a numstat of the whole diff, again.
+      const counted = withLineCounts(files, await numstat(root, range.args));
+      return { files: await withLocalFingerprints(root, mode, counted), range };
     },
     async fileDiff(filePath, context) {
       if (mode === 'commits') return commitFileDiff(root, from, to, filePath, context);

@@ -100,6 +100,61 @@ async function listFiles(repoRoot, mode, base) {
   return { files, range };
 }
 
+/**
+ * `git diff --numstat -z -M` output, parsed into path -> line counts.
+ * Entries look like "3\t1\tpath\0" and, for renames, "3\t1\t\0old\0new\0"
+ * (empty path, then both names) — keyed by the new path, like parseRawZ.
+ * A binary file reports "-\t-" and gets nulls: it has no lines to count.
+ */
+function parseNumstatZ(tokens) {
+  const stats = new Map();
+  for (let i = 0; i < tokens.length; i += 1) {
+    const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(tokens[i]);
+    if (!match) continue;
+    let filePath = match[3];
+    if (filePath === '') {
+      filePath = tokens[i + 2];
+      i += 2;
+    }
+    if (!filePath) continue;
+    const binary = match[1] === '-' || match[2] === '-';
+    stats.set(filePath, {
+      additions: binary ? null : Number(match[1]),
+      deletions: binary ? null : Number(match[2]),
+    });
+  }
+  return stats;
+}
+
+/**
+ * Line counts for every file of one diff, in a single git call. `diffArgs` is
+ * the same argv prefix the file list was built from (resolveRange above, or
+ * the commit range in lib/commits.js), so both describe the same comparison.
+ * Only the file list of /api/state asks for this — never fileDiff, which
+ * counts the lines of its own patch. The counts are decoration: if git fails
+ * here the list still loads, just without them.
+ */
+async function numstat(repoRoot, diffArgs) {
+  const out = await gitTry(diffArgs.concat(['--numstat', '-z', '-M', '--no-color']), repoRoot);
+  if (out === null) return new Map();
+  return parseNumstatZ(splitZ(Buffer.from(out, 'utf8')));
+}
+
+/**
+ * Entries -> the same entries with `additions` / `deletions`; null when the
+ * diff has no count for the file (binary, or untracked: `git diff` does not
+ * list those and reading every one from disk is not worth it for a counter).
+ */
+function withLineCounts(files, stats) {
+  return files.map((f) => {
+    const hit = stats.get(f.path);
+    return Object.assign({}, f, {
+      additions: hit ? hit.additions : null,
+      deletions: hit ? hit.deletions : null,
+    });
+  });
+}
+
 function looksBinary(buf) {
   const limit = Math.min(buf.length, 8000);
   for (let i = 0; i < limit; i += 1) if (buf[i] === 0) return true;
@@ -300,6 +355,9 @@ module.exports = {
   fileDiff,
   parsePatch,
   parseRawZ,
+  parseNumstatZ,
+  numstat,
+  withLineCounts,
   splitZ,
   splitLines,
   MAX_TEXT_BYTES,

@@ -14,11 +14,27 @@ import type {
   Settings,
   StateResponse,
   ValidateResponse,
+  ViewMode,
 } from './types';
 import type { PrAuthorFilter } from '../lib/prAuthor';
 import { keybindingsFrom } from '../lib/keybindings';
 
-const withKeybindings = (s: Settings): Settings => ({ ...s, keybindings: keybindingsFrom(s.keybindings) });
+/** What a browser starts in when neither it nor the server names a view mode. */
+export const DEFAULT_VIEW_MODE: ViewMode = 'all';
+
+/** Whatever came back from the server as a view mode; anything else is the default. */
+export function viewModeFrom(value: unknown): ViewMode {
+  return value === 'single' || value === 'all' ? value : DEFAULT_VIEW_MODE;
+}
+
+/**
+ * /api/settings as the rest of the app may rely on it: a complete keybindings
+ * map and a valid view mode, even from an older server or a hand-edited
+ * settings.json.
+ */
+export function normalizeSettings(s: Settings): Settings {
+  return { ...s, keybindings: keybindingsFrom(s.keybindings), defaultViewMode: viewModeFrom(s.defaultViewMode) };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -171,11 +187,10 @@ export const api = {
   saveSession: (descriptor: Descriptor) =>
     request<{ ok: true; gitignore?: Gitignore }>('/api/session', jsonBody('POST', { descriptor })),
 
-  // `keybindings` is shaped here so every caller gets a complete map, even
-  // from an older server or a hand-edited settings.json.
-  settings: () => request<Settings>('/api/settings').then(withKeybindings),
+  // Shaped here so every caller gets complete settings (normalizeSettings above).
+  settings: () => request<Settings>('/api/settings').then(normalizeSettings),
   saveSettings: (patch: Partial<Settings>) =>
-    request<Settings>('/api/settings', jsonBody('PUT', patch)).then(withKeybindings),
+    request<Settings>('/api/settings', jsonBody('PUT', patch)).then(normalizeSettings),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   repos: () => request<RepoListResponse>('/api/gh/repos'),

@@ -45,8 +45,17 @@ async function put(req, res) {
     }
     patch.keybindings = value;
   }
+  if (body.defaultViewMode !== undefined) {
+    if (!config.VIEW_MODES.includes(body.defaultViewMode)) {
+      sendJson(res, 400, { error: 'defaultViewMode должен быть single или all' });
+      return;
+    }
+    patch.defaultViewMode = body.defaultViewMode;
+  }
   if (Object.keys(patch).length === 0) {
-    sendJson(res, 400, { error: 'Нечего сохранять: передай copyPrompt, gitignoreTarget или keybindings' });
+    sendJson(res, 400, {
+      error: 'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings или defaultViewMode',
+    });
     return;
   }
   sendJson(res, 200, config.writeSettings(patch));

@@ -365,6 +365,22 @@ async function loadCommitRangeFiles(descriptor, fresh) {
   return result;
 }
 
+/**
+ * A cached file -> its row of the /api/state list. A binary file has no
+ * lines, so its counts are null rather than the 0/0 the parsers report.
+ */
+function listEntry(f) {
+  return {
+    path: f.path,
+    oldPath: f.oldPath,
+    status: f.status,
+    kind: f.kind,
+    additions: f.binary ? null : f.additions,
+    deletions: f.binary ? null : f.deletions,
+    fingerprint: f.fingerprint,
+  };
+}
+
 function createPrSource(descriptor) {
   const inRange = Boolean(descriptor.from && descriptor.to);
   return {
@@ -379,29 +395,13 @@ function createPrSource(descriptor) {
       if (inRange) {
         const { files } = await loadCommitRangeFiles(descriptor, fresh);
         return {
-          files: files.map((f) => ({
-            path: f.path,
-            oldPath: f.oldPath,
-            status: f.status,
-            kind: f.kind,
-            additions: f.additions,
-            deletions: f.deletions,
-            fingerprint: f.fingerprint,
-          })),
+          files: files.map(listEntry),
           range: { label: rangeLabel(descriptor.from, descriptor.to) },
         };
       }
       const files = await loadFiles(descriptor, fresh);
       return {
-        files: files.map((f) => ({
-          path: f.path,
-          oldPath: f.oldPath,
-          status: f.status,
-          kind: f.kind,
-          additions: f.additions,
-          deletions: f.deletions,
-          fingerprint: f.fingerprint,
-        })),
+        files: files.map(listEntry),
         range: { label: `${descriptor.owner}/${descriptor.repo}#${descriptor.number}` },
       };
     },

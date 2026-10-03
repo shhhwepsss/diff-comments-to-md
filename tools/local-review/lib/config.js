@@ -11,7 +11,9 @@ const GITIGNORE_TARGETS = ['project', 'global'];
  * Actions a keyboard shortcut can be bound to, with the shortcut each ships
  * with; '' means unbound. Mirrors KEYBINDING_DEFAULTS in web/src/lib/keybindings.ts.
  */
-const KEYBINDING_DEFAULTS = { zen: '', commentsPanel: '', viewedFile: 'Alt+V' };
+const KEYBINDING_DEFAULTS = { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' };
+/** How the diff screen lays files out: one at a time, or all of them in a feed. */
+const VIEW_MODES = ['single', 'all'];
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_DEFAULTS);
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
@@ -75,12 +77,19 @@ function writeState(next) {
  * an empty string means the action has no shortcut. An action missing from
  * the file gets its KEYBINDING_DEFAULTS shortcut; one the user cleared stays
  * '' — cleared is a choice, not a gap.
+ * `defaultViewMode` is the view mode ('single' or 'all', see VIEW_MODES) a
+ * browser starts in while it has no remembered choice of its own.
  */
 function defaultKeybindings() {
   return { ...KEYBINDING_DEFAULTS };
 }
 
-const SETTINGS_DEFAULTS = { copyPrompt: '', gitignoreTarget: 'project', keybindings: defaultKeybindings() };
+const SETTINGS_DEFAULTS = {
+  copyPrompt: '',
+  gitignoreTarget: 'project',
+  keybindings: defaultKeybindings(),
+  defaultViewMode: 'all',
+};
 
 /**
  * Keeps only known actions with string values. The file can be edited by hand,
@@ -106,6 +115,10 @@ function readSettings() {
           ? parsed.gitignoreTarget
           : SETTINGS_DEFAULTS.gitignoreTarget,
       keybindings: readKeybindings(parsed && parsed.keybindings),
+      defaultViewMode:
+        parsed && VIEW_MODES.includes(parsed.defaultViewMode)
+          ? parsed.defaultViewMode
+          : SETTINGS_DEFAULTS.defaultViewMode,
     };
   } catch {
     // Same as state.json: missing or corrupt just means defaults.
@@ -160,4 +173,5 @@ module.exports = {
   RECENT_LIMIT,
   GITIGNORE_TARGETS,
   KEYBINDING_ACTIONS,
+  VIEW_MODES,
 };

@@ -203,6 +203,11 @@ async function main() {
     JSON.stringify(rootState.body.files)
   );
   eq(rootState.body.rangeLabel, `коммит ${commits[0].short}`, 'rangeLabel одиночного коммита');
+  const lineCounts = (body) =>
+    Object.fromEntries(
+      body.files.map((f) => [f.path, [f.additions, f.deletions]]).sort(([a], [b]) => (a < b ? -1 : 1))
+    );
+  eq(lineCounts(rootState.body), { 'a.txt': [2, 0] }, 'первый коммит: добавленный файл — +2 −0 в списке файлов');
   const rootDiff = await call(`/api/diff?file=a.txt&${commitsQ(commits[0].sha, commits[0].sha)}`);
   ok(rootDiff.body.oldText === null, 'root-коммит: oldText = null (пустое дерево)');
   eq(rootDiff.body.newText, 'one\ntwo\n', 'root-коммит: newText = содержимое файла на этом коммите');
@@ -226,6 +231,7 @@ async function main() {
     'мердж-коммит: дифф с первым родителем показывает то, что принёс мердж',
     JSON.stringify(mergeState.body.files)
   );
+  eq(lineCounts(mergeState.body), { 'c.txt': [1, 0] }, 'мердж-коммит: счётчики строк — от первого родителя');
   const mergeDiff = await call(`/api/diff?file=c.txt&${commitsQ(merge.sha, merge.sha)}`);
   ok(
     mergeDiff.body.additions === 1 && mergeDiff.body.hunks[0].lines[0].text === 'side',
@@ -269,6 +275,12 @@ async function main() {
     range.body.rangeLabel,
     `коммиты ${commits[1].short}..${commits[3].short}`,
     'rangeLabel диапазона'
+  );
+  // second (+three в a.txt) .. третий (+b.txt): счётчики — по всему диапазону сразу.
+  eq(
+    lineCounts(range.body),
+    { 'a.txt': [1, 0], 'b.txt': [1, 0] },
+    'диапазон: счётчики строк считаются одним диффом на весь выбор'
   );
 
   console.log('\nошибки — внятные, а не 500');
@@ -314,6 +326,7 @@ async function main() {
     'режим working работает как раньше',
     JSON.stringify(working.body.files.map((f) => f.path))
   );
+  eq(lineCounts(working.body)['dirty.txt'], [null, null], 'untracked-файл: счётчиков строк нет (null)');
 
   await new Promise((resolve) => server.server.close(resolve));
   fs.rmSync(repo, { recursive: true, force: true });
@@ -446,6 +459,12 @@ async function main() {
     JSON.stringify(prRootState.body.files)
   );
   eq(prRootState.body.rangeLabel, `коммиты ${C1.slice(0, 7)}..${C2.slice(0, 7)}`, 'PR: rangeLabel диапазона (не ветка PR-а)');
+  eq(lineCounts(prRootState.body), { 'x.txt': [1, 0] }, 'PR: счётчики строк диапазона доезжают до /api/state');
+  eq(
+    lineCounts((await prCall(`/api/state?${prQ(C2, C2)}`)).body),
+    { 'x.txt': [1, 1] },
+    'PR: у другого диапазона — свои счётчики строк'
+  );
   const prRootDiff = await prCall(`/api/diff?file=x.txt&${prQ(C1, C2)}`);
   ok(prRootDiff.body.oldText === null, 'PR: диапазон от корневого коммита -> oldText = null (пустое дерево)');
   eq(prRootDiff.body.newText, 'вторая версия\n', 'PR: newText = содержимое на верхнем коммите диапазона');

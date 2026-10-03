@@ -166,7 +166,9 @@ async function listCommitFiles(repoRoot, from, to) {
   const raw = await git(args.concat(['--raw', '-z', '-M', '--no-color', '--no-abbrev']), repoRoot);
   const files = parseRawZ(splitZ(raw));
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files };
+  // `args` is the comparison itself, for a caller that wants more of the same
+  // diff (the line counts of /api/state) without resolving the range again.
+  return { files, args };
 }
 
 /**

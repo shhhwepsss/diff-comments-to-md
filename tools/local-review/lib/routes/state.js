@@ -11,6 +11,10 @@ function isFresh(url) {
   return url.searchParams.get('fresh') === '1';
 }
 
+function lineCount(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
 async function getState(req, res, ctx, url) {
   const descriptor = parseDescriptor(url, ctx.defaults);
   const store = storeFor(descriptor, ctx.homeDir);
@@ -57,6 +61,10 @@ async function getState(req, res, ctx, url) {
       status: f.status,
       kind: f.kind,
       untracked: Boolean(f.untracked),
+      // Changed lines of this file's diff; null when there is no count
+      // (binary, or an untracked local file).
+      additions: lineCount(f.additions),
+      deletions: lineCount(f.deletions),
       comments: counts[f.path] || 0,
       fingerprint: f.fingerprint || null,
       // A mark made against another version of this file's diff no longer counts.

@@ -5,7 +5,7 @@ import type { Descriptor, FileEntry, StateResponse } from '../api/types';
 import { folderViewed, nextUnviewed, viewedCount, withViewed, withViewedMany } from './viewed';
 
 function file(path: string, patch: Partial<FileEntry> = {}): FileEntry {
-  return { path, status: 'M', kind: 'M', untracked: false, comments: 0, fingerprint: `fp:${path}`, viewed: false, ...patch };
+  return { path, status: 'M', kind: 'M', untracked: false, comments: 0, fingerprint: `fp:${path}`, viewed: false, additions: null, deletions: null, ...patch };
 }
 
 function state(files: FileEntry[]): StateResponse {

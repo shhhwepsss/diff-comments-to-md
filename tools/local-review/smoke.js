@@ -264,6 +264,26 @@ async function main() {
   ok(renamed && renamed.oldPath === 'src/to-rename.js', 'у переименования сохранён oldPath',
     JSON.stringify(renamed));
 
+  // Line counts of the file list: one `git diff --numstat` for the whole diff.
+  // Keyed by path in code-point order, so a whole map compares regardless of
+  // how the server sorts the list.
+  const lineCounts = (body) =>
+    Object.fromEntries(
+      body.files.map((f) => [f.path, [f.additions, f.deletions]]).sort(([a], [b]) => (a < b ? -1 : 1))
+    );
+  const counts = lineCounts(state.body);
+  eq(counts['src/app.js'], [2, 0], 'state: изменённый файл — +2 −0');
+  eq(counts['crlf.txt'], [1, 1], 'state: заменённая строка — +1 −1');
+  eq(counts['src/to-delete.js'], [0, 1], 'state: удалённый файл — +0 −1');
+  eq(counts['src/renamed.js'], [1, 0], 'state: переименование считается по новому пути — +1 −0');
+  eq(counts['документы/мой файл.txt'], [1, 0], 'state: кириллический путь с пробелом — +1 −0');
+  eq(counts['assets/logo.bin'], [null, null], 'state: у бинарного файла счётчиков нет (null)');
+  eq(counts['brand new.txt'], [null, null], 'state: у untracked-файла счётчиков нет (null)');
+  ok(
+    state.body.files.every((f) => 'additions' in f && 'deletions' in f),
+    'state: additions / deletions есть у каждого файла'
+  );
+
   const binary = await call('/api/diff?file=' + encodeURIComponent('assets/logo.bin'));
   ok(binary.status === 200 && binary.body.binary === true, 'бинарный файл помечен binary',
     JSON.stringify(binary.body).slice(0, 200));
@@ -552,6 +572,7 @@ async function main() {
     'staged показывает добавленный в индекс файл',
     JSON.stringify(stagedAfterAdd.body.files.map((f) => f.path))
   );
+  eq(lineCounts(stagedAfterAdd.body)['src/app.js'], [2, 0], 'staged: счётчики строк считаются по индексу');
   const stagedAppText = await call('/api/diff?file=' + encodeURIComponent('src/app.js') + '&mode=staged');
   eq(
     stagedAppText.body.oldText,
@@ -566,6 +587,7 @@ async function main() {
 
   const baseMode = await call('/api/state?mode=base&base=HEAD~1');
   ok(baseMode.status === 200 && baseMode.body.files.length > 0, 'режим base работает');
+  eq(lineCounts(baseMode.body)['src/app.js'], [3, 0], 'base: счётчики строк считаются от merge-base');
 
   const baseAppText = await call(
     '/api/diff?file=' + encodeURIComponent('src/app.js') + '&mode=base&base=HEAD~1'
@@ -1401,6 +1423,17 @@ async function main() {
   );
   eq(prState.body.files.find((f) => f.path === 'created.txt').kind, 'A', 'новый файл помечен A');
   eq(prState.body.files.find((f) => f.path === 'gone.txt').kind, 'D', 'удалённый файл помечен D');
+  eq(
+    lineCounts(prState.body),
+    {
+      'assets/logo.bin': [null, null],
+      'created.txt': [2, 0],
+      'gone.txt': [0, 1],
+      'src/app.js': [1, 0],
+      'новое имя.txt': [0, 0],
+    },
+    'PR: счётчики строк доезжают до /api/state, у бинарного файла — null'
+  );
   eq(prState.body.pr.title, 'Заголовок PR-а', 'шапка PR-а приехала в /api/state');
   eq(prState.body.repoRoot, null, 'у PR-а нет локального корня');
 
@@ -1958,8 +1991,8 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V"}',
-    'GET /api/settings: по умолчанию задана только клавиша «просмотрено»');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A"}',
+    'GET /api/settings: по умолчанию заданы клавиши «просмотрено» и режима просмотра');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -1970,12 +2003,46 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V' },
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A' },
     'клавиша панели комментариев сохраняется рядом с Zen');
   const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
   eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
   eq((await call('/api/settings')).body.keybindings.viewedFile, '', 'снятая клавиша по умолчанию не возвращается');
   await call('/api/settings', json('PUT', { keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V' } }));
+
+  // ------------------------------------------------ режим просмотра по умолчанию
+  eq(settings0.body.defaultViewMode, 'all', 'GET /api/settings: по умолчанию режим просмотра — все файлы');
+  for (const bad of ['grid', '', 42, null]) {
+    const res = await call('/api/settings', json('PUT', { defaultViewMode: bad }));
+    ok(
+      res.status === 400 && /defaultViewMode/.test(res.body.error),
+      `PUT /api/settings: defaultViewMode ${JSON.stringify(bad)} -> 400`,
+      JSON.stringify(res.body)
+    );
+  }
+  eq((await call('/api/settings')).body.defaultViewMode, 'all', 'отклонённое значение ничего не поменяло');
+  const toSingle = await call('/api/settings', json('PUT', { defaultViewMode: 'single' }));
+  ok(toSingle.status === 200 && toSingle.body.defaultViewMode === 'single', 'PUT /api/settings: single сохранён',
+    JSON.stringify(toSingle.body));
+  eq(
+    (await call('/api/settings')).body,
+    {
+      copyPrompt: '',
+      gitignoreTarget: 'project',
+      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' },
+      defaultViewMode: 'single',
+    },
+    'режим просмотра читается обратно и не трогает остальные настройки'
+  );
+  await call('/api/settings', json('PUT', { keybindings: { viewMode: 'Alt+M' } }));
+  eq((await call('/api/settings')).body.defaultViewMode, 'single', 'патч другой настройки режим просмотра не сбрасывает');
+  // A hand-edited file with a value the tool does not know reads as the default.
+  const settingsFile = path.join(home, 'settings.json');
+  const settingsOnDisk = fs.readFileSync(settingsFile, 'utf8');
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(settingsOnDisk), defaultViewMode: 'grid' }), 'utf8');
+  eq((await call('/api/settings')).body.defaultViewMode, 'all', 'чужое значение в settings.json читается как умолчание');
+  fs.writeFileSync(settingsFile, settingsOnDisk, 'utf8');
+  await call('/api/settings', json('PUT', { defaultViewMode: 'all', keybindings: { viewMode: 'Alt+A' } }));
 
   const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
   ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));
