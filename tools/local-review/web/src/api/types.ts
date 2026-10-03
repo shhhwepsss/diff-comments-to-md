@@ -33,6 +33,9 @@ export type FileEntry = {
   status: string;
   kind: string;
   untracked: boolean;
+  /** Added / removed lines of this file's diff; null when unknown (binary, untracked local file, older server). */
+  additions: number | null;
+  deletions: number | null;
   comments: number;
   /** Identity of this file's current diff; a viewed mark only holds while it is unchanged. */
   fingerprint: string | null;
@@ -177,6 +180,9 @@ export type Gitignore = {
   error?: string;
 };
 
+/** How the diff screen lays files out: one file on screen, or all of them stacked. */
+export type ViewMode = 'single' | 'all';
+
 /** ~/.local-review/settings.json. */
 export type Settings = {
   /** Appended after the comments in both exports; empty = comments alone. */
@@ -185,6 +191,8 @@ export type Settings = {
   gitignoreTarget: 'project' | 'global';
   /** Shortcut per action, e.g. `{ zen: 'Ctrl+Shift+F' }`; '' means not bound. */
   keybindings: Keybindings;
+  /** View mode a browser starts in while it has no remembered choice: one file, or all files in a feed. */
+  defaultViewMode: ViewMode;
 };
 
 export type GhStatus = {

@@ -8,6 +8,7 @@ import { useToast } from '../lib/toast';
 import { CopyPromptSection } from './CopyPromptSection';
 import { GitignoreSection } from './GitignoreSection';
 import { KeybindingsSection } from './KeybindingsSection';
+import { ViewModeSection } from './ViewModeSection';
 import './settings.css';
 
 /**
@@ -157,6 +158,10 @@ export function SettingsScreen({ back }: { back: string }) {
           <GitignoreSection
             value={draft.gitignoreTarget}
             onChange={(gitignoreTarget) => setDraft({ ...draft, gitignoreTarget })}
+          />
+          <ViewModeSection
+            value={draft.defaultViewMode}
+            onChange={(defaultViewMode) => setDraft({ ...draft, defaultViewMode })}
           />
           <KeybindingsSection value={draft.keybindings} onChange={(keybindings) => setDraft({ ...draft, keybindings })} />
           {/* Следующая настройка — ещё одна управляемая секция здесь. */}

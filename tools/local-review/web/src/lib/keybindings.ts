@@ -35,13 +35,14 @@ export const KEYBINDING_ACTIONS = [
   { id: 'zen', label: 'Zen: скрыть всё, кроме диффа' },
   { id: 'commentsPanel', label: 'Панель всех комментариев' },
   { id: 'viewedFile', label: 'Отметить файл просмотренным и открыть следующий' },
+  { id: 'viewMode', label: 'Переключить режим: один файл / все файлы' },
 ] as const;
 
 export type KeybindingAction = (typeof KEYBINDING_ACTIONS)[number]['id'];
 
 export type Keybindings = Record<KeybindingAction, string>;
 
-export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '', viewedFile: 'Alt+V' };
+export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' };
 
 const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {
   CTRL: 'ctrl',

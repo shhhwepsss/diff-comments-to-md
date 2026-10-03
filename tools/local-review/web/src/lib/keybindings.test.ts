@@ -132,16 +132,42 @@ describe('keybindingsFrom', () => {
   });
 
   it('normalizes what it keeps and drops unknown actions', () => {
-    expect(keybindingsFrom({ zen: 'shift+ctrl+f', nope: 'Ctrl+Q' })).toEqual({ zen: 'Ctrl+Shift+F', commentsPanel: '', viewedFile: 'Alt+V' });
+    expect(keybindingsFrom({ zen: 'shift+ctrl+f', nope: 'Ctrl+Q' })).toEqual({
+      zen: 'Ctrl+Shift+F',
+      commentsPanel: '',
+      viewedFile: 'Alt+V',
+      viewMode: 'Alt+A',
+    });
   });
 
   it('an unusable binding becomes unbound, not an error', () => {
-    expect(keybindingsFrom({ zen: 'Ctrl+Escape' })).toEqual({ zen: '', commentsPanel: '', viewedFile: 'Alt+V' });
+    expect(keybindingsFrom({ zen: 'Ctrl+Escape' })).toEqual({
+      zen: '',
+      commentsPanel: '',
+      viewedFile: 'Alt+V',
+      viewMode: 'Alt+A',
+    });
   });
 
   it('ships the comments panel unbound, like Zen', () => {
     expect(KEYBINDING_DEFAULTS.commentsPanel).toBe('');
-    expect(keybindingsFrom({ commentsPanel: 'alt+c' })).toEqual({ zen: '', commentsPanel: 'Alt+C', viewedFile: 'Alt+V' });
+    expect(keybindingsFrom({ commentsPanel: 'alt+c' })).toEqual({
+      zen: '',
+      commentsPanel: 'Alt+C',
+      viewedFile: 'Alt+V',
+      viewMode: 'Alt+A',
+    });
+  });
+
+  it('ships the view-mode switch bound to Alt+A, and keeps it cleared once cleared', () => {
+    expect(KEYBINDING_DEFAULTS.viewMode).toBe('Alt+A');
+    expect(keybindingsFrom({}).viewMode).toBe('Alt+A');
+    expect(keybindingsFrom({ viewMode: '' }).viewMode).toBe('');
+  });
+
+  it('ships no two actions on the same shortcut', () => {
+    const bound = Object.values(KEYBINDING_DEFAULTS).filter(Boolean);
+    expect(new Set(bound).size).toBe(bound.length);
   });
 
   it('ships the viewed-file shortcut bound to Alt+V, and keeps it cleared once cleared', () => {

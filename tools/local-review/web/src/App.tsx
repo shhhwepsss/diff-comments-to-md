@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
-import { api, failureMessage } from './api/client';
+import { api, failureMessage, DEFAULT_VIEW_MODE } from './api/client';
 import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
@@ -8,6 +8,7 @@ import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, typ
 import { portalOpen } from './lib/portal';
 import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
+import { readViewMode, resolveViewMode, toggleViewMode, writeViewMode, type ViewMode } from './lib/viewMode';
 import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
@@ -46,6 +47,16 @@ export function App({ theme, onTheme }: Props) {
     writeCommentsPanel(open);
   }, []);
 
+  // One file or all files. The reviewer's own choice is remembered in this
+  // browser; until there is one, the settings page's default applies.
+  const [chosenMode, setChosenMode] = useState(readViewMode);
+  const [defaultMode, setDefaultMode] = useState<ViewMode | null>(null);
+  const viewMode = resolveViewMode(chosenMode, defaultMode);
+  const setViewMode = useCallback((mode: ViewMode) => {
+    setChosenMode(mode);
+    writeViewMode(mode);
+  }, []);
+
   const route = routeFromHash(hash);
   const onSettings = route.screen === 'settings';
   const diffScreen = route.screen === 'diff';
@@ -64,14 +75,19 @@ export function App({ theme, onTheme }: Props) {
 
   // The shortcut lives in ~/.local-review/settings.json, which only the
   // settings page writes: read it at boot and again on the way out of that
-  // page. A failure here costs the shortcut, nothing else.
+  // page. A failure here costs the shortcuts and the chosen default view mode,
+  // nothing else: the diff must still open, so the mode falls back.
   useEffect(() => {
     if (onSettings) return;
     let alive = true;
     api
       .settings()
-      .then((s) => alive && setKeys(keybindingsFrom(s.keybindings)))
-      .catch(() => undefined);
+      .then((s) => {
+        if (!alive) return;
+        setKeys(keybindingsFrom(s.keybindings));
+        setDefaultMode(s.defaultViewMode);
+      })
+      .catch(() => alive && setDefaultMode((mode) => mode ?? DEFAULT_VIEW_MODE));
     return () => {
       alive = false;
     };
@@ -92,13 +108,19 @@ export function App({ theme, onTheme }: Props) {
         setCommentsPanel(!commentsPanel);
         return;
       }
+      if (matchesEvent(keys.viewMode, e)) {
+        if (!viewMode) return;
+        e.preventDefault();
+        setViewMode(toggleViewMode(viewMode));
+        return;
+      }
       if (!matchesEvent(keys.zen, e)) return;
       e.preventDefault();
       setZen(!zen);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [diffScreen, keys.zen, keys.commentsPanel, setZen, zen, commentsPanel, setCommentsPanel]);
+  }, [diffScreen, keys.zen, keys.commentsPanel, keys.viewMode, setZen, zen, commentsPanel, setCommentsPanel, viewMode, setViewMode]);
 
   useEffect(() => {
     if (booted) return;
@@ -122,7 +144,10 @@ export function App({ theme, onTheme }: Props) {
     };
   }, [booted, toast]);
 
-  if (!booted) {
+  // The review opens its first file differently in the two view modes, so it
+  // waits for the mode. With a remembered choice there is nothing to wait for;
+  // without one it is a single local request, and a failure falls back.
+  if (!booted || (diffScreen && viewMode === null)) {
     return (
       <div className="rv-center">
         <Spinner size="large" />
@@ -133,7 +158,15 @@ export function App({ theme, onTheme }: Props) {
   const shell = (
     <div className={zenActive ? 'rv-app is-zen' : 'rv-app'}>
       {!zenActive && (
-        <AppHeader route={route} theme={theme} onTheme={onTheme} commentsPanel={commentsPanel} onCommentsPanel={setCommentsPanel} />
+        <AppHeader
+          route={route}
+          theme={theme}
+          onTheme={onTheme}
+          commentsPanel={commentsPanel}
+          onCommentsPanel={setCommentsPanel}
+          viewMode={viewMode}
+          onViewMode={setViewMode}
+        />
       )}
       <div className="rv-main">
         {route.screen === 'diff' ? (
@@ -143,6 +176,7 @@ export function App({ theme, onTheme }: Props) {
             commentsPanel={commentsPanel}
             onCommentsPanel={setCommentsPanel}
             viewedKey={keys.viewedFile}
+            viewMode={viewMode}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
@@ -158,7 +192,7 @@ export function App({ theme, onTheme }: Props) {
   // A new descriptor is a new review: remount so no state leaks across.
   // The file in the hash is left out of the key: switching files is not a new review.
   return route.screen === 'diff' ? (
-    <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor} initialFile={route.file}>
+    <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor} initialFile={route.file} viewMode={viewMode}>
       {shell}
     </ReviewProvider>
   ) : (

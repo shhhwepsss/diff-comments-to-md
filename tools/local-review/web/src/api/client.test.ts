@@ -3,12 +3,17 @@ import {
   api,
   ApiError,
   commitsListDescriptor,
+  DEFAULT_VIEW_MODE,
   descriptorQuery,
   errorMessage,
   failureMessage,
   NO_RESPONSE,
+  normalizeSettings,
   responseErrorMessage,
+  viewModeFrom,
 } from './client';
+import type { Settings } from './types';
+import { KEYBINDING_DEFAULTS } from '../lib/keybindings';
 
 const local = { source: 'local' as const, root: '/repo', mode: 'working' as const, base: '' };
 const pr = { source: 'pr' as const, host: 'github.com', owner: 'o', repo: 'r', number: 25 };
@@ -33,6 +38,34 @@ describe('commitsListDescriptor', () => {
     expect(commitsListDescriptor(local)).toBe(local);
     expect(commitsListDescriptor(pr)).toBe(pr);
     expect(commitsListDescriptor({ ...pr, from: 'aaa111', to: 'bbb222' })).toEqual({ ...pr, from: 'aaa111', to: 'bbb222' });
+  });
+});
+
+describe('normalizeSettings', () => {
+  const full = {
+    copyPrompt: '',
+    gitignoreTarget: 'project' as const,
+    keybindings: { ...KEYBINDING_DEFAULTS },
+    defaultViewMode: 'single' as const,
+  };
+
+  it('keeps a valid view mode', () => {
+    expect(normalizeSettings(full).defaultViewMode).toBe('single');
+    expect(normalizeSettings({ ...full, defaultViewMode: 'all' }).defaultViewMode).toBe('all');
+  });
+
+  it("falls back to 'all' when an older server sends no view mode, or a bad one", () => {
+    const { defaultViewMode: _dropped, ...older } = full;
+    expect(normalizeSettings(older as Settings).defaultViewMode).toBe('all');
+    expect(normalizeSettings({ ...full, defaultViewMode: 'grid' } as unknown as Settings).defaultViewMode).toBe('all');
+    expect(viewModeFrom(null)).toBe(DEFAULT_VIEW_MODE);
+  });
+
+  it('still completes the keybindings map', () => {
+    expect(normalizeSettings({ ...full, keybindings: { zen: 'ctrl+k' } } as unknown as Settings).keybindings).toEqual({
+      ...KEYBINDING_DEFAULTS,
+      zen: 'Ctrl+K',
+    });
   });
 });
 

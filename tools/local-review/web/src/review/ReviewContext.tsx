@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
-import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
+import type { Comment, Commit, Descriptor, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
+import { createDiffStore, type DiffStore } from './diffStore';
+import type { ViewMode } from '../lib/viewMode';
 import { nextUnviewed, withViewedMany } from './viewed';
 import { buildTree, filesOf } from '../diff/fileTree';
 import { isStale, openTarget, viewKindOf, type AgeContext } from './commentAge';
@@ -29,20 +31,22 @@ function isCommitsMode(d: Descriptor): boolean {
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
 
-export type ActiveDiff =
-  | { kind: 'loading' }
-  | { kind: 'orphan' }
-  | { kind: 'error'; message: string }
-  | { kind: 'ready'; diff: DiffResponse };
-
 export type Review = {
   descriptor: Descriptor;
   state: StateResponse | null;
   loading: boolean;
   loadError: string | null;
   comments: Comment[];
+  /** The open file; in the feed of all files, the one at the top of the screen. */
   activeFile: string | null;
-  activeDiff: ActiveDiff | null;
+  /**
+   * «Bring this file on screen», for the feed: set whenever a file is opened
+   * on purpose (the sidebar, Back/Forward, a reload), never by scrolling.
+   * `nonce` makes a repeat request for the same file new.
+   */
+  fileFocus: { path: string; nonce: number } | null;
+  /** Diffs by path; read one with useFileDiff, so only that file re-renders when it loads. */
+  diffs: DiffStore;
   editor: EditorAnchor | null;
   editingId: string | null;
   /** Unsaved general-comment text; survives closing the panel, not a reload. */
@@ -98,6 +102,13 @@ export type Review = {
   returnFromCommit: () => void;
   dismissReturn: () => void;
   selectFile: (path: string) => void;
+  /**
+   * The feed scrolled to this file. Only moves `activeFile` (and with it the
+   * address): no history step, no fetch, and the open form stays open.
+   */
+  setCurrentFile: (path: string) => void;
+  /** The feed tells which files it shows and in what order; null when it is gone. */
+  setFeedOrder: (paths: readonly string[] | null) => void;
   /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
   /** The same for several files — a folder marked from the sidebar. */
@@ -137,13 +148,22 @@ export function useOptionalReview(): Review | null {
 export function ReviewProvider({
   initial,
   initialFile = null,
+  viewMode,
   children,
 }: {
   initial: Descriptor;
   /** File named in the URL; opened on load when the diff (or an orphan) has it. */
   initialFile?: string | null;
+  /** How the diff screen shows files; null until it is known. Owned by App, like Zen. */
+  viewMode: ViewMode | null;
   children: ReactNode;
 }) {
+  // Read at call time: opening a file means different things in the two modes,
+  // and the callbacks that do it outlive a mode switch.
+  const feedRef = useRef(false);
+  feedRef.current = viewMode === 'all';
+  // The files the feed shows, in its order; null while there is no feed.
+  const feedOrder = useRef<readonly string[] | null>(null);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -156,11 +176,14 @@ export function ReviewProvider({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [activeDiff, setActiveDiff] = useState<ActiveDiff | null>(null);
+  const [fileFocus, setFileFocus] = useState<{ path: string; nonce: number } | null>(null);
   const [editor, setEditor] = useState<EditorAnchor | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // One store for the life of this review; the provider remounts per descriptor.
   const [drafts] = useState(createDraftStore);
+  // Reads the descriptor at fetch time: the view (mode, base, range) changes
+  // under one provider, and every change resets the store.
+  const [diffs] = useState(() => createDiffStore((path, fresh) => api.diff(descriptorRef.current, path, fresh)));
 
   // Commits-mode state. The provider does NOT remount when toggling this mode
   // (hashFor ignores from/to on purpose), so it lives alongside the rest here.
@@ -179,8 +202,8 @@ export function ReviewProvider({
   const [reveal, setReveal] = useState<{ commentId: string; nonce: number } | null>(null);
   const [returnTo, setReturnTo] = useState<Descriptor | null>(null);
 
-  // Responses for a file or descriptor the user already left must not land.
-  const diffSeq = useRef(0);
+  // Responses for a descriptor the user already left must not land. (For a
+  // file's diff the store does the same, per path.)
   const stateSeq = useRef(0);
   const commitsSeq = useRef(0);
   const ageSeq = useRef(0);
@@ -193,26 +216,33 @@ export function ReviewProvider({
   const fail = useCallback((e: unknown) => toast(errorMessage(e), true), [toast]);
 
   const loadDiff = useCallback(
-    async (d: Descriptor, path: string, orphan: boolean, fresh: boolean) => {
-      const seq = ++diffSeq.current;
+    async (path: string, orphan: boolean, fresh: boolean) => {
+      // Re-reading the diff while the feed is on this file keeps the place in
+      // it: the loaded diffs stay on screen (the store keeps them, stale), so
+      // there is nothing to scroll back to.
+      const sameSpot = feedRef.current && fresh && activeFileRef.current === path;
       setActiveFile(path);
+      if (!sameSpot) setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
+      if (feedRef.current) {
+        // In the feed opening a file only scrolls to it: the form the reviewer
+        // has open (maybe in another file) stays, and a diff already on screen
+        // is not fetched again. A failure shows in the file's own section.
+        if (orphan) diffs.setOrphan(path);
+        else void diffs.ensure(path, { fresh });
+        return;
+      }
       setEditor(null);
       setEditingId(null);
       if (orphan) {
-        setActiveDiff({ kind: 'orphan' });
+        diffs.setOrphan(path);
         return;
       }
-      setActiveDiff({ kind: 'loading' });
-      try {
-        const diff = await api.diff(d, path, fresh);
-        if (seq === diffSeq.current) setActiveDiff({ kind: 'ready', diff });
-      } catch (e) {
-        if (seq !== diffSeq.current) return;
-        setActiveDiff({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
-        fail(e);
-      }
+      // Forced: opening a file always re-reads it, the working copy may have moved on.
+      const entry = await diffs.ensure(path, { force: true, fresh });
+      // A failure of a file the reviewer already left is not worth a toast.
+      if (entry?.kind === 'error' && activeFileRef.current === path) fail(entry.cause);
     },
-    [fail],
+    [diffs, fail],
   );
 
   // Quietly: without the history nothing is marked stale, the diff still works.
@@ -246,16 +276,20 @@ export function ReviewProvider({
           descriptorRef.current = filled;
           setDescriptor(filled);
         }
+        // The file list is of another diff now: nothing loaded before describes
+        // it. A re-read of the same view (`fresh`) is the exception — there the
+        // loaded diffs are still the best thing to show until the new ones come.
+        diffs.reset({ keep: fresh });
         const inDiff = keepFile !== null && next.files.some((f) => f.path === keepFile);
         const inOrphans = keepFile !== null && next.orphanFiles.some((f) => f.path === keepFile);
         if (inDiff || inOrphans) {
-          await loadDiff(d, keepFile, !inDiff, fresh);
+          await loadDiff(keepFile, !inDiff, fresh);
         } else if (next.files.length) {
-          await loadDiff(d, next.files[0].path, false, fresh);
+          // The feed starts at its top, and its order is the sidebar tree's.
+          const first = feedRef.current ? filesOf(buildTree(next.files, (f) => f.path))[0] : next.files[0];
+          await loadDiff(first.path, false, fresh);
         } else {
-          diffSeq.current += 1;
           setActiveFile(null);
-          setActiveDiff(null);
         }
       } catch (e) {
         if (seq !== stateSeq.current) return;
@@ -265,7 +299,7 @@ export function ReviewProvider({
         if (seq === stateSeq.current) setLoading(false);
       }
     },
-    [fail, loadDiff, loadAgeHistory],
+    [diffs, fail, loadDiff, loadAgeHistory],
   );
 
   /**
@@ -306,10 +340,9 @@ export function ReviewProvider({
           descriptorRef.current = next;
           setDescriptor(next);
           setCommitSel(null);
-          diffSeq.current += 1;
+          diffs.reset();
           stateSeq.current += 1;
           setActiveFile(null);
-          setActiveDiff(null);
           setState(null);
           setComments([]);
           setLoadError(null);
@@ -335,7 +368,7 @@ export function ReviewProvider({
         fail(e);
       }
     },
-    [fail, load],
+    [diffs, fail, load],
   );
 
   useEffect(() => {
@@ -519,9 +552,9 @@ export function ReviewProvider({
 
   /** Opens `path` without touching history — the Back/Forward handler's way in. */
   const openFile = useCallback(
-    (d: Descriptor, path: string) => {
+    (path: string) => {
       const orphan = !(stateRef.current?.files ?? []).some((f) => f.path === path);
-      void loadDiff(d, path, orphan, false);
+      void loadDiff(path, orphan, false);
     },
     [loadDiff],
   );
@@ -534,10 +567,12 @@ export function ReviewProvider({
       // so Back never silently swaps the diff under the same address.
       const next = viewHash(descriptorRef.current, path);
       if (next && next !== window.location.hash) window.history.pushState(window.history.state, '', next);
-      openFile(descriptor, path);
+      openFile(path);
     },
-    [descriptor, openFile],
+    [openFile],
   );
+
+  const setCurrentFile = useCallback((path: string) => setActiveFile(path), []);
 
   const commentsRef = useRef<Comment[]>([]);
   commentsRef.current = comments;
@@ -549,7 +584,8 @@ export function ReviewProvider({
       const c = commentsRef.current.find((x) => x.id === id);
       if (!c || c.file === null) return;
       setCurrentCommentId(id);
-      if (c.file !== activeFileRef.current) selectFile(c.file);
+      // The feed has every file on screen and scrolls to the comment itself.
+      if (!feedRef.current && c.file !== activeFileRef.current) selectFile(c.file);
       setReveal((r) => ({ commentId: id, nonce: (r?.nonce ?? 0) + 1 }));
     },
     [selectFile],
@@ -593,6 +629,9 @@ export function ReviewProvider({
     const files = stateRef.current?.files ?? [];
     const entry = files.find((f) => f.path === path);
     if (!path || !entry) return;
+    // The shortcut acts on what the reviewer sees. In the feed the current
+    // file can lag behind for a moment after the search or a rule hid it.
+    if (feedRef.current && feedOrder.current && !feedOrder.current.includes(path)) return;
     if (entry.viewed) {
       void setFilesViewed([path], false);
       return;
@@ -600,10 +639,20 @@ export function ReviewProvider({
     if (!entry.fingerprint) return;
     // Worked out before the mark lands, so the file being marked is skipped
     // by nextUnviewed as the current one rather than by its (stale) flag.
-    const next = nextUnviewed(files, filesOf(buildTree(files, (f) => f.path)).map((f) => f.path), path);
+    // In the feed «next» is the next file the feed shows: one hidden by the
+    // search or a rule would become current without ever being on screen.
+    const order = (feedRef.current && feedOrder.current) || filesOf(buildTree(files, (f) => f.path)).map((f) => f.path);
+    const next = nextUnviewed(files, order, path);
     void setFilesViewed([path], true);
     if (next) selectFile(next);
+    // Nowhere to go: the file just collapsed under the reviewer, so bring its
+    // header back instead of leaving them in whatever is below it.
+    else if (feedRef.current) setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
   }, [setFilesViewed, selectFile]);
+
+  const setFeedOrder = useCallback((paths: readonly string[] | null) => {
+    feedOrder.current = paths;
+  }, []);
 
   /**
    * Back/Forward (and a hand-edited address) re-open what the address names.
@@ -615,7 +664,7 @@ export function ReviewProvider({
       const nav = navigationFor(hash, current, activeFileRef.current);
       if (nav.kind === 'ignore') return;
       if (nav.kind === 'file') {
-        openFile(current, nav.file);
+        openFile(nav.file);
         return;
       }
       const target = nav.descriptor;
@@ -792,7 +841,8 @@ export function ReviewProvider({
       loadError,
       comments,
       activeFile,
-      activeDiff,
+      fileFocus,
+      diffs,
       editor,
       editingId,
       drafts,
@@ -825,6 +875,8 @@ export function ReviewProvider({
       returnFromCommit,
       dismissReturn,
       selectFile,
+      setCurrentFile,
+      setFeedOrder,
       setFileViewed,
       setFilesViewed,
       toggleActiveViewed,
@@ -847,7 +899,8 @@ export function ReviewProvider({
       loadError,
       comments,
       activeFile,
-      activeDiff,
+      fileFocus,
+      diffs,
       editor,
       editingId,
       drafts,
@@ -880,6 +933,8 @@ export function ReviewProvider({
       returnFromCommit,
       dismissReturn,
       selectFile,
+      setCurrentFile,
+      setFeedOrder,
       setFileViewed,
       setFilesViewed,
       toggleActiveViewed,
