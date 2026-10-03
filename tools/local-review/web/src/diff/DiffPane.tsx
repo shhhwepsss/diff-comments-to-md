@@ -14,6 +14,7 @@ import {
   ScreenNormalIcon,
 } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
+import { useFileDiff } from '../review/useFileDiff';
 import { failureMessage } from '../api/client';
 import { useToast } from '../lib/toast';
 import type { Comment, DiffResponse } from '../api/types';
@@ -122,7 +123,8 @@ type Props = {
 
 export function DiffPane({ zen, onZen, panelOpen }: Props) {
   const review = useReview();
-  const { activeFile, activeDiff, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
+  const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
+  const activeDiff = useFileDiff(diffs, activeFile);
   const [wrap, setWrap] = useState(readWrap);
   const toast = useToast();
   // Source diff or rendered markdown, per file path; source is the default.

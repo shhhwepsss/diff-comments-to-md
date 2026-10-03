@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
-import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
+import type { Comment, Commit, Descriptor, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
+import { createDiffStore, type DiffStore } from './diffStore';
 import { nextUnviewed, withViewedMany } from './viewed';
 import { buildTree, filesOf } from '../diff/fileTree';
 import { isStale, openTarget, viewKindOf, type AgeContext } from './commentAge';
@@ -29,12 +30,6 @@ function isCommitsMode(d: Descriptor): boolean {
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
 
-export type ActiveDiff =
-  | { kind: 'loading' }
-  | { kind: 'orphan' }
-  | { kind: 'error'; message: string }
-  | { kind: 'ready'; diff: DiffResponse };
-
 export type Review = {
   descriptor: Descriptor;
   state: StateResponse | null;
@@ -42,7 +37,8 @@ export type Review = {
   loadError: string | null;
   comments: Comment[];
   activeFile: string | null;
-  activeDiff: ActiveDiff | null;
+  /** Diffs by path; read one with useFileDiff, so only that file re-renders when it loads. */
+  diffs: DiffStore;
   editor: EditorAnchor | null;
   editingId: string | null;
   /** Unsaved general-comment text; survives closing the panel, not a reload. */
@@ -156,11 +152,13 @@ export function ReviewProvider({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [activeDiff, setActiveDiff] = useState<ActiveDiff | null>(null);
   const [editor, setEditor] = useState<EditorAnchor | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // One store for the life of this review; the provider remounts per descriptor.
   const [drafts] = useState(createDraftStore);
+  // Reads the descriptor at fetch time: the view (mode, base, range) changes
+  // under one provider, and every change resets the store.
+  const [diffs] = useState(() => createDiffStore((path, fresh) => api.diff(descriptorRef.current, path, fresh)));
 
   // Commits-mode state. The provider does NOT remount when toggling this mode
   // (hashFor ignores from/to on purpose), so it lives alongside the rest here.
@@ -179,8 +177,8 @@ export function ReviewProvider({
   const [reveal, setReveal] = useState<{ commentId: string; nonce: number } | null>(null);
   const [returnTo, setReturnTo] = useState<Descriptor | null>(null);
 
-  // Responses for a file or descriptor the user already left must not land.
-  const diffSeq = useRef(0);
+  // Responses for a descriptor the user already left must not land. (For a
+  // file's diff the store does the same, per path.)
   const stateSeq = useRef(0);
   const commitsSeq = useRef(0);
   const ageSeq = useRef(0);
@@ -193,26 +191,19 @@ export function ReviewProvider({
   const fail = useCallback((e: unknown) => toast(errorMessage(e), true), [toast]);
 
   const loadDiff = useCallback(
-    async (d: Descriptor, path: string, orphan: boolean, fresh: boolean) => {
-      const seq = ++diffSeq.current;
+    async (path: string, orphan: boolean, fresh: boolean) => {
       setActiveFile(path);
       setEditor(null);
       setEditingId(null);
       if (orphan) {
-        setActiveDiff({ kind: 'orphan' });
+        diffs.setOrphan(path);
         return;
       }
-      setActiveDiff({ kind: 'loading' });
-      try {
-        const diff = await api.diff(d, path, fresh);
-        if (seq === diffSeq.current) setActiveDiff({ kind: 'ready', diff });
-      } catch (e) {
-        if (seq !== diffSeq.current) return;
-        setActiveDiff({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
-        fail(e);
-      }
+      // Forced: opening a file always re-reads it, the working copy may have moved on.
+      const entry = await diffs.ensure(path, { force: true, fresh });
+      if (entry?.kind === 'error') fail(entry.cause);
     },
-    [fail],
+    [diffs, fail],
   );
 
   // Quietly: without the history nothing is marked stale, the diff still works.
@@ -246,16 +237,16 @@ export function ReviewProvider({
           descriptorRef.current = filled;
           setDescriptor(filled);
         }
+        // The file list is of another diff now: nothing loaded before describes it.
+        diffs.reset();
         const inDiff = keepFile !== null && next.files.some((f) => f.path === keepFile);
         const inOrphans = keepFile !== null && next.orphanFiles.some((f) => f.path === keepFile);
         if (inDiff || inOrphans) {
-          await loadDiff(d, keepFile, !inDiff, fresh);
+          await loadDiff(keepFile, !inDiff, fresh);
         } else if (next.files.length) {
-          await loadDiff(d, next.files[0].path, false, fresh);
+          await loadDiff(next.files[0].path, false, fresh);
         } else {
-          diffSeq.current += 1;
           setActiveFile(null);
-          setActiveDiff(null);
         }
       } catch (e) {
         if (seq !== stateSeq.current) return;
@@ -265,7 +256,7 @@ export function ReviewProvider({
         if (seq === stateSeq.current) setLoading(false);
       }
     },
-    [fail, loadDiff, loadAgeHistory],
+    [diffs, fail, loadDiff, loadAgeHistory],
   );
 
   /**
@@ -306,10 +297,9 @@ export function ReviewProvider({
           descriptorRef.current = next;
           setDescriptor(next);
           setCommitSel(null);
-          diffSeq.current += 1;
+          diffs.reset();
           stateSeq.current += 1;
           setActiveFile(null);
-          setActiveDiff(null);
           setState(null);
           setComments([]);
           setLoadError(null);
@@ -335,7 +325,7 @@ export function ReviewProvider({
         fail(e);
       }
     },
-    [fail, load],
+    [diffs, fail, load],
   );
 
   useEffect(() => {
@@ -519,9 +509,9 @@ export function ReviewProvider({
 
   /** Opens `path` without touching history — the Back/Forward handler's way in. */
   const openFile = useCallback(
-    (d: Descriptor, path: string) => {
+    (path: string) => {
       const orphan = !(stateRef.current?.files ?? []).some((f) => f.path === path);
-      void loadDiff(d, path, orphan, false);
+      void loadDiff(path, orphan, false);
     },
     [loadDiff],
   );
@@ -534,9 +524,9 @@ export function ReviewProvider({
       // so Back never silently swaps the diff under the same address.
       const next = viewHash(descriptorRef.current, path);
       if (next && next !== window.location.hash) window.history.pushState(window.history.state, '', next);
-      openFile(descriptor, path);
+      openFile(path);
     },
-    [descriptor, openFile],
+    [openFile],
   );
 
   const commentsRef = useRef<Comment[]>([]);
@@ -615,7 +605,7 @@ export function ReviewProvider({
       const nav = navigationFor(hash, current, activeFileRef.current);
       if (nav.kind === 'ignore') return;
       if (nav.kind === 'file') {
-        openFile(current, nav.file);
+        openFile(nav.file);
         return;
       }
       const target = nav.descriptor;
@@ -792,7 +782,7 @@ export function ReviewProvider({
       loadError,
       comments,
       activeFile,
-      activeDiff,
+      diffs,
       editor,
       editingId,
       drafts,
@@ -847,7 +837,7 @@ export function ReviewProvider({
       loadError,
       comments,
       activeFile,
-      activeDiff,
+      diffs,
       editor,
       editingId,
       drafts,
