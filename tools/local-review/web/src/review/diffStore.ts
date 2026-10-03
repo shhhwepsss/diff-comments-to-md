@@ -13,7 +13,8 @@ export type ActiveDiff =
   | { kind: 'loading' }
   | { kind: 'orphan' }
   | { kind: 'error'; message: string; cause?: unknown }
-  | { kind: 'ready'; diff: DiffResponse };
+  /** `stale`: loaded before the diff was re-read; shown until its replacement arrives. */
+  | { kind: 'ready'; diff: DiffResponse; stale?: boolean };
 
 export type DiffFetcher = (path: string, fresh: boolean) => Promise<DiffResponse>;
 
@@ -35,9 +36,18 @@ export type DiffStore = {
   ensure: (path: string, options?: EnsureOptions) => Promise<ActiveDiff | null>;
   /** A file that has comments but is not in the diff: nothing to fetch. */
   setOrphan: (path: string) => void;
-  /** Another diff is on screen now: drop every entry and every pending answer. */
-  reset: () => void;
+  /**
+   * Another diff is on screen now: drop every entry and every pending answer.
+   * `keep` is for re-reading the same view: loaded diffs stay where they are,
+   * marked stale, so the screen does not empty while their replacements load.
+   */
+  reset: (options?: { keep?: boolean }) => void;
 };
+
+/** A diff that has to be fetched (again) before it can be trusted. */
+export function needsLoad(entry: ActiveDiff | null): boolean {
+  return entry === null || (entry.kind === 'ready' && entry.stale === true);
+}
 
 /** Unforced requests in flight at once; each local one costs the server several git processes. */
 const DEFAULT_LIMIT = 4;
@@ -94,13 +104,17 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
 
     ensure: (path, { force = false, fresh = false } = {}) => {
       const known = entries.get(path);
-      if (known && !force) return pending.get(path) ?? Promise.resolve(known);
+      // A stale diff with a request already out is waiting for that one.
+      const settled = known && !(needsLoad(known) && !pending.has(path));
+      if (settled && !force) return pending.get(path) ?? Promise.resolve(known);
 
       const token = ++lastToken;
       const born = generation;
       tokens.set(path, token);
       const isCurrent = () => born === generation && tokens.get(path) === token;
-      put(path, { kind: 'loading' });
+      // A stale diff stays on screen while it is re-read, unless the reviewer
+      // asked for the file: then the wait is shown.
+      if (force || !known) put(path, { kind: 'loading' });
 
       const request =
         force || running < limit
@@ -118,10 +132,12 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
       put(path, { kind: 'orphan' });
     },
 
-    reset: () => {
+    reset: ({ keep = false } = {}) => {
       generation += 1;
       const known = [...entries.keys()];
+      const kept = keep ? [...entries].filter(([, entry]) => entry.kind === 'ready') : [];
       entries.clear();
+      for (const [path, entry] of kept) if (entry.kind === 'ready') entries.set(path, { kind: 'ready', diff: entry.diff, stale: true });
       tokens.clear();
       pending.clear();
       // Queued requests see the new generation and resolve empty-handed.

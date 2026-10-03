@@ -400,6 +400,12 @@ function createPrSource(descriptor) {
         };
       }
       const files = await loadFiles(descriptor, fresh);
+      // A re-read forgets the endpoints together with the patch. The feed of
+      // all files then asks for each file's diff without `fresh`; with only
+      // the patch renewed, those would pair new hunks with the old head's
+      // texts. Forgotten, not fetched: the list must not fail on a request it
+      // does not need itself, and the first file's diff resolves them again.
+      if (fresh) SHA_CACHE.delete(descriptorKey(descriptor));
       return {
         files: files.map(listEntry),
         range: { label: `${descriptor.owner}/${descriptor.repo}#${descriptor.number}` },

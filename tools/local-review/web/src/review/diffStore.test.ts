@@ -115,6 +115,54 @@ describe('createDiffStore', () => {
     expect(onA).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps loaded diffs on screen across a reset that asks for it, marked stale', async () => {
+    const { calls, fetcher } = manualFetcher();
+    const store = createDiffStore(fetcher);
+    const first = store.ensure('a.ts');
+    const old = diffOf('a.ts');
+    calls[0].resolve(old);
+    await first;
+    void store.ensure('b.ts');
+
+    store.reset({ keep: true });
+    expect(store.get('a.ts')).toEqual({ kind: 'ready', diff: old, stale: true });
+    const kept = store.get('a.ts');
+    expect(kept?.kind === 'ready' && kept.diff).toBe(old);
+    // Only a loaded diff is worth keeping.
+    expect(store.get('b.ts')).toBeNull();
+  });
+
+  it('re-reads a stale diff without a loading gap', async () => {
+    const { calls, fetcher } = manualFetcher();
+    const store = createDiffStore(fetcher);
+    const first = store.ensure('a.ts');
+    calls[0].resolve(diffOf('a.ts'));
+    await first;
+    store.reset({ keep: true });
+
+    const again = store.ensure('a.ts');
+    expect(calls).toHaveLength(2);
+    expect(store.get('a.ts')?.kind).toBe('ready');
+    const next = diffOf('a.ts');
+    calls[1].resolve(next);
+    expect(await again).toEqual({ kind: 'ready', diff: next });
+    // Fresh now: asking again fetches nothing.
+    await store.ensure('a.ts');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('asks for a stale diff once, however many times it is ensured', async () => {
+    const { calls, fetcher } = manualFetcher();
+    const store = createDiffStore(fetcher);
+    const first = store.ensure('a.ts');
+    calls[0].resolve(diffOf('a.ts'));
+    await first;
+    store.reset({ keep: true });
+    void store.ensure('a.ts');
+    void store.ensure('a.ts');
+    expect(calls).toHaveLength(2);
+  });
+
   it('runs at most `limit` requests at once and starts the rest as slots free up', async () => {
     const { calls, fetcher } = manualFetcher();
     const store = createDiffStore(fetcher, 2);

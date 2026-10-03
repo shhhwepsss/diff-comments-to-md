@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
-import { api, failureMessage } from './api/client';
+import { api, failureMessage, DEFAULT_VIEW_MODE } from './api/client';
 import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
@@ -8,7 +8,7 @@ import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, typ
 import { portalOpen } from './lib/portal';
 import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
-import { parseViewMode, readViewMode, resolveViewMode, toggleViewMode, writeViewMode, VIEW_MODE_FALLBACK, type ViewMode } from './lib/viewMode';
+import { readViewMode, resolveViewMode, toggleViewMode, writeViewMode, type ViewMode } from './lib/viewMode';
 import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
@@ -85,9 +85,9 @@ export function App({ theme, onTheme }: Props) {
       .then((s) => {
         if (!alive) return;
         setKeys(keybindingsFrom(s.keybindings));
-        setDefaultMode(parseViewMode(s.defaultViewMode) ?? VIEW_MODE_FALLBACK);
+        setDefaultMode(s.defaultViewMode);
       })
-      .catch(() => alive && setDefaultMode((mode) => mode ?? VIEW_MODE_FALLBACK));
+      .catch(() => alive && setDefaultMode((mode) => mode ?? DEFAULT_VIEW_MODE));
     return () => {
       alive = false;
     };

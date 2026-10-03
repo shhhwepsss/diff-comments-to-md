@@ -57,7 +57,9 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
   // another file), and on reload.
   const draft = useRef<FormDraft>({ file: '', text: '' });
   useEffect(() => {
-    if (!editor) draft.current = { file: '', text: '' };
+    // A form in another file is another comment: the text typed for the first
+    // file must not come back when a form is opened there again.
+    if (!editor || editor.file !== draft.current.file) draft.current = { file: '', text: '' };
     // A new comment on a hidden file would vanish on save; show the file's comments again.
     if (editor) setHiddenFiles((prev) => setFileHidden(prev, editor.file, false));
   }, [editor]);
@@ -120,10 +122,25 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
     [pending, reveal],
   );
 
-  const { openEditor, closeEditor, createComment, startEdit, cancelEdit, updateComment, deleteComment, setCurrentComment, setFileViewed } = review;
+  // One object for the life of the pane, calling whatever the review offers
+  // at that moment. Some of these are recreated whenever the open form moves
+  // (createComment closes over it); passed as they are, every such move would
+  // re-render every file of the feed.
+  const latest = useRef(review);
+  latest.current = review;
   const actions = useMemo<FileDiffActions>(
-    () => ({ openEditor, closeEditor, createComment, startEdit, cancelEdit, updateComment, deleteComment, setCurrentComment, setFileViewed }),
-    [openEditor, closeEditor, createComment, startEdit, cancelEdit, updateComment, deleteComment, setCurrentComment, setFileViewed],
+    () => ({
+      openEditor: (anchor) => latest.current.openEditor(anchor),
+      closeEditor: () => latest.current.closeEditor(),
+      createComment: (text) => latest.current.createComment(text),
+      startEdit: (id) => latest.current.startEdit(id),
+      cancelEdit: () => latest.current.cancelEdit(),
+      updateComment: (id, text) => latest.current.updateComment(id, text),
+      deleteComment: (id) => latest.current.deleteComment(id),
+      setCurrentComment: (id) => latest.current.setCurrentComment(id),
+      setFileViewed: (path, viewed) => latest.current.setFileViewed(path, viewed),
+    }),
+    [],
   );
 
   // The feed shows what the sidebar's tree shows, in the tree's order, and
@@ -135,6 +152,14 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
     ],
     [filter.shown, filter.shownOrphans],
   );
+
+  // «Next unviewed file» has to mean the next one the feed shows.
+  const { setFeedOrder } = review;
+  useEffect(() => {
+    if (single) return;
+    setFeedOrder(feedFiles.filter((f) => !f.orphan).map((f) => f.path));
+    return () => setFeedOrder(null);
+  }, [single, feedFiles, setFeedOrder]);
 
   // Leaving the feed on a file it never loaded (collapsed, or still on its
   // way): open it the way a click in the sidebar would.
@@ -190,7 +215,8 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
           fileFocus={review.fileFocus}
           onCurrentFile={review.setCurrentFile}
           reveal={pendingReveal}
-          editorFile={editor?.file ?? null}
+          onRevealed={markRevealed}
+          editor={editor}
           actions={actions}
           fileProps={(file) => propsFor(file.path, file.entry)}
         />

@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { currentIndexAt, isCollapsed, placeholderHeight } from './feedMath';
 
 describe('currentIndexAt', () => {
-  const tops = [0, 300, 900, 950];
+  // Four files: 0–300, 300–900, a collapsed header 900–950, 950–2000.
+  const bottoms = [300, 900, 950, 2000];
 
   it('has no current file in an empty feed', () => {
     expect(currentIndexAt([], 100)).toBe(-1);
   });
 
   it('is the first file above its own top', () => {
-    expect(currentIndexAt(tops, -50)).toBe(0);
+    expect(currentIndexAt(bottoms, -50)).toBe(0);
   });
 
   it.each([
@@ -20,9 +21,15 @@ describe('currentIndexAt', () => {
     [900, 2],
     [949, 2],
     [950, 3],
+    [1999, 3],
     [5000, 3],
   ])('at y=%i it is file %i', (y, index) => {
-    expect(currentIndexAt(tops, y)).toBe(index);
+    expect(currentIndexAt(bottoms, y)).toBe(index);
+  });
+
+  it('keeps a collapsed header current while it is at the top, whatever follows it', () => {
+    // Three collapsed 32px headers in a row; the reading line is inside the first.
+    expect(currentIndexAt([32, 64, 96], 16)).toBe(0);
   });
 });
 

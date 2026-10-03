@@ -1,18 +1,20 @@
 // Geometry of the feed of all files. Pure, so it is tested without a browser.
 
 /**
- * Which file the reviewer is looking at: the last one whose top edge is at or
- * above the reading line `y`. `tops` are in document order (ascending). Before
- * the first file starts it is still the first one; -1 only for an empty feed.
+ * Which file the reviewer is looking at: the one the reading line `y` falls
+ * in, i.e. the first whose bottom edge is below it. `bottoms` are in document
+ * order (ascending). Going by bottoms, not tops, keeps a file that is only a
+ * collapsed header current while that header is at the top of the screen.
+ * Past the last file it is still the last one; -1 only for an empty feed.
  */
-export function currentIndexAt(tops: readonly number[], y: number): number {
-  if (tops.length === 0) return -1;
+export function currentIndexAt(bottoms: readonly number[], y: number): number {
+  if (bottoms.length === 0) return -1;
   let lo = 0;
-  let hi = tops.length - 1;
+  let hi = bottoms.length - 1;
   while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (tops[mid] <= y) lo = mid;
-    else hi = mid - 1;
+    const mid = (lo + hi) >> 1;
+    if (bottoms[mid] > y) hi = mid;
+    else lo = mid + 1;
   }
   return lo;
 }

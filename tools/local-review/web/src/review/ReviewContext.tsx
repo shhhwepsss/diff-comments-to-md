@@ -107,6 +107,8 @@ export type Review = {
    * address): no history step, no fetch, and the open form stays open.
    */
   setCurrentFile: (path: string) => void;
+  /** The feed tells which files it shows and in what order; null when it is gone. */
+  setFeedOrder: (paths: readonly string[] | null) => void;
   /** Marks a file viewed against the diff currently shown; a changed diff drops the mark server-side. */
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
   /** The same for several files — a folder marked from the sidebar. */
@@ -160,6 +162,8 @@ export function ReviewProvider({
   // and the callbacks that do it outlive a mode switch.
   const feedRef = useRef(false);
   feedRef.current = viewMode === 'all';
+  // The files the feed shows, in its order; null while there is no feed.
+  const feedOrder = useRef<readonly string[] | null>(null);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -213,8 +217,12 @@ export function ReviewProvider({
 
   const loadDiff = useCallback(
     async (path: string, orphan: boolean, fresh: boolean) => {
+      // Re-reading the diff while the feed is on this file keeps the place in
+      // it: the loaded diffs stay on screen (the store keeps them, stale), so
+      // there is nothing to scroll back to.
+      const sameSpot = feedRef.current && fresh && activeFileRef.current === path;
       setActiveFile(path);
-      setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
+      if (!sameSpot) setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
       if (feedRef.current) {
         // In the feed opening a file only scrolls to it: the form the reviewer
         // has open (maybe in another file) stays, and a diff already on screen
@@ -231,7 +239,8 @@ export function ReviewProvider({
       }
       // Forced: opening a file always re-reads it, the working copy may have moved on.
       const entry = await diffs.ensure(path, { force: true, fresh });
-      if (entry?.kind === 'error') fail(entry.cause);
+      // A failure of a file the reviewer already left is not worth a toast.
+      if (entry?.kind === 'error' && activeFileRef.current === path) fail(entry.cause);
     },
     [diffs, fail],
   );
@@ -267,8 +276,10 @@ export function ReviewProvider({
           descriptorRef.current = filled;
           setDescriptor(filled);
         }
-        // The file list is of another diff now: nothing loaded before describes it.
-        diffs.reset();
+        // The file list is of another diff now: nothing loaded before describes
+        // it. A re-read of the same view (`fresh`) is the exception — there the
+        // loaded diffs are still the best thing to show until the new ones come.
+        diffs.reset({ keep: fresh });
         const inDiff = keepFile !== null && next.files.some((f) => f.path === keepFile);
         const inOrphans = keepFile !== null && next.orphanFiles.some((f) => f.path === keepFile);
         if (inDiff || inOrphans) {
@@ -618,6 +629,9 @@ export function ReviewProvider({
     const files = stateRef.current?.files ?? [];
     const entry = files.find((f) => f.path === path);
     if (!path || !entry) return;
+    // The shortcut acts on what the reviewer sees. In the feed the current
+    // file can lag behind for a moment after the search or a rule hid it.
+    if (feedRef.current && feedOrder.current && !feedOrder.current.includes(path)) return;
     if (entry.viewed) {
       void setFilesViewed([path], false);
       return;
@@ -625,10 +639,20 @@ export function ReviewProvider({
     if (!entry.fingerprint) return;
     // Worked out before the mark lands, so the file being marked is skipped
     // by nextUnviewed as the current one rather than by its (stale) flag.
-    const next = nextUnviewed(files, filesOf(buildTree(files, (f) => f.path)).map((f) => f.path), path);
+    // In the feed «next» is the next file the feed shows: one hidden by the
+    // search or a rule would become current without ever being on screen.
+    const order = (feedRef.current && feedOrder.current) || filesOf(buildTree(files, (f) => f.path)).map((f) => f.path);
+    const next = nextUnviewed(files, order, path);
     void setFilesViewed([path], true);
     if (next) selectFile(next);
+    // Nowhere to go: the file just collapsed under the reviewer, so bring its
+    // header back instead of leaving them in whatever is below it.
+    else if (feedRef.current) setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
   }, [setFilesViewed, selectFile]);
+
+  const setFeedOrder = useCallback((paths: readonly string[] | null) => {
+    feedOrder.current = paths;
+  }, []);
 
   /**
    * Back/Forward (and a hand-edited address) re-open what the address names.
@@ -852,6 +876,7 @@ export function ReviewProvider({
       dismissReturn,
       selectFile,
       setCurrentFile,
+      setFeedOrder,
       setFileViewed,
       setFilesViewed,
       toggleActiveViewed,
@@ -909,6 +934,7 @@ export function ReviewProvider({
       dismissReturn,
       selectFile,
       setCurrentFile,
+      setFeedOrder,
       setFileViewed,
       setFilesViewed,
       toggleActiveViewed,

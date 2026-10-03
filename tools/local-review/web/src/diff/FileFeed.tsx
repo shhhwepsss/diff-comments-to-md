@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FileIcon } from '@primer/octicons-react';
 import type { Comment, FileEntry } from '../api/types';
-import type { DiffStore } from '../review/diffStore';
+import { needsLoad, type DiffStore } from '../review/diffStore';
+import type { EditorAnchor } from '../review/ReviewContext';
+import { useToast } from '../lib/toast';
 import { useFileDiff } from '../review/useFileDiff';
 import { Empty, FileDiff, type FileDiffActions, type FileDiffProps } from './FileDiff';
 import { currentIndexAt, isCollapsed, placeholderHeight, type CollapseChoice } from './feedMath';
@@ -23,8 +25,9 @@ type Props = {
   onCurrentFile: (path: string) => void;
   /** A pending «scroll to this comment»: its file has to be open and loaded. */
   reveal: { comment: Comment; nonce: number } | null;
-  /** The file of the open new-comment form: it has to be open too. */
-  editorFile: string | null;
+  onRevealed: (nonce: number) => void;
+  /** The open new-comment form: its file cannot be collapsed, the form is in the body. */
+  editor: EditorAnchor | null;
   actions: FileDiffActions;
   fileProps: (file: FeedFile) => Omit<FileDiffProps, OwnProps>;
 };
@@ -34,8 +37,9 @@ const NEAR_MARGIN = '600px 0px';
 // A file has to stay near this long before it loads, so dragging the scrollbar
 // across hundreds of files does not ask the server for every one of them.
 const NEAR_DELAY_MS = 150;
-// How far below the top edge a file has to reach to become the current one.
-const READING_LINE_PX = 64;
+// The file under this line, just below the top edge, is the current one.
+// Less than the height of a collapsed header, so a row of them reads right.
+const READING_LINE_PX = 16;
 const SPY_DELAY_MS = 120;
 // After the feed scrolls on its own, scroll events are not the reviewer's.
 const QUIET_MS = 400;
@@ -60,9 +64,11 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
   const diff = useFileDiff(diffs, file.path);
   // Loads when the file comes near, and again after a reload emptied the store.
   useEffect(() => {
-    if (!near || collapsed || diff !== null) return;
-    if (file.orphan) diffs.setOrphan(file.path);
-    else void diffs.ensure(file.path);
+    if (!near || collapsed) return;
+    if (file.orphan) {
+      // Whatever was loaded for it belongs to a diff it is no longer in.
+      if (diff?.kind !== 'orphan') diffs.setOrphan(file.path);
+    } else if (needsLoad(diff)) void diffs.ensure(file.path);
   }, [near, collapsed, diff, diffs, file.orphan, file.path]);
 
   return (
@@ -86,12 +92,16 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
  * to its header and never loads. The file at the top is reported back as the
  * current one, and a request to open a file scrolls to it.
  */
-export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, reveal, editorFile, actions, fileProps }: Props) {
+export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, reveal, onRevealed, editor, actions, fileProps }: Props) {
+  const toast = useToast();
+  const editorFile = editor?.file ?? null;
   const root = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState<ReadonlySet<string>>(() => new Set());
   const [choices, setChoices] = useState<Record<string, CollapseChoice>>({});
   const quietUntil = useRef(0);
   const pin = useRef<{ path: string; until: number; giveUp: number } | null>(null);
+  // Asks the scroll-spy to look again; set by its effect below.
+  const remeasure = useRef<() => void>(() => undefined);
   const activeRef = useRef(activeFile);
   activeRef.current = activeFile;
   const filesRef = useRef(files);
@@ -136,6 +146,9 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     if (!fileFocus || fileFocus.nonce === focusedNonce.current) return;
     focusedNonce.current = fileFocus.nonce;
     focus(fileFocus.path);
+    // A file the feed does not show (hidden by the search or a rule) cannot be
+    // the current one: hand that back to whatever is at the top.
+    if (!pin.current) remeasure.current();
   }, [fileFocus, focus]);
 
   const pathsKey = files.map((f) => f.path).join('\n');
@@ -144,6 +157,13 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
   useEffect(() => {
     const box = scroller();
     if (!box) return;
+    // Files that left the list are not near anything; without this they would
+    // count as near the moment they come back, wherever they are.
+    const listed = new Set(filesRef.current.map((f) => f.path));
+    setNear((prev) => {
+      const next = new Set([...prev].filter((path) => listed.has(path)));
+      return next.size === prev.size ? prev : next;
+    });
     const latest = new Map<string, boolean>();
     let timer: number | undefined;
     const flush = () => {
@@ -189,7 +209,7 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
       const nodes = items();
       const top = box.getBoundingClientRect().top;
       const index = currentIndexAt(
-        nodes.map((node) => node.getBoundingClientRect().top - top),
+        nodes.map((node) => node.getBoundingClientRect().bottom - top),
         READING_LINE_PX,
       );
       const path = index >= 0 ? nodes[index].dataset.path : undefined;
@@ -200,10 +220,14 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
       timer = window.setTimeout(measure, SPY_DELAY_MS);
     };
     box.addEventListener('scroll', onScroll, { passive: true });
+    remeasure.current = onScroll;
+    // A file that left the list cannot be held at the top any more.
+    if (pin.current && !filesRef.current.some((f) => f.path === pin.current?.path)) pin.current = null;
     // A changed list (the search, a rule) puts another file at the top
     // without any scrolling.
     onScroll();
     return () => {
+      remeasure.current = () => undefined;
       box.removeEventListener('scroll', onScroll);
       window.clearTimeout(timer);
     };
@@ -271,7 +295,12 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     const path = reveal?.comment.file;
     if (!path) return;
     const file = filesRef.current.find((f) => f.path === path);
-    if (!file) return;
+    if (!file) {
+      // Not in the feed: the request must not wait for the day the file is.
+      onRevealed(reveal.nonce);
+      toast('Файл комментария скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
+      return;
+    }
     open(path);
     pin.current = null;
     if (diffs.get(path)?.kind === 'ready') return;
@@ -280,11 +309,6 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     aim(path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.nonce]);
-
-  // «Комментарий к файлу» on a collapsed file: the form is in the body.
-  useEffect(() => {
-    if (editorFile) open(editorFile);
-  }, [editorFile, open]);
 
   // A file collapsed while its header was pinned would leave the reviewer
   // somewhere in the files below; bring its header back instead.
@@ -334,7 +358,9 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
           file={file}
           diffs={diffs}
           near={near.has(file.path)}
-          collapsed={isCollapsed(Boolean(file.entry?.viewed), choices[file.path])}
+          // A file with the form open stays open: the form, and what is typed
+          // in it, is in the body.
+          collapsed={file.path !== editorFile && isCollapsed(Boolean(file.entry?.viewed), choices[file.path])}
           shared={fileProps(file)}
           actions={feedActions}
           onCollapse={onCollapse}

@@ -15,9 +15,6 @@ export type { ViewMode };
 
 export const VIEW_MODE_KEY = 'local-review:view-mode';
 
-/** What a browser with no remembered choice shows when the settings can't be read. */
-export const VIEW_MODE_FALLBACK: ViewMode = 'all';
-
 /** Stored value -> mode. Anything else, a missing key included, is "not chosen". */
 export function parseViewMode(raw: unknown): ViewMode | null {
   return raw === 'single' || raw === 'all' ? raw : null;

@@ -183,7 +183,9 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       {/* Zen drops everything above the diff. Not rendering beats hiding: the
           commit rail owns key handlers and state of its own. */}
       {zen ? (
-        !activeFile && <ZenExit onZen={onZen} />
+        // Also when the feed shows no file at all (the filter hid them): no
+        // file, no header to hold the button.
+        (!activeFile || (viewMode === 'all' && filter.shown.length + filter.shownOrphans.length === 0)) && <ZenExit onZen={onZen} />
       ) : (
         <>
           <CommitRail />
