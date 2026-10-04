@@ -2317,6 +2317,7 @@ async function main() {
       gitignoreTarget: 'project',
       keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' },
       defaultViewMode: 'single',
+      renderModeForAllFiles: true,
     },
     'режим просмотра читается обратно и не трогает остальные настройки'
   );
@@ -2329,6 +2330,30 @@ async function main() {
   eq((await call('/api/settings')).body.defaultViewMode, 'all', 'чужое значение в settings.json читается как умолчание');
   fs.writeFileSync(settingsFile, settingsOnDisk, 'utf8');
   await call('/api/settings', json('PUT', { defaultViewMode: 'all', keybindings: { viewMode: 'Alt+A' } }));
+
+  // ------------------------------------------------ вид файла: для всех файлов
+  eq(settings0.body.renderModeForAllFiles, true, 'GET /api/settings: по умолчанию вид файла общий для всех файлов');
+  for (const bad of ['false', 0, null, {}]) {
+    const res = await call('/api/settings', json('PUT', { renderModeForAllFiles: bad }));
+    ok(
+      res.status === 400 && /renderModeForAllFiles/.test(res.body.error),
+      `PUT /api/settings: renderModeForAllFiles ${JSON.stringify(bad)} -> 400`,
+      JSON.stringify(res.body)
+    );
+  }
+  eq((await call('/api/settings')).body.renderModeForAllFiles, true, 'отклонённое значение вид файла не поменяло');
+  const perFile = await call('/api/settings', json('PUT', { renderModeForAllFiles: false }));
+  ok(perFile.status === 200 && perFile.body.renderModeForAllFiles === false, 'PUT /api/settings: вид файла по отдельности сохранён',
+    JSON.stringify(perFile.body));
+  eq((await call('/api/settings')).body.renderModeForAllFiles, false, 'вид файла по отдельности читается обратно');
+  await call('/api/settings', json('PUT', { defaultViewMode: 'single' }));
+  eq((await call('/api/settings')).body.renderModeForAllFiles, false, 'патч другой настройки вид файла не сбрасывает');
+  // A hand-edited file with something that is not a boolean reads as the default.
+  const renderOnDisk = fs.readFileSync(settingsFile, 'utf8');
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(renderOnDisk), renderModeForAllFiles: 'no' }), 'utf8');
+  eq((await call('/api/settings')).body.renderModeForAllFiles, true, 'не булево значение в settings.json читается как умолчание');
+  fs.writeFileSync(settingsFile, renderOnDisk, 'utf8');
+  await call('/api/settings', json('PUT', { defaultViewMode: 'all', renderModeForAllFiles: true }));
 
   const saved = await call('/api/settings', json('PUT', { copyPrompt: '  Исправь замечания ниже.\r\nПо одному коммиту.\n\n' }));
   ok(saved.status === 200, 'PUT /api/settings -> 200', JSON.stringify(saved.body));

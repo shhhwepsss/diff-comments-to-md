@@ -9,6 +9,8 @@ import { FileFeed, type FeedFile } from './FileFeed';
 import { buildTree, filesOf } from './fileTree';
 import type { FileFilter } from './useFileFilter';
 import { setFileHidden, type HiddenFiles } from './hiddenComments';
+import { isMarkdownPath } from './markdownFile';
+import { NO_RENDER_CHOICE, isRendered, setFileRendered, switchRendered, type RenderChoice } from './renderMode';
 import { staleTarget } from '../review/commentAge';
 import './diff.css';
 
@@ -31,6 +33,8 @@ type Props = {
   panelOpen: boolean;
   /** One file at a time, or all of them in one scroll; null until it is known. */
   viewMode: ViewMode | null;
+  /** The setting: «Код» / «Просмотр» in one file switches every file. */
+  renderAllFiles: boolean;
   /** The sidebar's search and rules: the feed shows the same files. */
   filter: FileFilter;
 };
@@ -40,14 +44,15 @@ type Props = {
  * made per file, the unsaved form text, which «scroll to this comment» request
  * is already done — and hands each file its own slice of the review.
  */
-export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
+export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, filter }: Props) {
   const single = viewMode === 'single';
   const review = useReview();
   const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
   const activeDiff = useFileDiff(diffs, activeFile);
   const [wrap, setWrap] = useState(readWrap);
-  // Source diff or rendered markdown, per file path; source is the default.
-  const [renderedFiles, setRenderedFiles] = useState<Record<string, boolean>>({});
+  // Source diff or rendered markdown; source is the default. One choice for
+  // every file or one per file, as the setting says (renderMode.ts). Not persisted.
+  const [renderChoice, setRenderChoice] = useState<RenderChoice>(NO_RENDER_CHOICE);
   // Files whose remote images the reviewer chose to load (not persisted).
   const [externalImageFiles, setExternalImageFiles] = useState<Record<string, boolean>>({});
   // Files whose comments the reviewer hid with the header button (not persisted).
@@ -73,10 +78,16 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
     }
   }, []);
 
-  const setRendered = useCallback(
-    (path: string, rendered: boolean) =>
-      setRenderedFiles((prev) => (Boolean(prev[path]) === rendered ? prev : { ...prev, [path]: rendered })),
-    [],
+  // The switch in a file's header: every file follows when the mode is shared.
+  const switchRenderedView = useCallback(
+    (path: string, rendered: boolean) => setRenderChoice((prev) => switchRendered(prev, path, rendered, renderAllFiles)),
+    [renderAllFiles],
+  );
+  // A file leaving the rendered view on its own (a comment to scroll to, a
+  // preview that failed): the other files keep theirs.
+  const setFileRenderedView = useCallback(
+    (path: string, rendered: boolean) => setRenderChoice((prev) => setFileRendered(prev, path, rendered, renderAllFiles)),
+    [renderAllFiles],
   );
   const setCommentsHidden = useCallback(
     (path: string, hidden: boolean) => setHiddenFiles((prev) => setFileHidden(prev, path, hidden)),
@@ -187,8 +198,11 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, filter }: Props) {
       draft,
       wrap,
       onWrap: toggleWrap,
-      rendered: Boolean(renderedFiles[path]),
-      onRendered: setRendered,
+      // Only for a file that has a rendered view: the common switch must not
+      // re-render every other file of the feed.
+      rendered: isMarkdownPath(path) && isRendered(renderChoice, path, renderAllFiles),
+      onRendered: switchRenderedView,
+      onFileRendered: setFileRenderedView,
       commentsHidden: Boolean(hiddenFiles[path]),
       onCommentsHidden: setCommentsHidden,
       externalImages: Boolean(externalImageFiles[path]),

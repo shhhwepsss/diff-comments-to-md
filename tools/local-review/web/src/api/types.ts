@@ -196,6 +196,8 @@ export type Settings = {
   keybindings: Keybindings;
   /** View mode a browser starts in while it has no remembered choice: one file, or all files in a feed. */
   defaultViewMode: ViewMode;
+  /** «Код» / «Просмотр» switched in one file switches every file that has a rendered view; off = each file on its own. */
+  renderModeForAllFiles: boolean;
 };
 
 export type GhStatus = {

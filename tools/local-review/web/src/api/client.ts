@@ -27,13 +27,26 @@ export function viewModeFrom(value: unknown): ViewMode {
   return value === 'single' || value === 'all' ? value : DEFAULT_VIEW_MODE;
 }
 
+/** Whether «Код» / «Просмотр» is one switch for every file, when the server does not say. */
+export const DEFAULT_RENDER_MODE_FOR_ALL_FILES = true;
+
+/** Whatever came back from the server as that switch; anything but a boolean is the default. */
+export function renderModeForAllFilesFrom(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_RENDER_MODE_FOR_ALL_FILES;
+}
+
 /**
  * /api/settings as the rest of the app may rely on it: a complete keybindings
- * map and a valid view mode, even from an older server or a hand-edited
- * settings.json.
+ * map, a valid view mode and a boolean render mode switch, even from an older
+ * server or a hand-edited settings.json.
  */
 export function normalizeSettings(s: Settings): Settings {
-  return { ...s, keybindings: keybindingsFrom(s.keybindings), defaultViewMode: viewModeFrom(s.defaultViewMode) };
+  return {
+    ...s,
+    keybindings: keybindingsFrom(s.keybindings),
+    defaultViewMode: viewModeFrom(s.defaultViewMode),
+    renderModeForAllFiles: renderModeForAllFilesFrom(s.renderModeForAllFiles),
+  };
 }
 
 export class ApiError extends Error {

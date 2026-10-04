@@ -139,13 +139,15 @@ type Props = {
   viewedKey: string;
   /** One file at a time, or all of them in one scroll; null until it is known. */
   viewMode: ViewMode | null;
+  /** The setting: «Код» / «Просмотр» in one file switches every file. */
+  renderAllFiles: boolean;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode }: Props) {
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles }: Props) {
   const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
     useReview();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
@@ -228,7 +230,14 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar filter={filter} />
         <main className="rv-content">
-          <DiffPane zen={zen} onZen={onZen} panelOpen={commentsPanel} viewMode={viewMode} filter={filter} />
+          <DiffPane
+            zen={zen}
+            onZen={onZen}
+            panelOpen={commentsPanel}
+            viewMode={viewMode}
+            renderAllFiles={renderAllFiles}
+            filter={filter}
+          />
         </main>
         {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
         {loading && (

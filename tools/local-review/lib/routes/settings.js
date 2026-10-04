@@ -52,9 +52,17 @@ async function put(req, res) {
     }
     patch.defaultViewMode = body.defaultViewMode;
   }
+  if (body.renderModeForAllFiles !== undefined) {
+    if (typeof body.renderModeForAllFiles !== 'boolean') {
+      sendJson(res, 400, { error: 'renderModeForAllFiles должен быть true или false' });
+      return;
+    }
+    patch.renderModeForAllFiles = body.renderModeForAllFiles;
+  }
   if (Object.keys(patch).length === 0) {
     sendJson(res, 400, {
-      error: 'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings или defaultViewMode',
+      error:
+        'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings, defaultViewMode или renderModeForAllFiles',
     });
     return;
   }
