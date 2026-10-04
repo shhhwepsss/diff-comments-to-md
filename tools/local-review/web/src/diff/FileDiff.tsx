@@ -23,11 +23,12 @@ import type { Comment, DiffResponse, FileEntry } from '../api/types';
 import { DiffEditor } from './DiffEditor';
 import { CommentCard, CommentForm } from './CommentCard';
 import { stripFinalNewline, type LineRange } from './lineMap';
-import { markdownToRender } from './markdownFile';
+import { previewToRender } from './previewFile';
 import { fileLayout } from './fileLayout';
 
 // marked + DOMPurify + markdown styles load only when a file is first rendered.
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
+const HtmlPreview = lazy(() => import('./HtmlPreview'));
 
 /**
  * A chunk that fails to load throws through render, and with no boundary that
@@ -142,7 +143,7 @@ export type FileDiffProps = {
   draft: RefObject<FormDraft>;
   wrap: boolean;
   onWrap: (next: boolean) => void;
-  /** Rendered markdown instead of the source diff. */
+  /** Rendered markdown / html instead of the source diff. */
   rendered: boolean;
   /** The reviewer used the «Код» / «Просмотр» switch; other files may follow (renderMode.ts). */
   onRendered: (path: string, rendered: boolean) => void;
@@ -150,8 +151,12 @@ export type FileDiffProps = {
   onFileRendered: (path: string, rendered: boolean) => void;
   commentsHidden: boolean;
   onCommentsHidden: (path: string, hidden: boolean) => void;
+  /** Remote images (markdown) or resources (html) load for this file. */
   externalImages: boolean;
   onExternalImages: (path: string) => void;
+  /** The scripts of this html file run in its preview. */
+  scripts: boolean;
+  onRunScripts: (path: string) => void;
   zen: boolean;
   onZen: (on: boolean) => void;
   actions: FileDiffActions;
@@ -191,6 +196,8 @@ export const FileDiff = memo(function FileDiff({
   onCommentsHidden,
   externalImages,
   onExternalImages,
+  scripts,
+  onRunScripts,
   zen,
   onZen,
   actions,
@@ -206,8 +213,8 @@ export const FileDiff = memo(function FileDiff({
   const reason = diff ? unavailableReason(diff) : null;
   const showsEditor = Boolean(diff && !reason);
   const docLines = showsEditor && diff ? lineCount(diff.newText ?? '') : 0;
-  const markdown = diff ? markdownToRender(path, diff) : null;
-  const rendered = Boolean(markdown && renderedChoice);
+  const preview = diff ? previewToRender(path, diff) : null;
+  const rendered = Boolean(preview && renderedChoice);
 
   const { anchored, unanchored, blocks, selected, editorInDoc } = useMemo(
     () => fileLayout({ comments, commentsHidden, editingId, showsEditor, docLines, rendered, editor }),
@@ -348,7 +355,7 @@ export const FileDiff = memo(function FileDiff({
             {commentsHidden ? 'Показать комментарии' : 'Скрыть комментарии'}
           </Button>
         )}
-        {!collapsed && markdown && (
+        {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.Button selected={!rendered} leadingVisual={CodeIcon}>
               Код
@@ -436,10 +443,10 @@ export const FileDiff = memo(function FileDiff({
           )}
         </Empty>
       )}
-      {rendered && markdown && (
+      {rendered && preview && (
         <>
           <div className="rv-hint rv-diff-hint">
-            {markdown.side === 'old' ? 'Файл удалён — показана прежняя версия. ' : ''}
+            {preview.side === 'old' ? 'Файл удалён — показана прежняя версия. ' : ''}
             Только просмотр: комментарии к строкам — в режиме «Код»
             {anchored.length > 0 ? ` (${anchored.length})` : ''}.
           </div>
@@ -447,7 +454,7 @@ export const FileDiff = memo(function FileDiff({
             <PreviewBoundary
               onError={(e) => {
                 onFileRendered(path, false);
-                toast(failureMessage('Просмотр markdown не загрузился', e), true);
+                toast(failureMessage(`Просмотр ${preview.kind === 'html' ? 'HTML' : 'markdown'} не загрузился`, e), true);
               }}
             >
               <Suspense
@@ -457,7 +464,17 @@ export const FileDiff = memo(function FileDiff({
                   </div>
                 }
               >
-                <MarkdownPreview text={markdown.text} loadExternalImages={externalImages} onLoadExternalImages={() => onExternalImages(path)} />
+                {preview.kind === 'html' ? (
+                  <HtmlPreview
+                    text={preview.text}
+                    scripts={scripts}
+                    onRunScripts={() => onRunScripts(path)}
+                    loadExternal={externalImages}
+                    onLoadExternal={() => onExternalImages(path)}
+                  />
+                ) : (
+                  <MarkdownPreview text={preview.text} loadExternalImages={externalImages} onLoadExternalImages={() => onExternalImages(path)} />
+                )}
               </Suspense>
             </PreviewBoundary>
           </div>

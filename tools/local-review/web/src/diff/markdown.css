@@ -245,3 +245,13 @@
 .rv-markdown details summary {
   cursor: pointer;
 }
+
+/* Rendered .html file (HtmlPreview): the page brings its own styles and, like
+   in a browser tab, sits on white whatever the app's theme. */
+.rv-html-frame {
+  display: block;
+  width: 100%;
+  border: none;
+  background: #fff;
+  color-scheme: light;
+}
