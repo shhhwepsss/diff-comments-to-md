@@ -2,7 +2,7 @@
 
 /**
  * Generates web/src/styles/dark-slate.css: Primer's dark theme recolored from
- * GitHub's neutral grays to a navy slate.
+ * GitHub's neutral grays to a dark navy slate.
  *
  * Primer's dark.css spells most component tokens (buttons, overlays,
  * controls…) as raw hex instead of referencing the base tokens, so overriding
@@ -22,34 +22,41 @@ const OUT = path.join(__dirname, 'web/src/styles/dark-slate.css');
 
 // GitHub dark neutral → slate. Alpha suffixes (#656c7633) are kept.
 const PALETTE = {
-  '010409': '0f141d',
-  '0d1117': '161c27',
-  '151b23': '1c2330',
-  '212830': '232b3a',
-  '262c36': '283142',
-  '2a313c': '2d3647',
-  '3d444d': '343e53',
-  '656c76': '5f6a82',
-  '9198a1': '939cb1',
-  'f0f6fc': 'e3e8f1',
-  // Accent blue → the softer periwinkle.
-  '4493f8': '82aaff',
-  '58a6ff': '82aaff',
-  '388bfd': '6f93f0',
-  '1f6feb': '4f72d9',
+  '010409': '0a0d13',
+  '0d1117': '11151d',
+  '151b23': '161b25',
+  '212830': '1c222e',
+  '262c36': '202734',
+  '2a313c': '232a38',
+  '3d444d': '2a3242',
+  '656c76': '535c70',
+  '9198a1': '8a93a6',
+  'f0f6fc': 'd8dde7',
+  // Accent blue → a muted periwinkle.
+  '4493f8': '7a9ef0',
+  '58a6ff': '7a9ef0',
+  '388bfd': '5f80d8',
+  '1f6feb': '3f5fb8',
 };
 
-// Set outright: syntax colors and the salmon danger text.
+// Set outright: syntax colors, the salmon danger text and quieter diff
+// backgrounds (GitHub's green and red glare on the dark slate).
 const EXTRA = {
-  '--fgColor-danger': '#f0866f',
-  '--codeMirror-syntax-fgColor-comment': '#6b7590',
-  '--codeMirror-syntax-fgColor-constant': '#82aaff',
-  '--codeMirror-syntax-fgColor-entity': '#c3a6ff',
-  '--codeMirror-syntax-fgColor-keyword': '#f0866f',
-  '--codeMirror-syntax-fgColor-storage': '#f0866f',
-  '--codeMirror-syntax-fgColor-string': '#a6d189',
-  '--codeMirror-syntax-fgColor-support': '#7fc8e0',
-  '--codeMirror-syntax-fgColor-variable': '#e5b673',
+  '--fgColor-danger': '#e07a64',
+  '--bgColor-success-muted': '#2ea04314',
+  '--bgColor-danger-muted': '#f8514912',
+  '--diffBlob-additionNum-bgColor': '#2ea04326',
+  '--diffBlob-additionWord-bgColor': '#2ea04340',
+  '--diffBlob-deletionNum-bgColor': '#f8514926',
+  '--diffBlob-deletionWord-bgColor': '#f8514940',
+  '--codeMirror-syntax-fgColor-comment': '#5f6880',
+  '--codeMirror-syntax-fgColor-constant': '#7a9ef0',
+  '--codeMirror-syntax-fgColor-entity': '#b59ae8',
+  '--codeMirror-syntax-fgColor-keyword': '#e07a64',
+  '--codeMirror-syntax-fgColor-storage': '#e07a64',
+  '--codeMirror-syntax-fgColor-string': '#9cc283',
+  '--codeMirror-syntax-fgColor-support': '#74b6cc',
+  '--codeMirror-syntax-fgColor-variable': '#d4a866',
 };
 
 const HEX = new RegExp(`#(${Object.keys(PALETTE).join('|')})(?=[0-9a-f]{2}\\b|\\b)`, 'gi');
