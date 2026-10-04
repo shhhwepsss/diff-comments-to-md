@@ -78,7 +78,12 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
     running += 1;
     let entry: ActiveDiff;
     try {
-      entry = { kind: 'ready', diff: await fetcher(path, fresh) };
+      const diff = await fetcher(path, fresh);
+      // A re-read that brought nothing new keeps the diff it replaces, so the
+      // editor showing it is not rebuilt under the reviewer.
+      const shown = entries.get(path);
+      const same = shown?.kind === 'ready' && JSON.stringify(shown.diff) === JSON.stringify(diff);
+      entry = { kind: 'ready', diff: same ? shown.diff : diff };
     } catch (e) {
       entry = { kind: 'error', message: e instanceof Error ? e.message : String(e), cause: e };
     }

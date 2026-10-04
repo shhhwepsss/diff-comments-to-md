@@ -7,6 +7,7 @@ import { copyToClipboard } from '../lib/clipboard';
 import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
 import { createDraftStore, type DraftStore } from './drafts';
 import { createDiffStore, type DiffStore } from './diffStore';
+import { watchReturn } from './focusRevalidate';
 import type { ViewMode } from '../lib/viewMode';
 import { nextUnviewed, withViewedMany } from './viewed';
 import { buildTree, filesOf } from '../diff/fileTree';
@@ -27,6 +28,10 @@ import {
 function isCommitsMode(d: Descriptor): boolean {
   return d.source === 'local' ? d.mode === 'commits' : Boolean(d.from && d.to);
 }
+
+// Coming back to the tab fires both a focus and a visibility event, and quick
+// switching fires them over and over: one re-read per this long is enough.
+const RETURN_GAP_MS = 5000;
 
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
@@ -207,8 +212,19 @@ export function ReviewProvider({
   const stateSeq = useRef(0);
   const commitsSeq = useRef(0);
   const ageSeq = useRef(0);
+  // Bumped by a comment re-read and by a viewed mark: the quiet re-read on a
+  // return to the tab must not put older data over either.
+  const commentsSeq = useRef(0);
+  const viewedSeq = useRef(0);
   const activeFileRef = useRef<string | null>(null);
   activeFileRef.current = activeFile;
+  // Read at call time by the quiet re-read, which outlives the render that started it.
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const editingIdRef = useRef(editingId);
+  editingIdRef.current = editingId;
   // Back/Forward needs the file list without re-subscribing on every load.
   const stateRef = useRef<StateResponse | null>(null);
   stateRef.current = state;
@@ -399,6 +415,7 @@ export function ReviewProvider({
   }, [state, descriptor, activeFile]);
 
   const refreshComments = useCallback(async () => {
+    commentsSeq.current += 1;
     const data = await api.comments(descriptor);
     setComments(data.comments);
   }, [descriptor]);
@@ -410,6 +427,79 @@ export function ReviewProvider({
     }
     void load(descriptor, activeFileRef.current, true);
   }, [descriptor, load, enterCommitsMode]);
+
+  /**
+   * The quiet re-read for a return to the tab: what Sync fetches, but nothing
+   * on screen is taken away while it runs — no overlay, the open form stays,
+   * the place in the diff is kept — and a failure leaves the old data alone
+   * (Sync is there to see why).
+   */
+  const revalidate = useCallback(async () => {
+    // A load under way brings fresh data itself; a review that never loaded has Sync.
+    if (loadingRef.current || !stateRef.current) return;
+    const d = descriptorRef.current;
+    const seq = ++stateSeq.current;
+    const commitsAtStart = commitsSeq.current;
+    const commentsAtStart = commentsSeq.current;
+    const viewedAtStart = viewedSeq.current;
+    const left = () => seq !== stateSeq.current || commitsAtStart !== commitsSeq.current || descriptorRef.current !== d;
+    try {
+      if (isCommitsMode(d)) {
+        const history = await api.commits(commitsListDescriptor(d), true);
+        if (left()) return;
+        const list = history.commits || [];
+        const sel = selectionForRange(list, d.from, d.to);
+        // The range on screen is gone from the history (a rebase): picking
+        // another one is a change of view, and that is Sync's to make.
+        if (!sel) return;
+        setCommits(list);
+        setCommitsTruncated(Boolean(history.truncated));
+        setCommitsFallback(Boolean(history.fallback));
+        setCommitsBase(history.base ?? null);
+        setDirty(history.dirty || { dirty: false, files: 0 });
+        // The same commits, wherever they are in the list now.
+        setCommitSel((prev) => (prev && prev.anchor > prev.head ? { anchor: sel.head, head: sel.anchor } : sel));
+      } else {
+        void loadAgeHistory(d, true);
+      }
+      const [next, commentData] = await Promise.all([api.state(d, true), api.comments(d)]);
+      // A mark flipped meanwhile is newer than this answer, which would undo it on screen.
+      if (left() || viewedAtStart !== viewedSeq.current) return;
+      setState(next);
+      // So is a comment saved meanwhile.
+      if (commentsAtStart === commentsSeq.current) setComments(commentData.comments);
+      setLoadError(null);
+      // The open form sits in the diff: that is not re-read under it.
+      if (editorRef.current || editingIdRef.current) return;
+      diffs.reset({ keep: true });
+      const file = activeFileRef.current;
+      if (file && next.files.some((f) => f.path === file)) {
+        // Not forced: the diff on screen stays there until its replacement comes.
+        void diffs.ensure(file, { fresh: true });
+      } else if (file && next.orphanFiles.some((f) => f.path === file)) {
+        diffs.setOrphan(file);
+      } else if (next.files.length) {
+        const first = feedRef.current ? filesOf(buildTree(next.files, (f) => f.path))[0] : next.files[0];
+        await loadDiff(first.path, false, true);
+      } else {
+        setActiveFile(null);
+      }
+    } catch {
+      // Quietly: what is on screen is still the best there is.
+    }
+  }, [diffs, loadAgeHistory, loadDiff]);
+
+  useEffect(
+    () =>
+      watchReturn({
+        win: window,
+        doc: document,
+        now: () => performance.now(),
+        minGapMs: RETURN_GAP_MS,
+        onReturn: () => void revalidate(),
+      }),
+    [revalidate],
+  );
 
   const updateLocal = useCallback(
     (patch: (d: LocalDescriptor) => LocalDescriptor | null) => {
@@ -603,6 +693,7 @@ export function ReviewProvider({
       if (entries.length === 0) return;
       const changed = entries.map((f) => f.path);
       // Flip first: the checkbox must answer the click, not the network.
+      viewedSeq.current += 1;
       setState((s) => (s ? withViewedMany(s, changed, viewed) : s));
       const descriptorNow = descriptorRef.current;
       const results = await Promise.allSettled(
