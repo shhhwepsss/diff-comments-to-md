@@ -151,6 +151,37 @@ describe('createDiffStore', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('keeps the very same diff when a re-read brings nothing new', async () => {
+    const { calls, fetcher } = manualFetcher();
+    const store = createDiffStore(fetcher);
+    const first = store.ensure('a.ts');
+    const old = diffOf('a.ts');
+    calls[0].resolve(old);
+    await first;
+    store.reset({ keep: true });
+
+    const again = store.ensure('a.ts');
+    calls[1].resolve(diffOf('a.ts'));
+    const entry = await again;
+    expect(entry).toEqual({ kind: 'ready', diff: old });
+    expect(entry?.kind === 'ready' && entry.diff).toBe(old);
+  });
+
+  it('takes the new diff when a re-read brings a change', async () => {
+    const { calls, fetcher } = manualFetcher();
+    const store = createDiffStore(fetcher);
+    const first = store.ensure('a.ts');
+    calls[0].resolve(diffOf('a.ts'));
+    await first;
+    store.reset({ keep: true });
+
+    const again = store.ensure('a.ts');
+    const next = { ...diffOf('a.ts'), additions: 2 };
+    calls[1].resolve(next);
+    const entry = await again;
+    expect(entry?.kind === 'ready' && entry.diff).toBe(next);
+  });
+
   it('asks for a stale diff once, however many times it is ensured', async () => {
     const { calls, fetcher } = manualFetcher();
     const store = createDiffStore(fetcher);
