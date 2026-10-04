@@ -244,9 +244,9 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--base-size-12);
-  min-height: 48px;
-  padding: var(--base-size-8) var(--base-size-16);
+  gap: var(--base-size-8);
+  min-height: 40px;
+  padding: var(--base-size-4) var(--base-size-8) var(--base-size-4) var(--base-size-16);
   background: var(--bgColor-muted);
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-radius: var(--borderRadius-medium) var(--borderRadius-medium) 0 0;
@@ -322,10 +322,22 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   flex: 1;
 }
 
-.rv-file-header__wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--base-size-8);
+.rv-file-header__dir {
+  color: var(--fgColor-muted);
+  font-weight: normal;
+}
+
+/* The «⋯» of a file stays quiet until the header is pointed at or the button
+   is focused: in the feed it repeats on every file. */
+.rv-file-header__more {
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+
+.rv-file-header:hover .rv-file-header__more,
+.rv-file-header__more:focus-visible,
+.rv-file-header__more[aria-expanded='true'] {
+  opacity: 1;
 }
 
 .rv-file-header__viewed {

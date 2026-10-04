@@ -8,16 +8,9 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--base-size-8) var(--base-size-16);
+  gap: var(--base-size-8);
   min-height: 48px;
   padding: 0 var(--base-size-16);
-}
-
-.rv-header__row--sub {
-  min-height: 44px;
-  gap: var(--base-size-12);
-  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
-  background: var(--bgColor-default);
 }
 
 .rv-header__brand {
@@ -75,42 +68,33 @@
   margin-right: var(--base-size-4);
 }
 
-.rv-header__root {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--base-size-8);
-  min-width: 0;
-  max-width: 46vw;
-  font-size: var(--text-body-size-small);
-  color: var(--fgColor-muted);
-}
-
-.rv-header__root > svg {
-  align-self: center;
-  flex: none;
-  color: var(--fgColor-muted);
-}
-
-.rv-header__root > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The repository name never shrinks away: the path may be clipped, the
-   identity of what you are reviewing may not. */
+/* The open repository (or PR): the first words of the row. Never shrinks
+   away — the identity of what you are reviewing may not be cut off. */
 .rv-header__repo {
   flex: none;
-  color: var(--fgColor-default);
-  font-size: var(--text-body-size-medium);
+  font-size: var(--text-body-size-medium) !important;
+  font-weight: var(--base-text-weight-semibold, 600) !important;
+}
+
+/* The top of the repository menu: what is open, in full. */
+.rv-header__where {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4);
+  padding: var(--base-size-12) var(--base-size-16) var(--base-size-4);
+}
+
+.rv-header__where-label {
+  font-size: var(--text-body-size-small);
   font-weight: var(--base-text-weight-semibold, 600);
+  color: var(--fgColor-muted);
 }
 
 .rv-header__path {
-  flex: 0 1 auto;
   font-family: var(--fontStack-monospace);
   font-size: var(--text-body-size-small);
-  color: var(--fgColor-muted);
+  color: var(--fgColor-default);
+  overflow-wrap: anywhere;
 }
 
 .rv-header__base {
@@ -133,4 +117,30 @@
 
 .rv-header__outside:hover {
   border-color: var(--borderColor-attention-emphasis);
+}
+
+/* The «Вид» popover: layout, wrap, Zen, theme. */
+.rv-view-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  padding: var(--base-size-12);
+}
+
+.rv-view-menu__label {
+  font-size: var(--text-body-size-small);
+  font-weight: var(--base-text-weight-semibold, 600);
+  color: var(--fgColor-muted);
+}
+
+.rv-view-menu__label:not(:first-child) {
+  margin-top: var(--base-size-4);
+}
+
+.rv-view-menu__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8);
+  font-size: var(--text-body-size-medium);
 }

@@ -10,6 +10,7 @@ import { titleFor } from './lib/title';
 import { readZen, writeZen } from './lib/zen';
 import { readViewMode, resolveViewMode, toggleViewMode, writeViewMode, type ViewMode } from './lib/viewMode';
 import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
+import { readWrap, writeWrap } from './lib/wrap';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
@@ -45,6 +46,13 @@ export function App({ theme, onTheme }: Props) {
   const setCommentsPanel = useCallback((open: boolean) => {
     setCommentsPanelState(open);
     writeCommentsPanel(open);
+  }, []);
+
+  // Long lines wrap in every file; switched from the «Вид» menu or a file's «⋯».
+  const [wrap, setWrapState] = useState(readWrap);
+  const setWrap = useCallback((on: boolean) => {
+    setWrapState(on);
+    writeWrap(on);
   }, []);
 
   // One file or all files. The reviewer's own choice is remembered in this
@@ -170,6 +178,10 @@ export function App({ theme, onTheme }: Props) {
           onCommentsPanel={setCommentsPanel}
           viewMode={viewMode}
           onViewMode={setViewMode}
+          wrap={wrap}
+          onWrap={setWrap}
+          onZen={setZen}
+          zenKey={keys.zen}
         />
       )}
       <div className="rv-main">
@@ -182,6 +194,8 @@ export function App({ theme, onTheme }: Props) {
             viewedKey={keys.viewedFile}
             viewMode={viewMode}
             renderAllFiles={renderAllFiles}
+            wrap={wrap}
+            onWrap={setWrap}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
