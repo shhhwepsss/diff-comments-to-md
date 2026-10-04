@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ActionList, ActionMenu, Button, CounterLabel, IconButton, TextInput } from '@primer/react';
-import { ArrowDownIcon, ArrowUpIcon, FilterIcon, HistoryIcon, LinkExternalIcon, PencilIcon, SearchIcon, TrashIcon, XIcon } from '@primer/octicons-react';
+import { Button, CounterLabel, IconButton, TextInput } from '@primer/react';
+import { ArrowDownIcon, ArrowUpIcon, FilterIcon, HistoryIcon, LinkExternalIcon, PencilIcon, SearchIcon, TrashIcon, TriangleDownIcon, XIcon } from '@primer/octicons-react';
 import type { Comment } from '../api/types';
 import { useReview } from '../review/ReviewContext';
 import { editDraftKey } from '../review/drafts';
@@ -10,6 +10,7 @@ import { ResizeHandle, usePaneWidth } from '../diff/paneResize';
 import { formatDate } from '../lib/format';
 import { isTypingTarget } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
+import { TabbedSelect } from '../components/TabbedSelect';
 import { COMMENTS_PANEL_WIDTH, COMMENTS_PANEL_WIDTH_KEY } from '../lib/commentsPanel';
 import {
   countByKind,
@@ -307,21 +308,17 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
             ) : undefined
           }
         />
-        <ActionMenu>
-          <ActionMenu.Button size="small" leadingVisual={FilterIcon}>
-            {filterLabel}
-          </ActionMenu.Button>
-          <ActionMenu.Overlay width="small">
-            <ActionList selectionVariant="single">
-              {PANEL_FILTERS.map((f) => (
-                <ActionList.Item key={f.value} selected={f.value === filter} onSelect={() => setFilter(f.value)}>
-                  {f.label}
-                  <ActionList.TrailingVisual>{counts[f.value]}</ActionList.TrailingVisual>
-                </ActionList.Item>
-              ))}
-            </ActionList>
-          </ActionMenu.Overlay>
-        </ActionMenu>
+        <TabbedSelect
+          label="Какие комментарии показывать"
+          options={PANEL_FILTERS.map((f) => ({ value: f.value, label: f.label, trailing: counts[f.value] }))}
+          value={filter}
+          onChange={setFilter}
+          renderAnchor={(props) => (
+            <Button {...props} size="small" leadingVisual={FilterIcon} trailingAction={TriangleDownIcon}>
+              {filterLabel}
+            </Button>
+          )}
+        />
         {searching ? (
           <span className="rv-hint rv-cpanel__found" role="status">
             {items.length} из {inFilter.length}
