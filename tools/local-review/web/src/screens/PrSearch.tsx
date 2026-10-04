@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Autocomplete, Banner, Button, FormControl, Heading, Select, Spinner, TextInput } from '@primer/react';
-import { GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon, MarkGithubIcon, SearchIcon } from '@primer/octicons-react';
+import { Autocomplete, Banner, Button, FormControl, Heading, Spinner, TextInput } from '@primer/react';
+import { GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon, MarkGithubIcon, SearchIcon, TriangleDownIcon } from '@primer/octicons-react';
 import { api, errorMessage, failureMessage } from '../api/client';
 import type { GhStatus, PrItem, RepoItem } from '../api/types';
 import { formatDate } from '../lib/format';
 import { formatRepoPushed, matchesRepo } from '../lib/repoList';
 import { hashFor } from '../lib/hash';
-import { type PrAuthorFilter, parsePrAuthor, readPrAuthor, writePrAuthor } from '../lib/prAuthor';
+import { type PrAuthorFilter, readPrAuthor, writePrAuthor } from '../lib/prAuthor';
+import { foundBy, tabForQuery, type SelectTab } from '../lib/tabbedSelect';
 import { useToast } from '../lib/toast';
+import { MatchText, SelectTabs, TabbedSelect, type TabbedOption } from '../components/TabbedSelect';
 import './picker.css';
 
 function PrIcon({ item }: { item: PrItem }) {
@@ -25,12 +27,26 @@ function openPr(item: PrItem) {
 
 type Result = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ok'; items: PrItem[]; homeDir: string; storedPrs: number };
 
+const PR_STATES: TabbedOption<string>[] = [
+  { value: 'open', label: 'open' },
+  { value: 'closed', label: 'closed' },
+  { value: 'merged', label: 'merged' },
+  { value: 'all', label: 'все' },
+];
+
+const PR_AUTHORS: TabbedOption<PrAuthorFilter>[] = [
+  { value: 'all', label: 'все' },
+  { value: 'mine', label: 'мои' },
+];
+
 export function PrSearch() {
   const [status, setStatus] = useState<GhStatus | null>(null);
   const [repo, setRepo] = useState('');
   const [repos, setRepos] = useState<RepoItem[]>([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [reposError, setReposError] = useState<string | null>(null);
+  // Which of the picker's two tabs is open: every repository, or the ones the field's text matches.
+  const [repoTab, setRepoTab] = useState<SelectTab>('all');
   const [query, setQuery] = useState('');
   const [prState, setPrState] = useState('open');
   const [author, setAuthor] = useState<PrAuthorFilter>(readPrAuthor);
@@ -103,13 +119,20 @@ export function PrSearch() {
         id: r.nameWithOwner,
         children: (
           <>
-            <span className="rv-mono">{r.nameWithOwner}</span>
+            <span className="rv-mono">{repoTab === 'found' ? <MatchText text={r.nameWithOwner} query={repo} /> : r.nameWithOwner}</span>
             <span className="rv-repo-option__date">{formatRepoPushed(r.pushedAt)}</span>
           </>
         ),
       })),
-    [repos],
+    [repos, repoTab, repo],
   );
+  const reposFound = useMemo(() => foundBy(repos, repo, (r) => r.nameWithOwner).length, [repos, repo]);
+
+  // Typing leads to the matches, an empty field back to the whole list.
+  const typeRepo = (next: string) => {
+    setRepo(next);
+    setRepoTab(tabForQuery(next));
+  };
 
   const pickRepo = (next: string) => {
     setRepo(next);
@@ -155,7 +178,7 @@ export function PrSearch() {
                   placeholder="owner/repo — необязательно"
                   spellCheck={false}
                   value={repo}
-                  onChange={(e) => setRepo(e.target.value)}
+                  onChange={(e) => typeRepo(e.target.value)}
                   className="rv-mono"
                   // Enter on a row highlighted with the arrows. Primer has
                   // its own path for it — the input forwards the keypress to
@@ -173,7 +196,7 @@ export function PrSearch() {
                     // repository and «Искать» would search for a name that is
                     // no longer on screen.
                     if (e.key === 'Escape') {
-                      setRepo('');
+                      typeRepo('');
                       return;
                     }
                     if (e.key !== 'Enter') return;
@@ -194,6 +217,8 @@ export function PrSearch() {
                     unbounded overlay is taller than the window, and Primer
                     then floats it somewhere else entirely. */}
                 <Autocomplete.Overlay width="large" height="medium">
+                  {/* The field itself is the query, so the body starts with the tabs. */}
+                  <SelectTabs tab={repoTab} onTab={setRepoTab} all={repos.length} found={reposFound} />
                   <Autocomplete.Menu
                     aria-labelledby="rv-repo-label"
                     items={repoOptions}
@@ -202,8 +227,14 @@ export function PrSearch() {
                     loading={reposLoading}
                     // Primer's own filter matches from the start of the text,
                     // and the text here starts with the owner (lib/repoList.ts).
-                    filterFn={(item) => matchesRepo(item.id, repo)}
-                    emptyStateText={reposLoading ? false : 'Ничего не нашлось — впиши owner/repo целиком'}
+                    filterFn={(item) => repoTab === 'all' || (repo.trim() !== '' && matchesRepo(item.id, repo))}
+                    emptyStateText={
+                      reposLoading
+                        ? false
+                        : repoTab === 'found' && !repo.trim()
+                          ? 'Начните вводить — совпадения появятся здесь'
+                          : 'Ничего не нашлось — впиши owner/repo целиком'
+                    }
                     onSelectedChange={(item) => {
                       // Only a pick counts. Primer toggles a selection, so
                       // clicking the repository that is already in the field
@@ -233,37 +264,43 @@ export function PrSearch() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </FormControl>
-            <FormControl>
-              <FormControl.Label>Состояние</FormControl.Label>
-              <Select
+            {/* Not a FormControl: its label points at a form field, and this control is a button. */}
+            <div className="rv-tsel-field">
+              <span className="rv-tsel-field__label">Состояние</span>
+              <TabbedSelect
+                label="Состояние"
+                options={PR_STATES}
                 value={prState}
-                onChange={(e) => {
-                  setPrState(e.target.value);
-                  void search({ repo, q: query, state: e.target.value, author });
+                onChange={(next) => {
+                  setPrState(next);
+                  void search({ repo, q: query, state: next, author });
                 }}
-              >
-                <Select.Option value="open">open</Select.Option>
-                <Select.Option value="closed">closed</Select.Option>
-                <Select.Option value="merged">merged</Select.Option>
-                <Select.Option value="all">все</Select.Option>
-              </Select>
-            </FormControl>
-            <FormControl>
-              <FormControl.Label>Автор</FormControl.Label>
+                renderAnchor={(props) => (
+                  <Button {...props} className="rv-tsel-anchor" alignContent="start" trailingAction={TriangleDownIcon} aria-label={`Состояние: ${prState}`}>
+                    {PR_STATES.find((o) => o.value === prState)?.label}
+                  </Button>
+                )}
+              />
+            </div>
+            <div className="rv-tsel-field">
+              <span className="rv-tsel-field__label">Автор</span>
               {/* Without a repository "все" is every PR you are involved in — gh cannot list all of GitHub (lib/pr-search.js). */}
-              <Select
+              <TabbedSelect
+                label="Автор"
+                options={PR_AUTHORS}
                 value={author}
-                onChange={(e) => {
-                  const next = parsePrAuthor(e.target.value);
+                onChange={(next) => {
                   setAuthor(next);
                   writePrAuthor(next);
                   void search({ repo, q: query, state: prState, author: next });
                 }}
-              >
-                <Select.Option value="all">все</Select.Option>
-                <Select.Option value="mine">мои</Select.Option>
-              </Select>
-            </FormControl>
+                renderAnchor={(props) => (
+                  <Button {...props} className="rv-tsel-anchor" alignContent="start" trailingAction={TriangleDownIcon} aria-label={`Автор: ${PR_AUTHORS.find((o) => o.value === author)?.label}`}>
+                    {PR_AUTHORS.find((o) => o.value === author)?.label}
+                  </Button>
+                )}
+              />
+            </div>
             <Button type="submit" variant="primary" className="rv-pr-form__submit">
               Искать
             </Button>

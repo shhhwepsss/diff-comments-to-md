@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActionList, ActionMenu, Button, CounterLabel, IconButton, SegmentedControl, TextInput, UnderlineNav } from '@primer/react';
+import { Button, CounterLabel, IconButton, SegmentedControl, TextInput, UnderlineNav } from '@primer/react';
 import {
   CodeReviewIcon,
   CommentIcon,
@@ -21,6 +21,7 @@ import type { ViewMode } from '../lib/viewMode';
 import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview } from '../review/ReviewContext';
 import { GeneralComments } from './GeneralComments';
+import { TabbedSelect } from './TabbedSelect';
 import './header.css';
 
 const MODES: { value: Mode; label: string }[] = [
@@ -190,23 +191,13 @@ export function AppHeader({ route, theme, onTheme, commentsPanel, onCommentsPane
           />
         )}
 
-        <ActionMenu>
-          <ActionMenu.Anchor>
-            <IconButton icon={ThemeIcon} aria-label="Тема" size="small" variant="invisible" />
-          </ActionMenu.Anchor>
-          <ActionMenu.Overlay width="small">
-            <ActionList selectionVariant="single">
-              {THEMES.map((t) => (
-                <ActionList.Item key={t.value} selected={t.value === theme} onSelect={() => onTheme(t.value)}>
-                  <ActionList.LeadingVisual>
-                    <t.icon />
-                  </ActionList.LeadingVisual>
-                  {t.label}
-                </ActionList.Item>
-              ))}
-            </ActionList>
-          </ActionMenu.Overlay>
-        </ActionMenu>
+        <TabbedSelect
+          label="Тема"
+          options={THEMES.map((t) => ({ value: t.value, label: t.label, leading: <t.icon /> }))}
+          value={theme}
+          onChange={onTheme}
+          renderAnchor={(props) => <IconButton {...props} icon={ThemeIcon} aria-label="Тема" size="small" variant="invisible" />}
+        />
       </div>
 
       {local && review && (

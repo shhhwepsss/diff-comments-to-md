@@ -1,0 +1,135 @@
+/* A select's body: an optional search field, the two tabs, the rows. */
+.rv-tsel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rv-tsel__search {
+  padding: var(--base-size-8) var(--base-size-8) 0;
+}
+
+/* Sticky: in the repository picker the tabs sit inside Primer's own scrolling overlay. */
+.rv-tsel__tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: var(--base-size-4);
+  padding: 0 var(--base-size-8);
+  background: var(--overlay-bgColor);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+.rv-tsel__tab {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  margin-bottom: -1px;
+  padding: var(--base-size-8) var(--base-size-8) var(--base-size-6);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--borderRadius-medium) var(--borderRadius-medium) 0 0;
+  background: none;
+  color: var(--fgColor-default);
+  font: inherit;
+  font-size: var(--text-body-size-medium);
+  cursor: pointer;
+}
+
+.rv-tsel__tab:hover {
+  background: var(--control-transparent-bgColor-hover);
+}
+
+.rv-tsel__tab[aria-selected='true'] {
+  font-weight: var(--base-text-weight-semibold, 600);
+  border-bottom-color: var(--underlineNav-borderColor-active);
+}
+
+.rv-tsel__tab:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: -2px;
+}
+
+.rv-tsel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  margin: 0;
+  padding: var(--base-size-8);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rv-tsel__option {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-width: 0;
+  padding: var(--base-size-6) var(--base-size-8);
+  border-radius: var(--borderRadius-medium);
+  cursor: pointer;
+}
+
+.rv-tsel__option:hover,
+.rv-tsel__option.is-active {
+  background: var(--control-transparent-bgColor-hover);
+}
+
+.rv-tsel__check {
+  flex: none;
+  display: flex;
+  width: 16px;
+  color: var(--fgColor-default);
+}
+
+.rv-tsel__leading {
+  flex: none;
+  display: flex;
+  color: var(--fgColor-muted);
+}
+
+.rv-tsel__label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-tsel__trailing {
+  flex: none;
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-tsel__hit {
+  border-radius: 2px;
+  background: var(--bgColor-attention-muted);
+  color: inherit;
+}
+
+.rv-tsel__empty {
+  margin: 0;
+  padding: var(--base-size-16);
+  color: var(--fgColor-muted);
+  text-align: center;
+}
+
+/* A select in a form row: the label over the control, as Primer's FormControl lays a field out. */
+.rv-tsel-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--base-size-4);
+}
+
+.rv-tsel-field__label {
+  font-size: var(--text-body-size-medium);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+/* The control of a select that stands in a form: reads as a field, not as a button. */
+.rv-tsel-anchor {
+  min-width: 96px;
+}
