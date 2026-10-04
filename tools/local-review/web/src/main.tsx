@@ -5,6 +5,8 @@ import { ThemeProvider } from '@primer/react/next';
 import '@primer/primitives/dist/css/primitives.css';
 import '@primer/primitives/dist/css/functional/themes/light.css';
 import '@primer/primitives/dist/css/functional/themes/dark.css';
+// The dark theme's grays recolored to slate (tools/local-review/gen-dark-theme.js).
+import './styles/dark-slate.css';
 import './styles/global.css';
 import { App } from './App';
 import { ToastProvider } from './lib/toast';
