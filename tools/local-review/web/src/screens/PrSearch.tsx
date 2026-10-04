@@ -136,6 +136,9 @@ export function PrSearch() {
 
   const pickRepo = (next: string) => {
     setRepo(next);
+    // The field now holds a whole name, which only finds itself: the next
+    // opening shows the whole list, with the pick marked in it.
+    setRepoTab('all');
     void search({ repo: next, q: query, state: prState, author });
   };
 

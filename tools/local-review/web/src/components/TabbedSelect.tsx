@@ -81,7 +81,8 @@ export function TabbedSelect<V extends string>({ options, value, onChange, label
   const found = foundBy(options, query, (o) => o.label);
   const rows = tab === 'all' ? options : found;
   const activeRow = rows[Math.min(active, rows.length - 1)];
-  const rowId = (v: string) => `${listId}-${v}`;
+  // By position, not by value: a value may hold characters an id cannot.
+  const rowId = (v: V) => `${listId}-${options.findIndex((o) => o.value === v)}`;
 
   const show = () => {
     // Every opening starts clean, on the option that is chosen now.
