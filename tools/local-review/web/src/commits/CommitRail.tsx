@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Button, Spinner } from '@primer/react';
-import { HistoryIcon } from '@primer/octicons-react';
+import { IconButton, Spinner } from '@primer/react';
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, HistoryIcon } from '@primer/octicons-react';
 import { useReview } from '../review/ReviewContext';
 import { useToast } from '../lib/toast';
 import { copyToClipboard } from '../lib/clipboard';
 import { clickSelect, commitRangeCommand, keySelect, selHi, selLo, type CommitSelection } from '../review/commitSelection';
 import { formatCommitWhen } from '../lib/format';
+import { readRailOpen, writeRailOpen } from '../lib/railOpen';
 import type { Commit } from '../api/types';
 import { CommitDrawer } from './CommitDrawer';
 import './commits.css';
@@ -64,34 +65,36 @@ function HoverCard({ commit, index, anchor }: { commit: Commit; index: number; a
   );
 }
 
-/** Placeholder rail while the history is being fetched. */
-function RailSkeleton() {
+/** Placeholder rail while the history is being fetched; folded, it is the summary line alone. */
+function RailSkeleton({ open }: { open: boolean }) {
   return (
     <section className="rail-wrap" aria-busy="true">
       <div className="rail-head">
-        <div className="rail-head-title">
-          <span className="rail-title">История ветки</span>
+        <div className="rail-toggle">
+          <span className="rail-title">Коммиты</span>
           <Spinner size="small" />
-          <span className="rv-hint">загружаю коммиты…</span>
+          <span className="rv-hint">загружаю историю…</span>
         </div>
       </div>
-      <div className="rail is-skeleton" aria-hidden="true">
-        <div className="rail-track">
-          <div className="rail-line" />
-          {Array.from({ length: SKELETON_DOTS }, (_, i) => (
-            <div key={i} className="commit">
-              <span className="dot" />
-              <span className="subj">
-                <span className="sk-line" />
-                <span className="sk-line short" />
-              </span>
-              <span className="sha">
-                <span className="sk-line tiny" />
-              </span>
-            </div>
-          ))}
+      {open && (
+        <div className="rail is-skeleton" aria-hidden="true">
+          <div className="rail-track">
+            <div className="rail-line" />
+            {Array.from({ length: SKELETON_DOTS }, (_, i) => (
+              <div key={i} className="commit">
+                <span className="dot" />
+                <span className="subj">
+                  <span className="sk-line" />
+                  <span className="sk-line short" />
+                </span>
+                <span className="sha">
+                  <span className="sk-line tiny" />
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -115,6 +118,14 @@ export function CommitRail() {
   const dragFrom = useRef<number | null>(null);
   const dragMoved = useRef(false);
   const historyBtnRef = useRef<HTMLButtonElement>(null);
+  // Folded: the summary line alone. The strip is for picking commits, not for
+  // reading the diff they make, so it opens on demand and stays as left.
+  const [open, setOpenState] = useState(readRailOpen);
+  const setOpen = useCallback((next: boolean) => {
+    setOpenState(next);
+    writeRailOpen(next);
+    setHover(null);
+  }, []);
 
   const sel = preview ?? commitSel;
 
@@ -195,9 +206,9 @@ export function CommitRail() {
     const rail = railRef.current;
     if (!rail || selHead === undefined) return;
     rail.scrollLeft = selHead * DOT_WIDTH + DOT_WIDTH / 2 - rail.clientWidth / 2;
-    // Only on a new history list, not on every pick the user makes.
+    // Only on a new history list or an unfolded strip, not on every pick the user makes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commits, commitsMode]);
+  }, [commits, commitsMode, open]);
 
   const showCard = useCallback((i: number, el: HTMLElement) => {
     if (dragFrom.current !== null) return;
@@ -205,7 +216,7 @@ export function CommitRail() {
   }, []);
   const hideCard = useCallback(() => setHover(null), []);
 
-  if (commitsLoading && (!commitsMode || commits.length === 0 || !sel)) return <RailSkeleton />;
+  if (commitsLoading && (!commitsMode || commits.length === 0 || !sel)) return <RailSkeleton open={open} />;
   if (!commitsMode || commits.length === 0 || !sel) return null;
 
   const lo = selLo(sel);
@@ -221,79 +232,88 @@ export function CommitRail() {
   const rangeText = single ? l?.subject : `от «${l?.subject}» до «${h?.subject}»`;
   const cmd = commitRangeCommand(commits, sel);
 
+  const rangeSha = single ? l?.short : `${l?.short}..${h?.short}`;
+
   return (
     <section className="rail-wrap">
       <div className="rail-head">
-        <div className="rail-head-title">
-          <span className="rail-title">История ветки</span>
-          <span className="rv-hint">
-            {single ? `· коммит ${lo + 1} из ${commits.length}` : `· коммиты ${lo + 1}–${hi + 1} · ${n} шт. из ${commits.length}`}
+        {/* The summary is the switch: what is selected is always on screen,
+            the strip to change it is one click away. */}
+        <button type="button" className="rail-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? <ChevronDownIcon size={16} /> : <ChevronRightIcon size={16} />}
+          <span className="rail-title">{single ? `Коммит ${lo + 1}` : `Коммиты ${lo + 1}–${hi + 1}`}</span>
+          <span className="rv-hint">из {commits.length}</span>
+          <span className="sum-sha">{rangeSha}</span>
+          <span className="sum-subj" title={rangeText}>
+            {rangeText}
           </span>
           {(loading || commitsLoading) && <Spinner size="small" aria-label="Загрузка" />}
-        </div>
-        <div className="rail-actions">
-          <code className="rail-cmd" title={cmd}>
-            {cmd}
-          </code>
-          <Button ref={historyBtnRef} size="small" leadingVisual={HistoryIcon} onClick={() => setDrawerOpen(true)}>
-            Вся история
-          </Button>
-        </div>
-      </div>
-
-      <div className="rail" ref={railRef} tabIndex={0} role="group" aria-label="Коммиты ветки" onKeyDown={onKeyDown} onScroll={hideCard}>
-        <div
-          className="rail-track"
-          ref={trackRef}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={finishDrag}
-          onPointerCancel={onPointerCancel}
-        >
-          <div className="rail-line" />
-          {!preview && n > 1 && (
-            <div className="rail-line-sel" style={{ left: lo * DOT_WIDTH + DOT_WIDTH / 2, width: (hi - lo) * DOT_WIDTH }} />
-          )}
-          {commits.map((c, i) => (
-            <button
-              key={c.sha}
-              type="button"
-              tabIndex={-1}
-              className="commit"
-              data-i={i}
-              data-state={preview ? undefined : edgeOrIn(i)}
-              data-preview={previewing(i)}
-              data-merge={c.merge ? '1' : undefined}
-              aria-label={`${c.merge ? 'Мердж-коммит' : 'Коммит'} ${i + 1} ${c.short}: ${c.subject}`}
-              onPointerEnter={(e) => {
-                if (e.pointerType === 'mouse') showCard(i, e.currentTarget);
-              }}
-              onPointerLeave={hideCard}
-            >
-              <span className="idx">{i + 1}</span>
-              <span className="dot" />
-              <span className="subj">{c.subject || '(без сообщения)'}</span>
-              <span className="sha">{c.short}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="rail-sum">
-        <span className="sum-sha">{single ? l?.short : `${l?.short}..${h?.short}`}</span>
-        <span className="sum-subj" title={rangeText}>
-          {rangeText}
-        </span>
-        <button className="cr-copy" type="button" title={single ? 'Скопировать хеш' : 'Скопировать диапазон A..B'} onClick={() => void copySha()}>
-          &#10697; хеш
         </button>
+        <div className="rail-actions">
+          {open && (
+            <code className="rail-cmd" title={cmd}>
+              {cmd}
+            </code>
+          )}
+          <IconButton
+            icon={CopyIcon}
+            size="small"
+            variant="invisible"
+            aria-label={single ? 'Скопировать хеш' : 'Скопировать диапазон A..B'}
+            onClick={() => void copySha()}
+          />
+          <IconButton ref={historyBtnRef} icon={HistoryIcon} size="small" variant="invisible" aria-label="Вся история" onClick={() => setDrawerOpen(true)} />
+        </div>
       </div>
-      <p className="rail-hint">
-        Клик — один коммит · протянуть мышью — диапазон (в любую сторону) · наведение — полный текст коммита · ⧉ — хеш в буфер ·{' '}
-        <kbd>&larr;</kbd>
-        <kbd>&rarr;</kbd> — перейти, <kbd>Shift</kbd> + <kbd>&larr;</kbd>
-        <kbd>&rarr;</kbd> — тянуть диапазон
-      </p>
+
+      {open && (
+        <div
+          className="rail"
+          ref={railRef}
+          tabIndex={0}
+          role="group"
+          aria-label="Коммиты ветки"
+          title="Клик — один коммит · протянуть мышью — диапазон · ← → — перейти · Shift + ← → — тянуть диапазон"
+          onKeyDown={onKeyDown}
+          onScroll={hideCard}
+        >
+          <div
+            className="rail-track"
+            ref={trackRef}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={finishDrag}
+            onPointerCancel={onPointerCancel}
+          >
+            <div className="rail-line" />
+            {!preview && n > 1 && (
+              <div className="rail-line-sel" style={{ left: lo * DOT_WIDTH + DOT_WIDTH / 2, width: (hi - lo) * DOT_WIDTH }} />
+            )}
+            {commits.map((c, i) => (
+              <button
+                key={c.sha}
+                type="button"
+                tabIndex={-1}
+                className="commit"
+                data-i={i}
+                data-state={preview ? undefined : edgeOrIn(i)}
+                data-preview={previewing(i)}
+                data-merge={c.merge ? '1' : undefined}
+                aria-label={`${c.merge ? 'Мердж-коммит' : 'Коммит'} ${i + 1} ${c.short}: ${c.subject}`}
+                onPointerEnter={(e) => {
+                  if (e.pointerType === 'mouse') showCard(i, e.currentTarget);
+                }}
+                onPointerLeave={hideCard}
+              >
+                <span className="idx">{i + 1}</span>
+                <span className="dot" />
+                <span className="subj">{c.subject || '(без сообщения)'}</span>
+                <span className="sha">{c.short}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {hover && hovered && <HoverCard commit={hovered} index={hover.i} anchor={hover.rect} />}
       {drawerOpen && <CommitDrawer onClose={() => setDrawerOpen(false)} returnFocusRef={historyBtnRef} />}

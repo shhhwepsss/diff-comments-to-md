@@ -6,23 +6,47 @@
   flex: none;
   background: var(--bgColor-default);
   border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
-  padding: 10px var(--base-size-16) 12px;
+  padding: var(--base-size-4) var(--base-size-16) var(--base-size-4) var(--base-size-8);
 }
 
 .rail-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--base-size-12);
-  flex-wrap: wrap;
-  margin-bottom: 2px;
+  gap: var(--base-size-8);
+  min-height: 32px;
 }
 
-.rail-head-title {
+/* The summary line, and the switch that unfolds the strip. */
+.rail-toggle {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: var(--base-size-6);
+  gap: var(--base-size-8);
   min-width: 0;
+  height: 32px;
+  padding: 0 var(--base-size-8);
+  border: 0;
+  border-radius: var(--borderRadius-medium);
+  background: none;
+  color: var(--fgColor-default);
+  font: inherit;
+  font-size: var(--text-body-size-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.rail-toggle:hover {
+  background: var(--control-transparent-bgColor-hover);
+}
+
+.rail-toggle > svg {
+  flex: none;
+  color: var(--fgColor-muted);
+}
+
+.rail-toggle > .rail-title,
+.rail-toggle > .rv-hint {
+  flex: none;
 }
 
 .rail-title {
@@ -30,9 +54,10 @@
 }
 
 .rail-actions {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: var(--base-size-8);
+  gap: var(--base-size-4);
   min-width: 0;
 }
 
@@ -56,6 +81,7 @@
   overflow-y: hidden;
   /* room above the dots for the commit index */
   padding: 22px 6px 4px;
+  margin-left: var(--base-size-8);
 }
 
 .rail:focus {
@@ -274,24 +300,18 @@
   color: var(--fgColor-accent);
 }
 
-/* ---------- selection summary under the rail ---------- */
-.rail-sum {
-  display: flex;
-  align-items: baseline;
-  gap: var(--base-size-8);
-  margin-top: var(--base-size-8);
-  min-width: 0;
-  font-size: 12px;
-}
-
-.rail-sum .sum-sha {
+/* ---------- selection summary in the head line ---------- */
+.rail-toggle .sum-sha {
   flex: none;
   font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
   color: var(--fgColor-accent);
 }
 
-.rail-sum .sum-subj {
+.rail-toggle .sum-subj {
   min-width: 0;
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -313,23 +333,6 @@
 .cr-copy:hover {
   color: var(--fgColor-default);
   border-color: var(--fgColor-accent);
-}
-
-.rail-hint {
-  margin: var(--base-size-8) 0 0;
-  font-size: 12px;
-  color: var(--fgColor-muted);
-}
-
-.rail-hint kbd {
-  padding: 0 4px;
-  font-family: var(--fontStack-monospace);
-  font-size: 11px;
-  color: var(--fgColor-default);
-  background: var(--bgColor-muted);
-  border: var(--borderWidth-thin) solid var(--borderColor-default);
-  border-bottom-width: 2px;
-  border-radius: 4px;
 }
 
 /* ---------- uncommitted-changes notice ---------- */

@@ -1,5 +1,5 @@
-import { Component, lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, type ReactNode, type RefObject } from 'react';
-import { Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner, ToggleSwitch } from '@primer/react';
+import { Component, lazy, memo, Suspense, useCallback, useEffect, useMemo, type ReactNode, type RefObject } from 'react';
+import { ActionList, ActionMenu, Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import {
   AlertIcon,
@@ -11,6 +11,7 @@ import {
   EyeIcon,
   FileBinaryIcon,
   FileIcon,
+  KebabHorizontalIcon,
   QuestionIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
@@ -207,7 +208,6 @@ export const FileDiff = memo(function FileDiff({
   onRetry,
 }: FileDiffProps) {
   const toast = useToast();
-  const wrapLabelId = useId();
 
   const diff = activeDiff?.kind === 'ready' ? activeDiff.diff : null;
   const reason = diff ? unavailableReason(diff) : null;
@@ -301,6 +301,10 @@ export const FileDiff = memo(function FileDiff({
   );
 
   const oldPath = diff?.oldPath ?? entry?.oldPath ?? null;
+  // The folder is read once, the name every time: the name stands out.
+  const cut = path.lastIndexOf('/') + 1;
+  const dir = path.slice(0, cut);
+  const base = path.slice(cut);
   // The file list knows the counts before the diff is loaded (and for a
   // collapsed file it never is); the diff itself has the last word.
   const stat = diff
@@ -331,7 +335,10 @@ export const FileDiff = memo(function FileDiff({
               <span className="rv-file-header__arrow">→</span>
             </>
           ) : null}
-          <span>{path}</span>
+          <span>
+            {dir && <span className="rv-file-header__dir">{dir}</span>}
+            {base}
+          </span>
         </div>
         {stat && (
           <span className="rv-diffstat">
@@ -340,51 +347,28 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         {comments.length > 0 && (
-          <span className="rv-file-header__count" title="Комментариев к файлу">
-            <CommentIcon size={14} /> <CounterLabel>{comments.length}</CounterLabel>
+          // Hiding is in the «⋯» menu now, so the count is where it shows.
+          <span
+            className="rv-file-header__count"
+            title={commentsHidden ? 'Комментарии к файлу скрыты — показать в «⋯»' : 'Комментариев к файлу'}
+          >
+            {commentsHidden ? <EyeClosedIcon size={14} /> : <CommentIcon size={14} />} <CounterLabel>{comments.length}</CounterLabel>
           </span>
         )}
         <div className="rv-file-header__spacer" />
-        {!collapsed && comments.length > 0 && (
-          <Button
-            size="small"
-            leadingVisual={commentsHidden ? EyeIcon : EyeClosedIcon}
-            aria-pressed={commentsHidden}
-            onClick={() => onCommentsHidden(path, !commentsHidden)}
-          >
-            {commentsHidden ? 'Показать комментарии' : 'Скрыть комментарии'}
-          </Button>
-        )}
         {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
-            <SegmentedControl.Button selected={!rendered} leadingVisual={CodeIcon}>
-              Код
-            </SegmentedControl.Button>
-            <SegmentedControl.Button selected={rendered} leadingVisual={EyeIcon}>
-              Просмотр
-            </SegmentedControl.Button>
+            <SegmentedControl.IconButton icon={CodeIcon} aria-label="Код" selected={!rendered} />
+            <SegmentedControl.IconButton icon={EyeIcon} aria-label="Просмотр" selected={rendered} />
           </SegmentedControl>
         )}
-        {!collapsed && showsEditor && !rendered && (
-          <span className="rv-file-header__wrap">
-            <span id={wrapLabelId} className="rv-hint">
-              Перенос строк
-            </span>
-            <ToggleSwitch size="small" checked={wrap} onClick={() => onWrap(!wrap)} aria-labelledby={wrapLabelId} />
-          </span>
-        )}
-        <Button size="small" leadingVisual={CommentIcon} onClick={() => actions.openEditor({ file: path, start: null, end: null })}>
-          Комментарий к файлу
-        </Button>
         {/* In Zen this is the way out, and it says so: the header is sticky, so
             the button stays on screen while the file scrolls. With no file open
             there is no header — DiffScreen puts a floating one there instead. */}
-        {zen ? (
+        {zen && (
           <Button size="small" leadingVisual={ScreenNormalIcon} onClick={() => onZen(false)}>
             Выйти из Zen <span className="rv-file-header__kbd">Esc</span>
           </Button>
-        ) : (
-          <IconButton size="small" icon={ScreenFullIcon} aria-label="Zen: скрыть всё, кроме диффа" onClick={() => onZen(true)} />
         )}
         {entry && (
           <label
@@ -401,6 +385,44 @@ export const FileDiff = memo(function FileDiff({
             Просмотрено
           </label>
         )}
+        {/* What is done to one file now and then. Repeated on every file of
+            the feed, so it is one quiet button rather than a row of them. */}
+        <ActionMenu>
+          <ActionMenu.Anchor>
+            <IconButton icon={KebabHorizontalIcon} aria-label="Действия с файлом" size="small" variant="invisible" className="rv-file-header__more" />
+          </ActionMenu.Anchor>
+          <ActionMenu.Overlay width="small" align="end">
+            <ActionList>
+              <ActionList.Item onSelect={() => actions.openEditor({ file: path, start: null, end: null })}>
+                <ActionList.LeadingVisual>
+                  <CommentIcon />
+                </ActionList.LeadingVisual>
+                Комментарий к файлу
+              </ActionList.Item>
+              {!collapsed && comments.length > 0 && (
+                <ActionList.Item onSelect={() => onCommentsHidden(path, !commentsHidden)}>
+                  <ActionList.LeadingVisual>{commentsHidden ? <EyeIcon /> : <EyeClosedIcon />}</ActionList.LeadingVisual>
+                  {commentsHidden ? 'Показать комментарии' : 'Скрыть комментарии'}
+                  <ActionList.TrailingVisual>{comments.length}</ActionList.TrailingVisual>
+                </ActionList.Item>
+              )}
+              <ActionList.Divider />
+              <ActionList.Group selectionVariant="multiple">
+                <ActionList.Item selected={wrap} onSelect={() => onWrap(!wrap)}>
+                  Перенос строк
+                </ActionList.Item>
+              </ActionList.Group>
+              {!zen && (
+                <ActionList.Item onSelect={() => onZen(true)}>
+                  <ActionList.LeadingVisual>
+                    <ScreenFullIcon />
+                  </ActionList.LeadingVisual>
+                  Zen: только дифф
+                </ActionList.Item>
+              )}
+            </ActionList>
+          </ActionMenu.Overlay>
+        </ActionMenu>
       </div>
 
       {!collapsed && body()}

@@ -141,13 +141,16 @@ type Props = {
   viewMode: ViewMode | null;
   /** The setting: «Код» / «Просмотр» in one file switches every file. */
   renderAllFiles: boolean;
+  /** Long lines wrap in every file. */
+  wrap: boolean;
+  onWrap: (on: boolean) => void;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles }: Props) {
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap }: Props) {
   const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
     useReview();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
@@ -236,6 +239,8 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
             panelOpen={commentsPanel}
             viewMode={viewMode}
             renderAllFiles={renderAllFiles}
+            wrap={wrap}
+            onWrap={onWrap}
             filter={filter}
           />
         </main>

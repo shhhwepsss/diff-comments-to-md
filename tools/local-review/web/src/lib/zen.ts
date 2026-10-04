@@ -2,7 +2,7 @@
 // no PR title. The file tree stays.
 //
 // This is window state, not a project setting: it lives in localStorage next
-// to the theme (lib/theme.ts:7) and the line wrap (DiffPane.tsx:18), and it is
+// to the theme (lib/theme.ts:7) and the line wrap (lib/wrap.ts), and it is
 // deliberately kept out of the hash. A link to a file should open that file,
 // not impose someone else's layout on whoever follows it.
 //
