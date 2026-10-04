@@ -6,6 +6,7 @@ const { defaultBase } = require('../git');
 const { createSource } = require('../sources/factory');
 const { storeFor } = require('../stores/factory');
 const { isViewed, modeKeyOf } = require('../viewed');
+const { pruneOpenedPrView } = require('../viewed-prune');
 
 function isFresh(url) {
   return url.searchParams.get('fresh') === '1';
@@ -24,6 +25,10 @@ async function getState(req, res, ctx, url) {
   // The PR header is metadata, not diff: a failure here surfaces as a readable
   // JSON error instead of an empty screen.
   const pr = descriptor.source === 'pr' ? await source.meta() : null;
+  // A PR's stale marks are swept here, with the diff this request fetched
+  // anyway, rather than at startup, where it would take a network call. The
+  // marks read below may still include them: they do not count either way.
+  if (descriptor.source === 'pr') pruneOpenedPrView(ctx, descriptor, files);
   const counts = store.countsByFile();
   const viewed = store.viewedFiles();
 

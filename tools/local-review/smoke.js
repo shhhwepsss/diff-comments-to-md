@@ -2368,6 +2368,263 @@ async function main() {
   prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer').replace('3333333..4444444', '3333333..6666666'));
   ok((await prFiles()).get('assets/logo.bin').viewed === false, 'PR: бинарный файл с новым blob снова не просмотрен');
 
+  // ------------------------------------- чистка устаревших отметок при старте
+  console.log('\nпросмотренные файлы: устаревшие отметки удаляются при старте сервера');
+  const pruneRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prune-'));
+  git(['init', '-q', '-b', 'main'], pruneRepo);
+  git(['config', 'user.email', 'smoke@example.com'], pruneRepo);
+  git(['config', 'user.name', 'Smoke Test'], pruneRepo);
+  git(['config', 'commit.gpgsign', 'false'], pruneRepo);
+  git(['config', 'core.autocrlf', 'false'], pruneRepo);
+  write(pruneRepo, '.gitignore', '.local-review/\n');
+  write(pruneRepo, 'a.txt', 'a\n');
+  write(pruneRepo, 'b.txt', 'b\n');
+  write(pruneRepo, 'c.txt', 'c\n');
+  git(['add', '-A'], pruneRepo);
+  git(['commit', '-q', '-m', 'init'], pruneRepo);
+  write(pruneRepo, 'a.txt', 'a\nsecond\n');
+  write(pruneRepo, 'b.txt', 'b\nsecond\n');
+  git(['add', '-A'], pruneRepo);
+  git(['commit', '-q', '-m', 'second'], pruneRepo);
+  const pruneSha = git(['rev-parse', 'HEAD'], pruneRepo).trim();
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking\n');
+  write(pruneRepo, 'b.txt', 'b\nsecond\nworking\n');
+  write(pruneRepo, 'c.txt', 'c\nstaged\n');
+  git(['add', 'c.txt'], pruneRepo);
+  write(pruneRepo, 'untracked.txt', 'never added\n');
+
+  const pruneStoreFile = path.join(pruneRepo, '.local-review', 'comments.json');
+  const readPruneStore = () => JSON.parse(fs.readFileSync(pruneStoreFile, 'utf8'));
+  const startPrune = () => start({ cwd: pruneRepo, mode: 'working', base: '', port: 0, host: '127.0.0.1', open: false });
+  const stopServer = (s) => new Promise((resolve) => s.server.close(resolve));
+  // No `source` in the query: the descriptor is the repository the server was started in.
+  const pruneViews = {
+    working: 'mode=working',
+    staged: 'mode=staged',
+    base: 'mode=base&base=HEAD~1',
+    commits: `mode=commits&from=${pruneSha}&to=${pruneSha}`,
+  };
+  const pruneFiles = async (client, view) =>
+    new Map((await client(`/api/state?${pruneViews[view]}`)).body.files.map((f) => [f.path, f]));
+  const pruneMark = async (client, view, file) =>
+    client(
+      `/api/viewed?${pruneViews[view]}`,
+      json('POST', { file, fingerprint: (await pruneFiles(client, view)).get(file).fingerprint, viewed: true })
+    );
+
+  let pruneServer = await startPrune();
+  let pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 0, 'без отметок чистке нечего удалять');
+  ok(!fs.existsSync(pruneStoreFile), 'чистка не создаёт файл хранилища');
+  for (const [view, file] of [
+    ['working', 'a.txt'],
+    ['working', 'b.txt'],
+    ['working', 'untracked.txt'],
+    ['staged', 'c.txt'],
+    ['base', 'a.txt'],
+    ['base', 'b.txt'],
+    ['commits', 'a.txt'],
+    ['commits', 'b.txt'],
+  ]) {
+    const res = await pruneMark(pruneCall, view, file);
+    ok(res.status === 200 && res.body.viewed === true, `отметка ${view}: ${file}`, JSON.stringify(res.body));
+  }
+  await pruneCall('/api/comments?mode=working', json('POST', { file: 'a.txt', startLine: 1, endLine: 1, text: 'остаётся' }));
+  await stopServer(pruneServer);
+
+  // Marks no view can ever show again, written the way an old review file has them.
+  const DEAD_SHA = 'dead'.repeat(10);
+  const staleMark = (fingerprint) => ({ fingerprint, viewedAt: '2026-09-01T00:00:00.000Z' });
+  const pruneRangeKey = `commits:${pruneSha}..${pruneSha}`;
+  const seeded = readPruneStore();
+  seeded.viewed['a.txt'][`commits:${DEAD_SHA}..${DEAD_SHA}`] = staleMark('x1');
+  seeded.viewed['b.txt']['mode:base:no-such-branch'] = staleMark('x2');
+  seeded.viewed['only-gone-range.txt'] = { [`commits:${DEAD_SHA}..${pruneSha}`]: staleMark('x3') };
+  seeded.viewed['left-the-diff.txt'] = { 'mode:working': staleMark('x4'), 'mode:staged': staleMark('x8') };
+  // A revision may contain dots of its own; such a range is not taken apart.
+  seeded.viewed['symbolic.txt'] = { 'commits:HEAD^{/fix..bug}..HEAD': staleMark('x9') };
+  seeded.viewed['legacy.txt'] = staleMark('x5');
+  seeded.viewed['foreign.txt'] = { 'pr:all': staleMark('x6'), 'not a view key': staleMark('x7') };
+  fs.writeFileSync(pruneStoreFile, JSON.stringify(seeded, null, 2), 'utf8');
+  // a.txt changes while the server is down: its working and base diffs are new ones.
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking, edited\n');
+
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 7, 'старт сервера удалил семь мёртвых отметок');
+  const pruned = readPruneStore();
+  eq(
+    Object.keys(pruned.viewed['a.txt']),
+    [pruneRangeKey],
+    'a.txt: отметки изменившихся диффов (working, base) и исчезнувшего диапазона удалены, живая осталась'
+  );
+  eq(
+    Object.keys(pruned.viewed['b.txt']).sort(),
+    [pruneRangeKey, 'mode:base:HEAD~1', 'mode:working'].sort(),
+    'b.txt: живые отметки на месте, отметка под исчезнувшей базой удалена'
+  );
+  eq(Object.keys(pruned.viewed['c.txt']), ['mode:staged'], 'c.txt: живая отметка staged на месте');
+  eq(Object.keys(pruned.viewed['untracked.txt']), ['mode:working'], 'живая отметка untracked-файла на месте');
+  eq(
+    Object.keys(pruned.viewed['symbolic.txt']),
+    ['commits:HEAD^{/fix..bug}..HEAD'],
+    'диапазон, который не разобрать однозначно, не трогается'
+  );
+  ok(
+    !('only-gone-range.txt' in pruned.viewed) && !('left-the-diff.txt' in pruned.viewed),
+    'файл без единой оставшейся отметки теряет и свой ключ',
+    JSON.stringify(Object.keys(pruned.viewed))
+  );
+  eq(pruned.viewed['legacy.txt'], { '*': staleMark('x5') }, 'отметка старого формата («любой режим») не трогается');
+  eq(
+    pruned.viewed['foreign.txt'],
+    { 'pr:all': staleMark('x6'), 'not a view key': staleMark('x7') },
+    'отметки под ключами, которые git не умеет построить, не трогаются'
+  );
+  eq(pruned.comments.map((c) => c.text), ['остаётся'], 'чистка не трогает комментарии');
+  eq(pruned.version, 1, 'чистка не меняет версию формата хранилища');
+
+  const prunedWorking = await pruneFiles(pruneCall, 'working');
+  ok(prunedWorking.get('a.txt').viewed === false, 'изменённый файл не просмотрен');
+  ok(prunedWorking.get('b.txt').viewed === true, 'неизменённый файл остаётся просмотренным в working');
+  ok((await pruneFiles(pruneCall, 'staged')).get('c.txt').viewed === true, 'неизменённый файл остаётся просмотренным в staged');
+  const prunedBase = await pruneFiles(pruneCall, 'base');
+  ok(
+    prunedBase.get('b.txt').viewed === true && prunedBase.get('a.txt').viewed === false,
+    'base: живая отметка действует, удалённая нет'
+  );
+  const prunedCommits = await pruneFiles(pruneCall, 'commits');
+  ok(
+    prunedCommits.get('a.txt').viewed === true && prunedCommits.get('b.txt').viewed === true,
+    'отметки в диапазоне коммитов остались'
+  );
+
+  // The documented trade-off: a deleted mark does not come back with the old content.
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking\n');
+  ok(
+    (await pruneFiles(pruneCall, 'working')).get('a.txt').viewed === false,
+    'файл вернули ровно в прежнее состояние — удалённая отметка не оживает'
+  );
+  await stopServer(pruneServer);
+
+  // Nothing stale -> nothing written.
+  const pruneBytes = fs.readFileSync(pruneStoreFile, 'utf8');
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 0, 'повторный старт: удалять больше нечего');
+  eq(fs.readFileSync(pruneStoreFile, 'utf8'), pruneBytes, 'хранилище без мёртвых отметок не переписывается');
+
+  // A view git cannot build right now is not a view that is gone: keep its marks.
+  const { pruneLocalViewed } = require('./lib/viewed-prune');
+  const pruneNotRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prune-norepo-'));
+  const notRepoStore = write(
+    pruneNotRepo,
+    '.local-review/comments.json',
+    JSON.stringify(
+      {
+        version: 1,
+        comments: [],
+        viewed: {
+          'a.txt': { 'mode:working': staleMark('y1'), [pruneRangeKey]: staleMark('y2'), 'mode:base:main': staleMark('y3') },
+          'b.txt': { 'mode:working': 'не запись' },
+        },
+      },
+      null,
+      2
+    )
+  );
+  const notRepoBytes = fs.readFileSync(notRepoStore, 'utf8');
+  eq(await pruneLocalViewed(pruneNotRepo), 0, 'git не отвечает — чистка ничего не удаляет и не падает');
+  eq(fs.readFileSync(notRepoStore, 'utf8'), notRepoBytes, 'git не отвечает — файл хранилища не тронут');
+
+  // The sweep must stay off the network even in a partial clone, where git
+  // would fetch a missing object on demand: its git calls carry GIT_NO_LAZY_FETCH.
+  const { gitTry: gitProbe, localOnly } = require('./lib/git');
+  const lazyFetchEnv = () => gitProbe(['-c', 'alias.probe=!echo "lazy=$GIT_NO_LAZY_FETCH"', 'probe'], pruneRepo);
+  eq((await localOnly(lazyFetchEnv)).trim(), 'lazy=1', 'git-вызовы чистки запрещают догрузку объектов из сети');
+  eq((await lazyFetchEnv()).trim(), 'lazy=', 'остальные git-вызовы запрет не получают');
+
+  console.log('\nпросмотренные файлы: PR-виды чистятся при открытии PR, а не при старте');
+  const prStoreFile = path.join(home, 'pr', 'github.com__o__r__40.json');
+  // app.js gets a live mark; logo.bin keeps the one its new blob made stale.
+  await call(
+    `/api/viewed?${prViewedQ}`,
+    json('POST', { file: 'src/app.js', fingerprint: (await prFiles()).get('src/app.js').fingerprint, viewed: true })
+  );
+  const prSeeded = JSON.parse(fs.readFileSync(prStoreFile, 'utf8'));
+  ok(Boolean(prSeeded.viewed['assets/logo.bin']['pr:all']), 'PR: мёртвая отметка лежит в хранилище до чистки');
+  // Another view of the same PR, not opened below: nobody has its diff, so it stays.
+  prSeeded.viewed['src/app.js']['commits:aaa..bbb'] = staleMark('z1');
+  fs.writeFileSync(prStoreFile, JSON.stringify(prSeeded, null, 2), 'utf8');
+  const prStoreBytes = fs.readFileSync(prStoreFile, 'utf8');
+
+  await stopServer(pruneServer);
+  const ghCallLog = path.join(home, 'gh-calls-prune.log');
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = ghCallLog;
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  await pruneServer.viewedPruning;
+  ok(!fs.existsSync(ghCallLog), 'старт сервера не вызывает gh', fs.existsSync(ghCallLog) ? fs.readFileSync(ghCallLog, 'utf8') : '');
+  eq(fs.readFileSync(prStoreFile, 'utf8'), prStoreBytes, 'старт сервера не трогает PR-хранилище');
+
+  const prOpened = new Map((await pruneCall(`/api/state?${prViewedQ}`)).body.files.map((f) => [f.path, f]));
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+  const prPruned = JSON.parse(fs.readFileSync(prStoreFile, 'utf8'));
+  ok(
+    !('assets/logo.bin' in prPruned.viewed),
+    'PR: открытие PR удалило мёртвую отметку вместе с ключом файла',
+    JSON.stringify(prPruned.viewed)
+  );
+  eq(
+    Object.keys(prPruned.viewed['src/app.js']).sort(),
+    ['commits:aaa..bbb', 'pr:all'],
+    'PR: живая отметка и отметка неоткрытого вида остались'
+  );
+  ok(
+    prOpened.get('src/app.js').viewed === true && prOpened.get('assets/logo.bin').viewed === false,
+    'PR: живая отметка действует, удалённая нет'
+  );
+  await stopServer(pruneServer);
+
+  // A PR diff that came back empty says nothing about the marks: they stay.
+  const prBeforeEmpty = fs.readFileSync(prStoreFile, 'utf8');
+  prViewedFixture('');
+  pruneServer = await startPrune();
+  const emptyPr = await makeClient(pruneServer.port)(`/api/state?${prViewedQ}&fresh=1`);
+  eq(emptyPr.body.files, [], 'PR: дифф пришёл пустым');
+  eq(fs.readFileSync(prStoreFile, 'utf8'), prBeforeEmpty, 'PR: пустой дифф отметок не удаляет');
+  await stopServer(pruneServer);
+
+  const { localViewOf } = require('./lib/viewed');
+  eq(localViewOf('mode:staged'), { mode: 'staged', base: '' }, 'localViewOf: staged');
+  eq(localViewOf('mode:base:origin/main'), { mode: 'base', base: 'origin/main' }, 'localViewOf: base с базой');
+  eq(localViewOf('commits:a1..b2'), { mode: 'commits', from: 'a1', to: 'b2' }, 'localViewOf: диапазон коммитов');
+  ok(
+    ['*', 'pr:all', 'mode:base:', 'commits:a1', 'commits:a..b..c', 'commits:a...b', 'commits:..b', 'mode:commits'].every(
+      (k) => localViewOf(k) === null
+    ),
+    'localViewOf: всё, что не ключ локального вида, — null'
+  );
+
+  // A mark made again while the sweep was looking is not the mark it judged.
+  const { CommentStore } = require('./lib/store');
+  const guardFile = write(
+    pruneNotRepo,
+    'guard.json',
+    JSON.stringify({ version: 1, comments: [], viewed: { 'a.txt': { 'mode:working': staleMark('new') } } })
+  );
+  eq(
+    new CommentStore(guardFile).dropViewed([{ file: 'a.txt', modeKey: 'mode:working', fingerprint: 'old' }]),
+    0,
+    'dropViewed: отметка с другим fingerprint не удаляется'
+  );
+  eq(
+    new CommentStore(guardFile).dropViewed([{ file: 'a.txt', modeKey: 'mode:working', fingerprint: 'new' }]),
+    1,
+    'dropViewed: отметка с тем же fingerprint удаляется'
+  );
+  eq(JSON.parse(fs.readFileSync(guardFile, 'utf8')).viewed, {}, 'dropViewed: ключ файла без отметок удалён');
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);
@@ -2378,6 +2635,8 @@ async function main() {
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(clean, { recursive: true, force: true });
   fs.rmSync(viewedRepo, { recursive: true, force: true });
+  fs.rmSync(pruneRepo, { recursive: true, force: true });
+  fs.rmSync(pruneNotRepo, { recursive: true, force: true });
   fs.rmSync(notRepo, { recursive: true, force: true });
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
