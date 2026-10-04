@@ -62,6 +62,33 @@ async function modeKeyFor(descriptor) {
 }
 
 /**
+ * modeKeyOf backwards, for the views git alone can rebuild: the key of a local
+ * view -> what to diff ({ mode, base } or { mode: 'commits', from, to }).
+ * Null for every other key — ANY_MODE, a PR's `pr:all`, anything not written
+ * by modeKeyOf — so that a caller who cannot rebuild a view leaves it alone.
+ * A commit range reads the same in a local and in a PR store; which of the
+ * two the key came from is the caller's knowledge, not the key's.
+ */
+function localViewOf(modeKey) {
+  if (modeKey === 'mode:working' || modeKey === 'mode:staged') return { mode: modeKey.slice('mode:'.length), base: '' };
+  if (modeKey.startsWith('mode:base:')) {
+    const base = modeKey.slice('mode:base:'.length);
+    return base ? { mode: 'base', base } : null;
+  }
+  if (modeKey.startsWith('commits:')) {
+    // `from` and `to` are whatever the request named, and a revision may itself
+    // contain dots (`HEAD^{/fix..bug}`): a range that does not split in exactly
+    // one way is not guessed at.
+    const parts = modeKey.slice('commits:'.length).split('..');
+    if (parts.length !== 2) return null;
+    const [from, to] = parts;
+    if (!from || !to || from.endsWith('.') || to.startsWith('.')) return null;
+    return { mode: 'commits', from, to };
+  }
+  return null;
+}
+
+/**
  * The one invalidation rule: viewed only while this view's stored fingerprint
  * is the current one. `bucket` is what the store keeps for this file.
  */
@@ -124,6 +151,11 @@ async function hashWorktreeFiles(root, paths) {
  * that blob id too, unless git left it as 0000… because the file is only in
  * the worktree (unstaged edit, untracked file) — then the worktree content is
  * hashed. A deleted file has no new side at all, which is itself stable.
+ *
+ * `fingerprintApprox` marks an entry whose worktree hash is the stand-in of
+ * hashWorktreeFiles (or none at all): such a fingerprint differs from the one
+ * a blob id gives for the very same content, so a mismatch on it does not
+ * mean the diff changed (lib/viewed-prune.js must not delete on it).
  */
 async function withLocalFingerprints(root, mode, files) {
   const needsHash = (f) =>
@@ -132,9 +164,11 @@ async function withLocalFingerprints(root, mode, files) {
   return files.map((f) => {
     const newSide = hashes.has(f.path) ? hashes.get(f.path) : isNullSha(f.newBlob) ? null : f.newBlob;
     const oldSide = isNullSha(f.oldBlob) ? null : f.oldBlob;
-    return Object.assign({}, f, {
+    const entry = Object.assign({}, f, {
       fingerprint: fingerprintOf([f.kind, f.oldPath || null, f.path, oldSide, newSide]),
     });
+    if (hashes.has(f.path) && (newSide === null || newSide.startsWith('content:'))) entry.fingerprintApprox = true;
+    return entry;
   });
 }
 
@@ -143,6 +177,7 @@ module.exports = {
   isViewed,
   modeKeyOf,
   modeKeyFor,
+  localViewOf,
   withLocalFingerprints,
   hashWorktreeFiles,
   ANY_MODE,
