@@ -2350,6 +2350,193 @@ async function main() {
   prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer').replace('3333333..4444444', '3333333..6666666'));
   ok((await prFiles()).get('assets/logo.bin').viewed === false, 'PR: бинарный файл с новым blob снова не просмотрен');
 
+  // ------------------------------------ PR больше 300 файлов (issue #48)
+  console.log('\nPR больше 300 файлов: `gh pr diff` -> HTTP 406 -> постраничный список файлов');
+  // The exact stderr of gh 2.96.0 for microsoft/TypeScript#51387 (656 files).
+  const TOO_LARGE = {
+    code: 1,
+    stderr:
+      "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300). Consider using 'List pull requests files' API or locally cloning the repository instead. (https://api.github.com/repos/o/r/pulls/48)\nPullRequest.diff too_large\n",
+  };
+  const bigName = (i) => `src/f${String(i).padStart(4, '0')}.txt`;
+  const bigFile = (i) => ({
+    sha: `blob${i}`,
+    filename: bigName(i),
+    status: 'modified',
+    additions: 1,
+    deletions: 1,
+    changes: 2,
+    patch: `@@ -1 +1 @@\n-old ${i}\n+new ${i}`,
+  });
+  const filesPage = (n, page, entries) => ({
+    [`api repos/o/r/pulls/${n}/files?per_page=100&page=${page}`]: { code: 0, stdout: JSON.stringify(entries) },
+  });
+  const range = (from, to) => Array.from({ length: to - from + 1 }, (_, k) => from + k);
+  const bigQ = (n) => `source=pr&host=github.com&owner=o&repo=r&number=${n}`;
+
+  // 301 files: three full pages and a fourth with the tail. The tail page also
+  // carries what a real over-300 PR has: a text file whose patch GitHub left
+  // out because it is too large, and a binary file.
+  const page4 = [
+    { sha: 'blobHuge', filename: 'src/huge.txt', status: 'modified', additions: 7000, deletions: 5000, changes: 12000 },
+  ];
+  // Past some size GitHub stops computing patches altogether: a text file
+  // then looks exactly like a binary one (no patch, 0/0).
+  const page3 = range(201, 298)
+    .map(bigFile)
+    .concat([
+      { sha: 'blobBin', filename: 'assets/pic.bin', status: 'modified', additions: 0, deletions: 0, changes: 0 },
+      { sha: 'blobQuiet', filename: 'src/quiet.txt', status: 'modified', additions: 0, deletions: 0, changes: 0 },
+    ]);
+  ghFixtures(
+    Object.assign(
+      {
+        [viewKeyFor(48)]: prView(48),
+        'pr diff 48 --repo o/r': TOO_LARGE,
+        'api repos/o/r/pulls/48': { code: 0, stdout: JSON.stringify({ changed_files: 301 }) },
+        'pr view 48 --repo o/r --json baseRefOid,headRefOid': {
+          code: 0,
+          stdout: JSON.stringify({ baseRefOid: 'bigBase', headRefOid: 'bigHead' }),
+        },
+        'api repos/o/r/compare/bigBase...bigHead': {
+          code: 0,
+          stdout: JSON.stringify({ merge_base_commit: { sha: 'bigMergeBase' } }),
+        },
+        [ghContentsKey(bigName(7), 'bigMergeBase')]: { code: 0, stdout: 'old 7\n' },
+        [ghContentsKey(bigName(7), 'bigHead')]: { code: 0, stdout: 'new 7\n' },
+        [ghContentsKey('src/huge.txt', 'bigMergeBase')]: { code: 0, stdout: 'huge old\n' },
+        [ghContentsKey('src/huge.txt', 'bigHead')]: { code: 0, stdout: 'huge new\n' },
+        [ghContentsKey('src/quiet.txt', 'bigMergeBase')]: { code: 0, stdout: 'quiet old\n' },
+        [ghContentsKey('src/quiet.txt', 'bigHead')]: { code: 0, stdout: 'quiet new\n' },
+        // What gh 2.96.0 really does for a binary file with the raw Accept header.
+        [ghContentsKey('assets/pic.bin', 'bigMergeBase')]: { code: 1, stderr: 'transform: short source buffer\n' },
+        [viewKeyFor(25)]: prView(25),
+        'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
+      },
+      filesPage(48, 1, range(1, 100).map(bigFile)),
+      filesPage(48, 2, range(101, 200).map(bigFile)),
+      filesPage(48, 3, page3),
+      filesPage(48, 4, page4)
+    ),
+    home
+  );
+  fs.writeFileSync(callLog, '');
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = callLog;
+
+  const bigState = await call(`/api/state?${bigQ(48)}&fresh=1`);
+  ok(bigState.status === 200, 'PR на 301 файл открывается, а не падает с HTTP 406', JSON.stringify(bigState.body).slice(0, 300));
+  eq((bigState.body.files || []).length, 301, 'PR на 301 файл: в списке все 301');
+  // `ok`, not `eq`: a mismatch must not print 301 paths twice.
+  ok(
+    JSON.stringify((bigState.body.files || []).map((f) => f.path).sort()) ===
+      JSON.stringify(range(1, 298).map(bigName).concat(['assets/pic.bin', 'src/huge.txt', 'src/quiet.txt']).sort()),
+    'PR на 301 файл: пути со всех четырёх страниц, ни один не потерян'
+  );
+  ok(bigState.body.truncated === null, 'PR на 301 файл: список полный, пометки об обрезке нет', JSON.stringify(bigState.body.truncated));
+  eq(
+    [bigName(7), 'src/huge.txt', 'assets/pic.bin', 'src/quiet.txt'].map((p) => lineCounts({ files: bigState.body.files || [] })[p]),
+    [[1, 1], [7000, 5000], [null, null], [null, null]],
+    'PR на 301 файл: счётчики строк — из патча, из API (патч не отдан) и null, когда GitHub их не посчитал'
+  );
+  eq(
+    logLines().filter((l) => l.includes('pulls/48')).sort(),
+    ['api repos/o/r/pulls/48'].concat(range(1, 4).map((p) => `api repos/o/r/pulls/48/files?per_page=100&page=${p}`)),
+    'PR на 301 файл: один запрос числа файлов и ровно четыре страницы'
+  );
+
+  const bigDiff = await call(`/api/diff?file=${encodeURIComponent(bigName(7))}&${bigQ(48)}`);
+  eq(
+    [bigDiff.status, bigDiff.body.binary, bigDiff.body.oldText, bigDiff.body.newText],
+    [200, false, 'old 7\n', 'new 7\n'],
+    'PR на 301 файл: дифф файла открывается с текстами обеих сторон'
+  );
+  eq(
+    (bigDiff.body.hunks || []).flatMap((h) => h.lines).map((l) => `${l.type}:${l.text}`),
+    ['del:old 7', 'add:new 7'],
+    'PR на 301 файл: ханки файла разобраны из patch страницы'
+  );
+  const hugeDiff = await call(`/api/diff?file=${encodeURIComponent('src/huge.txt')}&${bigQ(48)}`);
+  eq(
+    [hugeDiff.body.binary, (hugeDiff.body.hunks || []).length, hugeDiff.body.oldText, hugeDiff.body.newText],
+    [false, 0, 'huge old\n', 'huge new\n'],
+    'текстовый файл без patch (слишком большой дифф) — не бинарный: тексты отданы, дифф строит клиент'
+  );
+  const binDiff = await call(`/api/diff?file=${encodeURIComponent('assets/pic.bin')}&${bigQ(48)}`);
+  ok(binDiff.body.binary === true && binDiff.body.newText === null, 'бинарный файл большого PR-а остаётся бинарным', JSON.stringify(binDiff.body));
+  const quietDiff = await call(`/api/diff?file=${encodeURIComponent('src/quiet.txt')}&${bigQ(48)}`);
+  eq(
+    [quietDiff.body.binary, quietDiff.body.oldText, quietDiff.body.newText],
+    [false, 'quiet old\n', 'quiet new\n'],
+    'текстовый файл без patch и без счётчиков (GitHub перестал считать дифф) — не бинарный, тексты отданы'
+  );
+  eq(
+    logLines().filter((l) => l === 'pr diff 48 --repo o/r' || l.includes('pulls/48')).length,
+    6,
+    'PR на 301 файл: диффы файлов берут список из кэша, новых запросов списка нет'
+  );
+
+  fs.writeFileSync(callLog, '');
+  const smallState = await call(`/api/state?${bigQ(25)}&fresh=1`);
+  eq(
+    [smallState.body.files.length, smallState.body.truncated, logLines().sort()],
+    [5, null, ['pr diff 25 --repo o/r', viewKeyFor(25)].sort()],
+    'обычный PR: по-прежнему один `gh pr diff` и шапка, ни одного лишнего запроса'
+  );
+
+  // The hard limit: GitHub lists at most 3000 files of a PR.
+  ghFixtures(
+    Object.assign(
+      {
+        [viewKeyFor(49)]: prView(49),
+        'pr diff 49 --repo o/r': TOO_LARGE,
+        'api repos/o/r/pulls/49': { code: 0, stdout: JSON.stringify({ changed_files: 3500 }) },
+      },
+      ...range(1, 30).map((p) => filesPage(49, p, range((p - 1) * 100 + 1, p * 100).map(bigFile)))
+    ),
+    home
+  );
+  fs.writeFileSync(callLog, '');
+  const capState = await call(`/api/state?${bigQ(49)}&fresh=1`);
+  ok(capState.status === 200, 'PR на 3500 файлов открывается', JSON.stringify(capState.body).slice(0, 300));
+  eq((capState.body.files || []).length, 3000, 'PR на 3500 файлов: показаны 3000 — предел GitHub');
+  eq(capState.body.truncated, { shown: 3000, total: 3500, limit: 3000 }, 'PR на 3500 файлов: /api/state говорит, сколько показано и сколько всего');
+  eq(
+    logLines().filter((l) => l.includes('pulls/49/files')).length,
+    30,
+    'PR на 3500 файлов: запрошено ровно 30 страниц, 31-й нет'
+  );
+
+  // A commit range of the same PR goes through the compare API, which is
+  // capped lower: 300 files, all of them on the first page whatever per_page
+  // says, and no word on how many there are in total.
+  const RANGE_FROM = 'a'.repeat(40);
+  const RANGE_TO = 'b'.repeat(40);
+  ghFixtures(
+    Object.assign(
+      {
+        [viewKeyFor(49)]: prView(49),
+        [`api repos/o/r/commits/${RANGE_FROM}`]: { code: 0, stdout: JSON.stringify({ parents: [{ sha: 'rangeLeft' }] }) },
+      },
+      ...[range(1, 300), []].map((numbers, i) => ({
+        [`api repos/o/r/compare/rangeLeft...${RANGE_TO}?per_page=100&page=${i + 1}`]: {
+          code: 0,
+          stdout: JSON.stringify({ files: numbers.map(bigFile) }),
+        },
+      }))
+    ),
+    home
+  );
+  const capRange = await call(`/api/state?${bigQ(49)}&from=${RANGE_FROM}&to=${RANGE_TO}&fresh=1`);
+  eq(
+    [capRange.status, (capRange.body.files || []).length, capRange.body.truncated],
+    [200, 300, { shown: 300, total: null, limit: 300 }],
+    'диапазон коммитов на 300+ файлов: показаны 300 и пометка, что список может быть неполным'
+  );
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+
+  const localState = await call('/api/state');
+  ok(localState.body.truncated === null, 'локальный дифф: пометки об обрезке нет', JSON.stringify(localState.body.truncated));
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);

@@ -68,6 +68,8 @@ export type StateResponse = {
   pr: PrMeta | null;
   rangeLabel: string;
   totalComments: number;
+  /** GitHub cut the file list at its own `limit`; `total` is null when it does not say how many there are. Absent from an older server. */
+  truncated?: { shown: number; total: number | null; limit: number } | null;
   files: FileEntry[];
   orphanFiles: OrphanFile[];
 };
@@ -89,8 +91,9 @@ export type DiffResponse = {
   untracked?: boolean;
   hunks: Hunk[];
   binary: boolean;
-  additions: number;
-  deletions: number;
+  /** null: GitHub gave neither a patch nor counts for this file (a very large PR). */
+  additions: number | null;
+  deletions: number | null;
   missing?: boolean;
   oldText?: string | null;
   newText?: string | null;

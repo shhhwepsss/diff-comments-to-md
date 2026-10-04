@@ -102,6 +102,34 @@ function OldCommitBanner() {
   );
 }
 
+/**
+ * GitHub lists at most 3000 files of a PR and 300 of a commit range. The rest
+ * is not on screen and cannot be fetched, so the reviewer has to be told: a
+ * silently short list reads as "that is the whole change".
+ */
+function TruncatedBanner() {
+  const truncated = useReview().state?.truncated;
+  if (!truncated) return null;
+  return (
+    <div className="cr-notice" role="status">
+      <div className="cr-notice__body">
+        {truncated.total === null ? (
+          <>
+            <strong>Список файлов может быть неполным</strong> — показаны первые {truncated.shown}. Для диапазона коммитов GitHub
+            не отдаёт больше {truncated.limit} файлов и не сообщает, сколько их всего.
+          </>
+        ) : (
+          <>
+            <strong>Список файлов неполный</strong> — показаны первые {truncated.shown} из {truncated.total}. GitHub не отдаёт
+            больше {truncated.limit} файлов одного PR-а.
+          </>
+        )}{' '}
+        Остальные файлы здесь недоступны — посмотрите их в локальном клоне (вкладка «Папка»).
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   zen: boolean;
   onZen: (on: boolean) => void;
@@ -194,6 +222,7 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
         </>
       )}
       <OldCommitBanner />
+      <TruncatedBanner />
       {/* A reload keeps the previous files on screen; dim them and say what is
           loading, so a fresh commit pick doesn't look like it did nothing. */}
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>

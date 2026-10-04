@@ -20,7 +20,7 @@ async function getState(req, res, ctx, url) {
   const store = storeFor(descriptor, ctx.homeDir);
   const source = createSource(descriptor);
 
-  const { files, range } = await source.listFiles({ fresh: isFresh(url) });
+  const { files, range, truncated } = await source.listFiles({ fresh: isFresh(url) });
   // The PR header is metadata, not diff: a failure here surfaces as a readable
   // JSON error instead of an empty screen.
   const pr = descriptor.source === 'pr' ? await source.meta() : null;
@@ -55,6 +55,10 @@ async function getState(req, res, ctx, url) {
         ? `${pr.baseRefName} ← ${pr.headRefName}`
         : range.label,
     totalComments: store.all().length,
+    // { shown, total, limit } when GitHub cut the file list at its own limit
+    // (3000 files of a PR, 300 of a commit range); `total` is null when it
+    // does not say how many there are.
+    truncated: truncated || null,
     files: files.map((f) => ({
       path: f.path,
       oldPath: f.oldPath,

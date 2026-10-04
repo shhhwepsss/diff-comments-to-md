@@ -126,17 +126,35 @@ async function loadShas(descriptor, fresh) {
  * when the path does not exist at that sha.
  */
 async function loadPrTexts(descriptor, shas, entry) {
-  if (entry.binary) return { oldText: null, newText: null };
+  if (entry.binary && !entry.binaryUnsure) return { oldText: null, newText: null };
 
   const oldPath = entry.oldPath || entry.path;
-  const oldText = await fetchContent(descriptor, shas.mergeBaseSha, oldPath);
-  const newText = await fetchContent(descriptor, shas.headRefOid, entry.path);
+  let oldText;
+  let newText;
+  try {
+    oldText = await fetchContent(descriptor, shas.mergeBaseSha, oldPath);
+    newText = await fetchContent(descriptor, shas.headRefOid, entry.path);
+  } catch (e) {
+    // gh cannot print binary content (see fetchContent above): for an entry
+    // the API left undecided, that failure is the answer.
+    if (!entry.binaryUnsure || !/short source buffer/.test(e.message)) throw e;
+    return { oldText: null, newText: null, binary: true };
+  }
+  // Undecided and readable as text: not binary. It has no hunks, the client
+  // diffs the two texts itself; the counts are known only when there is
+  // nothing to count.
+  const decided = {};
+  if (entry.binaryUnsure) {
+    if (`${oldText}${newText}`.includes('\0')) return { oldText: null, newText: null, binary: true };
+    decided.binary = false;
+    if (oldText === newText) Object.assign(decided, { additions: 0, deletions: 0 });
+  }
 
   const tooBig = (t) => t !== null && Buffer.byteLength(t, 'utf8') > MAX_TEXT_BYTES;
   if (tooBig(oldText) || tooBig(newText)) {
-    return { oldText: null, newText: null, textUnavailable: TEXT_TOO_BIG_MESSAGE };
+    return Object.assign({ oldText: null, newText: null, textUnavailable: TEXT_TOO_BIG_MESSAGE }, decided);
   }
-  return { oldText, newText };
+  return Object.assign({ oldText, newText }, decided);
 }
 
 /** git quotes non-ASCII paths as "a/\320\264..."; undo that. */
@@ -247,11 +265,17 @@ function splitPrDiff(text) {
     .filter((f) => f.path);
 }
 
+// GitHub refuses to render a whole PR as one diff above 300 files or 20000
+// lines: "HTTP 406: Sorry, the diff exceeded the maximum number of files
+// (300). Consider using 'List pull requests files' API ...". Only this refusal
+// switches to that API; any other 406 stays the error it is.
+const DIFF_TOO_LARGE = /HTTP 406.*exceeded the maximum number of/;
+
 /** One `gh pr diff` per descriptor: /api/diff must not hit the network per file. */
 async function loadFiles(descriptor, fresh) {
   const key = descriptorKey(descriptor);
   const hit = CACHE.get(key);
-  if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit.files;
+  if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
 
   const text = await gh([
     'pr',
@@ -259,7 +283,15 @@ async function loadFiles(descriptor, fresh) {
     String(descriptor.number),
     '--repo',
     `${descriptor.owner}/${descriptor.repo}`,
-  ]);
+  ]).catch((e) => {
+    if (!DIFF_TOO_LARGE.test(e.message)) throw e;
+    return null;
+  });
+  if (text === null) {
+    const result = Object.assign({ at: Date.now() }, await loadPrFilesPaged(descriptor));
+    CACHE.set(key, result);
+    return result;
+  }
   const files = splitPrDiff(text)
     .map((f) => {
       const parsed = parsePatch(f.body);
@@ -277,8 +309,9 @@ async function loadFiles(descriptor, fresh) {
     })
     .sort((a, b) => a.path.localeCompare(b.path));
 
-  CACHE.set(key, { at: Date.now(), files });
-  return files;
+  const result = { at: Date.now(), files, truncated: null };
+  CACHE.set(key, result);
+  return result;
 }
 
 /**
@@ -303,13 +336,18 @@ async function resolveRangeLeft(descriptor, fresh) {
 }
 
 /**
- * One entry of GitHub's "compare two commits" `files` array -> our shape.
- * The compare API has no explicit binary flag, and it reports 0/0 line counts
- * without a `patch` for changed binary files too. The only patch-less entry
- * that is known to be textual is a pure rename/copy (or an empty file being
- * added/removed) with no changes; everything else without a patch is treated
- * as binary, so the diff view shows a placeholder instead of trying to fetch
- * bytes that `gh api` cannot return as text.
+ * One entry of GitHub's "compare two commits" `files` array -> our shape
+ * ("list pull request files" returns the same entries). The API has no
+ * explicit binary flag, and it reports 0/0 line counts without a `patch` for
+ * changed binary files. A patch-less entry is textual when it is a pure
+ * rename/copy (or an empty file being added/removed) with no changes, or when
+ * it does count changed lines: that is a text file whose patch GitHub left
+ * out as too large — it gets no hunks, and the client diffs the two texts
+ * itself. Everything else without a patch is listed as binary — but only as
+ * a guess (`binaryUnsure`): in a large diff GitHub stops computing patches
+ * and reports a plain text file the same 0/0 way (156 of the 656 files of
+ * microsoft/TypeScript#51387). loadPrTexts settles it when the file is
+ * opened, by whether its content can be read as text.
  */
 function mapCompareFile(f) {
   const STATUS = { added: 'A', removed: 'D', modified: 'M', renamed: 'R', copied: 'C', changed: 'M' };
@@ -318,7 +356,7 @@ function mapCompareFile(f) {
   const deletions = f.deletions || 0;
   const unchanged = (f.changes || additions + deletions) === 0;
   const textualWithoutPatch = unchanged && ['renamed', 'copied', 'added', 'removed'].includes(f.status);
-  const binary = !f.patch && !textualWithoutPatch;
+  const binary = !f.patch && unchanged && !textualWithoutPatch;
   const parsed = f.patch ? parsePatch(f.patch) : { hunks: [], binary, additions, deletions };
   return {
     path: f.filename,
@@ -327,8 +365,10 @@ function mapCompareFile(f) {
     kind: status,
     hunks: parsed.hunks,
     binary: f.patch ? parsed.binary : binary,
-    additions: f.patch ? parsed.additions : additions,
-    deletions: f.patch ? parsed.deletions : deletions,
+    binaryUnsure: !f.patch && unchanged,
+    // No patch and 0/0: the counts are as undecided as `binary` is.
+    additions: f.patch ? parsed.additions : unchanged ? null : additions,
+    deletions: f.patch ? parsed.deletions : unchanged ? null : deletions,
     // The compare API has no old blob id; the patch covers the old side of a
     // text file, and `sha` (the new blob) the rest.
     fingerprint: fingerprintOf([status, f.previous_filename || null, f.filename, f.sha || null, f.patch || null]),
@@ -339,6 +379,10 @@ function mapCompareFile(f) {
 // overall); ask for 100 at a time and keep going until a short page.
 const COMPARE_PER_PAGE = 100;
 const COMPARE_MAX_PAGES = 30;
+// What it does in practice (checked on microsoft/TypeScript#51387, a range of
+// 656 files): the first page carries at most 300 files whatever `per_page`
+// says, and every later page carries none.
+const COMPARE_FILES_MAX = 300;
 
 /** `gh api .../compare/left...to`, all pages, per (descriptor, from, to): same shape of caching as loadFiles above. */
 async function loadCommitRangeFiles(descriptor, fresh) {
@@ -359,10 +403,42 @@ async function loadCommitRangeFiles(descriptor, fresh) {
     if (pageFiles.length < COMPARE_PER_PAGE) break;
   }
   const files = raw.map(mapCompareFile).sort((a, b) => a.path.localeCompare(b.path));
+  // At the cap GitHub gives no more, and does not say how many there are.
+  const truncated = raw.length >= COMPARE_FILES_MAX ? { shown: raw.length, total: null, limit: COMPARE_FILES_MAX } : null;
 
-  const result = { at: Date.now(), files, left };
+  const result = { at: Date.now(), files, left, truncated };
   CACHE.set(key, result);
   return result;
+}
+
+// "List pull request files": 100 per page at most, 3000 files overall.
+const PR_FILES_PER_PAGE = 100;
+const PR_FILES_MAX = 3000;
+const PR_FILES_PARALLEL = 5;
+
+/**
+ * The file list of a PR too large for `gh pr diff` (see DIFF_TOO_LARGE), from
+ * `gh api .../pulls/{n}/files`. The PR itself is asked first for
+ * `changed_files`: it tells how many pages there are, so they can be fetched a
+ * few at a time instead of one by one, and whether GitHub's 3000-file cap cut
+ * the list (`truncated`).
+ */
+async function loadPrFilesPaged(descriptor) {
+  const pull = `repos/${descriptor.owner}/${descriptor.repo}/pulls/${descriptor.number}`;
+  const total = (await ghJson(['api', pull])).changed_files || 0;
+  const pages = Math.max(1, Math.ceil(Math.min(total, PR_FILES_MAX) / PR_FILES_PER_PAGE));
+  const raw = [];
+  for (let first = 1; first <= pages; first += PR_FILES_PARALLEL) {
+    const batch = [];
+    for (let page = first; page < first + PR_FILES_PARALLEL && page <= pages; page += 1) {
+      batch.push(ghJson(['api', `${pull}/files?per_page=${PR_FILES_PER_PAGE}&page=${page}`]));
+    }
+    for (const pageFiles of await Promise.all(batch)) raw.push(...pageFiles);
+  }
+  return {
+    files: raw.map(mapCompareFile).sort((a, b) => a.path.localeCompare(b.path)),
+    truncated: total > raw.length ? { shown: raw.length, total, limit: PR_FILES_MAX } : null,
+  };
 }
 
 /**
@@ -393,13 +469,14 @@ function createPrSource(descriptor) {
     async listFiles(options) {
       const fresh = options && options.fresh;
       if (inRange) {
-        const { files } = await loadCommitRangeFiles(descriptor, fresh);
+        const { files, truncated } = await loadCommitRangeFiles(descriptor, fresh);
         return {
           files: files.map(listEntry),
           range: { label: rangeLabel(descriptor.from, descriptor.to) },
+          truncated,
         };
       }
-      const files = await loadFiles(descriptor, fresh);
+      const { files, truncated } = await loadFiles(descriptor, fresh);
       // A re-read forgets the endpoints together with the patch. The feed of
       // all files then asks for each file's diff without `fresh`; with only
       // the patch renewed, those would pair new hunks with the old head's
@@ -409,6 +486,7 @@ function createPrSource(descriptor) {
       return {
         files: files.map(listEntry),
         range: { label: `${descriptor.owner}/${descriptor.repo}#${descriptor.number}` },
+        truncated,
       };
     },
     async fileDiff(filePath, context, options) {
@@ -428,7 +506,7 @@ function createPrSource(descriptor) {
         const texts = await loadPrTexts(descriptor, { mergeBaseSha: left, headRefOid: descriptor.to }, entry);
         return Object.assign({}, entry, texts);
       }
-      const files = await loadFiles(descriptor, fresh);
+      const { files } = await loadFiles(descriptor, fresh);
       const entry = files.find((f) => f.path === filePath);
       if (!entry) {
         const err = new Error(`Файл "${filePath}" отсутствует в диффе этого PR-а.`);

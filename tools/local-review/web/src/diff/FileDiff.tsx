@@ -88,7 +88,9 @@ function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: 
   }
   const hasTexts = diff.oldText != null || diff.newText != null;
   if (!hasTexts) {
-    if (!diff.hunks.length) {
+    // A file too big to send has no texts, and no hunks either when GitHub
+    // left its patch out: that is "unavailable", not "unchanged".
+    if (!diff.hunks.length && !diff.textUnavailable) {
       return { icon: FileIcon, title: 'Изменений содержимого нет', text: 'Возможно, изменился только режим файла или имя.' };
     }
     return {
@@ -291,7 +293,7 @@ export const FileDiff = memo(function FileDiff({
   // The file list knows the counts before the diff is loaded (and for a
   // collapsed file it never is); the diff itself has the last word.
   const stat = diff
-    ? diff.binary
+    ? diff.binary || diff.additions === null || diff.deletions === null
       ? null
       : { additions: diff.additions || 0, deletions: diff.deletions || 0 }
     : entry && entry.additions != null && entry.deletions != null
