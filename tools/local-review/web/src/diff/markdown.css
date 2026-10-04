@@ -210,6 +210,28 @@
   overflow-wrap: anywhere;
 }
 
+/* Mermaid block: the source shows until its diagram is drawn, and stays (with
+   an error line) when it cannot be. */
+.rv-markdown .rv-mermaid {
+  margin-bottom: var(--base-size-16);
+}
+.rv-markdown .rv-mermaid--rendered > pre {
+  display: none;
+}
+.rv-markdown .rv-mermaid__diagram {
+  display: block;
+  height: auto;
+}
+.rv-markdown .rv-mermaid > pre {
+  margin-bottom: 0;
+}
+.rv-markdown .rv-mermaid__error {
+  margin: var(--base-size-4) 0 0;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-danger);
+  overflow-wrap: anywhere;
+}
+
 .rv-markdown-external {
   display: flex;
   flex-wrap: wrap;
