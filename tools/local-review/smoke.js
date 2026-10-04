@@ -199,6 +199,10 @@ async function main() {
   fs.writeFileSync(path.join(staticDir, 'index.html'), staticIndexHtml, 'utf8');
   process.env.LOCAL_REVIEW_STATIC_DIR = staticDir;
 
+  // A failing gh fixture of a transient kind is retried (lib/gh.js); the
+  // suite must not sit out the real backoff between those attempts.
+  require('./lib/gh').configure({ retryDelaysMs: [0, 0] });
+
   const repo = buildRepo();
   console.log(`\ntemp repo: ${repo}`);
   console.log(`temp home: ${home}\n`);
@@ -1006,6 +1010,24 @@ async function main() {
   ok(sameOrigin.status === 200, 'свой Origin + same-origin -> 200');
   const noHeaders = await call('/api/state');
   ok(noHeaders.status === 200, 'запрос без Origin и Sec-Fetch-Site пропускается');
+  // A link on another site (GitHub, Slack, Notion) navigates here with
+  // Sec-Fetch-Site: cross-site. The shell and its assets carry no data, so
+  // they must load; only /api/* is the surface the check protects.
+  const crossSiteHeaders = { 'sec-fetch-site': 'cross-site' };
+  const crossSiteShell = await call('/', { headers: crossSiteHeaders });
+  ok(crossSiteShell.status === 200, 'GET / с Sec-Fetch-Site: cross-site -> 200', String(crossSiteShell.status));
+  eq(crossSiteShell.body, staticIndexHtml, 'GET / с Sec-Fetch-Site: cross-site отдаёт оболочку SPA');
+  const crossSiteIndex = await call('/index.html', { headers: { ...crossSiteHeaders, origin: 'http://evil.example' } });
+  ok(crossSiteIndex.status === 200, 'статика с чужим Origin -> 200', String(crossSiteIndex.status));
+  const crossSitePost = await call('/api/comments', {
+    ...json('POST', { file: 'src/app.js', line: 1, side: 'new', body: 'csrf' }),
+    headers: { 'content-type': 'application/json', ...crossSiteHeaders },
+  });
+  ok(crossSitePost.status === 403, 'POST /api/comments с cross-site -> 403', JSON.stringify(crossSitePost.body));
+  const crossSiteEncoded = await call('/%61pi/state', { headers: crossSiteHeaders });
+  ok(crossSiteEncoded.status === 403, '/%61pi/state с cross-site -> 403', JSON.stringify(crossSiteEncoded.body));
+  const crossSiteUnknown = await call('/api/nope', { headers: crossSiteHeaders });
+  ok(crossSiteUnknown.status === 403, 'неизвестный /api/* с cross-site -> 403, а не 404', JSON.stringify(crossSiteUnknown.body));
 
   // ------------------------------------------------------------ фикстура gh
   console.log('\nфикстура gh');
@@ -1565,6 +1587,270 @@ async function main() {
   );
 
   delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+
+  // --------------------------------------- gh: надёжность запросов (#55)
+  console.log('\ngh: надёжность запросов');
+  const ghLib = require('./lib/gh');
+  const relLog = path.join(home, 'gh-reliability-calls.log');
+  const relCalls = (needle) =>
+    fs.existsSync(relLog)
+      ? fs.readFileSync(relLog, 'utf8').split('\n').filter((l) => l && l.includes(needle)).length
+      : 0;
+  const rejection = (promise) => promise.then(() => null, (e) => e);
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = relLog;
+
+  // -- классификация: у каждого класса ошибок своя причина и своё сообщение
+  const classOf = (stderr) => ghLib.classifyGhError({ code: 1, stderr: Buffer.from(stderr) }, ['api', 'x']);
+  const CLASSES = [
+    [
+      'timeout',
+      'Get "https://api.github.com/x": dial tcp 140.82.121.6:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time',
+    ],
+    ['timeout', 'Get "https://api.github.com/x": net/http: TLS handshake timeout'],
+    ['network', 'dial tcp: lookup api.github.com: no such host'],
+    ['network', 'Get "https://api.github.com/x": dial tcp 140.82.121.6:443: connect: connection refused'],
+    ['server', 'gh: Bad Gateway (HTTP 502)'],
+    ['server', 'gh: Gateway Timeout (HTTP 504)'],
+    ['rate-limit', 'gh: API rate limit exceeded for user ID 1. (HTTP 403)'],
+    ['rate-limit', 'gh: You have exceeded a secondary rate limit. Please wait a few minutes (HTTP 403)'],
+    ['not-authenticated', 'gh: Bad credentials (HTTP 401)'],
+    ['not-found', 'gh: Not Found (HTTP 404)'],
+    ['unknown', 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300)'],
+    ['unknown', 'gh: Validation Failed (HTTP 422)'],
+  ];
+  for (const [reason, stderr] of CLASSES) {
+    eq(classOf(stderr).ghReason, reason, `классификация: ${reason} <- ${stderr.slice(-48)}`);
+  }
+  const timedOut = ghLib.classifyGhError(
+    { code: null, stderr: Buffer.alloc(0), timedOut: true, timeoutMs: 12000 },
+    ['api', 'x']
+  );
+  eq(timedOut.ghReason, 'timeout', 'классификация: gh, убитый по таймауту, — timeout');
+  eq(timedOut.status, 504, 'таймаут -> HTTP 504');
+  const messages = ['timeout', 'network', 'server', 'rate-limit', 'not-authenticated', 'not-found'].map(
+    (reason) => classOf(CLASSES.find((c) => c[0] === reason)[1]).message
+  );
+  eq(new Set(messages).size, messages.length, 'у каждого класса ошибок своё сообщение');
+  ok(
+    !/нет связи/i.test(classOf(CLASSES[0][1]).message) && /нет связи/i.test(classOf(CLASSES[2][1]).message),
+    '«нет связи» говорится только про отсутствие сети, а не про таймаут соединения'
+  );
+  eq(
+    ['timeout', 'network', 'server', 'rate-limit', 'not-authenticated', 'not-found', 'not-installed', 'unknown'].filter(
+      (reason) => ghLib.isTransient({ ghReason: reason })
+    ),
+    ['timeout', 'network', 'server'],
+    'временными считаются только таймаут, сеть и 5xx'
+  );
+
+  // -- повтор: задержки подставные, тест реально не ждёт
+  const slept = [];
+  const restoreGh = ghLib.configure({
+    retryDelaysMs: [300, 1200],
+    sleep: (ms) => {
+      slept.push(ms);
+      return Promise.resolve();
+    },
+  });
+  const DIAL = { code: 1, stderr: 'Get "https://api.github.com/x": dial tcp 1.2.3.4:443: i/o timeout\n' };
+  ghFixtures(
+    {
+      'api flaky': [DIAL, { code: 0, stdout: 'recovered\n' }],
+      'api always-down': DIAL,
+      'api bad-gateway-once': [{ code: 1, stderr: 'gh: Bad Gateway (HTTP 502)\n' }, { code: 0, stdout: 'ok\n' }],
+      'api gone': { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      'api too-big': {
+        code: 1,
+        stderr: 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300)\n',
+      },
+      'api invalid': { code: 1, stderr: 'gh: Validation Failed (HTTP 422)\n' },
+      'api limited': { code: 1, stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)\n' },
+      'api no-auth': { code: 1, stderr: 'gh: Bad credentials (HTTP 401)\n' },
+    },
+    home
+  );
+  eq(await ghLib.gh(['api', 'flaky']), 'recovered\n', 'временный сбой, затем успех -> запрос удаётся');
+  eq(relCalls('api flaky'), 2, 'временный сбой: gh запущен дважды');
+  eq(slept, [300], 'перед повтором выдержана первая задержка (подставная)');
+  eq(await ghLib.gh(['api', 'bad-gateway-once']), 'ok\n', 'HTTP 502, затем успех -> запрос удаётся');
+
+  slept.length = 0;
+  const down = await rejection(ghLib.gh(['api', 'always-down']));
+  ok(down && down.ghReason === 'timeout' && down.userFacing === true, 'постоянный сбой -> ошибка своего класса', String(down));
+  eq(relCalls('api always-down'), 3, 'постоянный сбой: три попытки и не больше');
+  eq(slept, [300, 1200], 'задержки между попытками растут');
+
+  for (const [name, reason] of [
+    ['gone', 'not-found'],
+    ['too-big', 'unknown'],
+    ['invalid', 'unknown'],
+    ['limited', 'rate-limit'],
+    ['no-auth', 'not-authenticated'],
+  ]) {
+    const err = await rejection(ghLib.gh(['api', name]));
+    ok(err && err.ghReason === reason, `невременная ошибка (${name}) -> ${reason}`, String(err));
+    eq(relCalls(`api ${name}`), 1, `невременная ошибка (${name}) не повторяется`);
+  }
+
+  // -- таймаут: зависший gh убивается, а не держит запрос вечно
+  ghFixtures({ 'api hang': { code: 0, stdout: 'late\n', delayMs: 5000 } }, home);
+  ghLib.configure({ attemptTimeoutsMs: [150], retryDelaysMs: [] });
+  const hangStarted = Date.now();
+  const hung = await rejection(ghLib.gh(['api', 'hang']));
+  ok(hung && hung.ghReason === 'timeout' && hung.status === 504, 'зависший gh -> timeout / 504', String(hung));
+  ok(Date.now() - hangStarted < 3000, 'зависший gh прерван по таймауту, а не дождался ответа');
+  ghLib.configure({ attemptTimeoutsMs: [10000], retryDelaysMs: [0, 0] });
+
+  // -- одинаковые одновременные запросы -> один gh
+  ghFixtures({ 'api same': { code: 0, stdout: 'shared\n', delayMs: 200 } }, home);
+  const shared = await Promise.all(Array.from({ length: 5 }, () => ghLib.gh(['api', 'same'])));
+  eq(shared, Array(5).fill('shared\n'), 'пять одновременных одинаковых запросов получают один ответ');
+  eq(relCalls('api same'), 1, 'пять одновременных одинаковых запросов -> один запуск gh');
+  await ghLib.gh(['api', 'same']);
+  eq(relCalls('api same'), 2, 'следующий запрос после завершения снова идёт в gh (это не кэш)');
+
+  // -- неизменяемый ресурс (адресован sha) запоминается
+  ghFixtures({ 'api by-sha': { code: 0, stdout: 'frozen\n' } }, home);
+  await ghLib.gh(['api', 'by-sha'], { immutable: true });
+  eq(await ghLib.gh(['api', 'by-sha'], { immutable: true }), 'frozen\n', 'immutable: повторный ответ тот же');
+  eq(relCalls('api by-sha'), 1, 'immutable: повторный запрос не запускает gh');
+
+  // -- ограничение числа одновременных gh
+  const limiter = ghLib.createLimiter(() => 3);
+  let active = 0;
+  let peak = 0;
+  await Promise.all(
+    Array.from({ length: 10 }, () =>
+      limiter.run(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
+      })
+    )
+  );
+  eq(peak, 3, 'ограничитель: одновременно идёт ровно столько задач, сколько разрешено');
+  const afterThrow = await rejection(limiter.run(() => Promise.reject(new Error('boom'))));
+  ok(
+    afterThrow && (await limiter.run(async () => 'next')) === 'next',
+    'ограничитель: упавшая задача освобождает место'
+  );
+
+  const spanLog = path.join(home, 'gh-spans.log');
+  process.env.LOCAL_REVIEW_GH_SPAN_LOG = spanLog;
+  ghFixtures({ '*': { code: 0, stdout: 'x\n', delayMs: 250 } }, home);
+  ghLib.configure({ maxConcurrent: 3 });
+  await Promise.all(Array.from({ length: 9 }, (_, i) => ghLib.gh(['api', `burst-${i}`])));
+  delete process.env.LOCAL_REVIEW_GH_SPAN_LOG;
+  let running = 0;
+  let maxRunning = 0;
+  fs.readFileSync(spanLog, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split(' '))
+    .sort((a, b) => Number(a[1]) - Number(b[1]) || (a[0] === 'end' ? -1 : 1))
+    .forEach(([edge]) => {
+      running += edge === 'start' ? 1 : -1;
+      maxRunning = Math.max(maxRunning, running);
+    });
+  eq(relCalls('api burst-'), 9, 'все девять запросов дошли до gh');
+  ok(maxRunning <= 3, 'одновременных gh не больше лимита (3)', `пик ${maxRunning}`);
+  ok(maxRunning >= 2, 'при этом запросы действительно идут параллельно', `пик ${maxRunning}`);
+  ghLib.configure({ maxConcurrent: restoreGh.maxConcurrent });
+
+  // -- насквозь: лента открывает несколько файлов PR-а сразу
+  const REL_BASE = 'relBaseSha';
+  const REL_HEAD = 'relHeadSha';
+  const REL_MB = 'relMergeBaseSha';
+  const relMeta =
+    'pr view 77 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url';
+  ghFixtures(
+    {
+      'pr diff 77 --repo o/r': { code: 0, stdout: PR_DIFF, delayMs: 150 },
+      [relMeta]: {
+        code: 0,
+        stdout: JSON.stringify({
+          number: 77,
+          title: 'rel',
+          author: { login: 'a' },
+          state: 'OPEN',
+          headRefName: 'h',
+          baseRefName: 'b',
+          headRefOid: REL_HEAD,
+          url: 'u',
+        }),
+      },
+      'pr view 77 --repo o/r --json baseRefOid,headRefOid': {
+        code: 0,
+        stdout: JSON.stringify({ baseRefOid: REL_BASE, headRefOid: REL_HEAD }),
+        delayMs: 150,
+      },
+      [`api repos/o/r/compare/${REL_BASE}...${REL_HEAD}`]: {
+        code: 0,
+        stdout: JSON.stringify({ merge_base_commit: { sha: REL_MB } }),
+        delayMs: 150,
+      },
+      [ghContentsKey('src/app.js', REL_MB)]: [DIAL, { code: 0, stdout: 'old app\n' }],
+      [ghContentsKey('src/app.js', REL_HEAD)]: { code: 0, stdout: 'new app\n' },
+      [ghContentsKey('created.txt', REL_MB)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      [ghContentsKey('created.txt', REL_HEAD)]: { code: 0, stdout: 'created\n' },
+      [ghContentsKey('gone.txt', REL_MB)]: { code: 0, stdout: 'gone\n' },
+      [ghContentsKey('gone.txt', REL_HEAD)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+    },
+    home
+  );
+  const relQ = 'source=pr&host=github.com&owner=o&repo=r&number=77';
+  const relDiffs = await Promise.all(
+    ['src/app.js', 'created.txt', 'gone.txt', 'src/app.js'].map((f) =>
+      call(`/api/diff?file=${encodeURIComponent(f)}&${relQ}`)
+    )
+  );
+  ok(
+    relDiffs.every((r) => r.status === 200),
+    'четыре одновременных /api/diff по PR-у -> все 200',
+    JSON.stringify(relDiffs.map((r) => [r.status, r.body.error]))
+  );
+  eq(relDiffs[0].body.oldText, 'old app\n', 'временный сбой на содержимом файла пережит повтором');
+  eq(relCalls('pr diff 77'), 1, 'одновременные /api/diff -> один gh pr diff');
+  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 1, 'одновременные /api/diff -> один gh pr view за sha');
+  eq(relCalls(`compare/${REL_BASE}...${REL_HEAD}`), 1, 'одновременные /api/diff -> один compare за merge-base');
+  eq(
+    relCalls(`contents/created.txt?ref=${REL_MB}`),
+    1,
+    '404 на содержимом (файла нет на этой стороне) не повторяется'
+  );
+
+  await call(`/api/state?${relQ}`);
+  await call(`/api/state?${relQ}`);
+  eq(relCalls(relMeta), 1, 'шапка PR-а кэшируется: второй /api/state не запускает gh pr view');
+  await call(`/api/state?${relQ}&fresh=1`);
+  eq(relCalls(relMeta), 2, 'fresh=1 перечитывает шапку PR-а');
+  await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${relQ}&fresh=1`);
+  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 2, 'fresh=1 заново спрашивает sha концов PR-а');
+  eq(
+    relCalls(`compare/${REL_BASE}...${REL_HEAD}`),
+    1,
+    'merge-base тех же двух sha не перезапрашивается: он неизменяем'
+  );
+
+  ghFixtures({ '*': { code: 1, stderr: 'dial tcp: lookup api.github.com: no such host\n' } }, home);
+  const offline = await call('/api/state?source=pr&host=github.com&owner=o&repo=r&number=78');
+  ok(
+    offline.status === 502 && /нет связи/i.test(offline.body.error),
+    'нет сети -> 502 и «нет связи»',
+    JSON.stringify(offline.body)
+  );
+  ghFixtures({ '*': { code: 1, stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)\n' } }, home);
+  const limited = await call('/api/state?source=pr&host=github.com&owner=o&repo=r&number=79');
+  ok(
+    limited.status === 429 && /лимит/i.test(limited.body.error),
+    'лимит API -> 429 и сообщение про лимит',
+    JSON.stringify(limited.body)
+  );
+
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+  ghLib.configure(restoreGh);
+  ghLib.configure({ retryDelaysMs: [0, 0] });
 
   // ----------------------------------- clear-all with confirm actually clears
   console.log('\nclear-all с подтверждением');
@@ -2350,6 +2636,263 @@ async function main() {
   prViewedFixture(PR_VIEWED_DIFF('1111111..5555555', 'newer').replace('3333333..4444444', '3333333..6666666'));
   ok((await prFiles()).get('assets/logo.bin').viewed === false, 'PR: бинарный файл с новым blob снова не просмотрен');
 
+  // ------------------------------------- чистка устаревших отметок при старте
+  console.log('\nпросмотренные файлы: устаревшие отметки удаляются при старте сервера');
+  const pruneRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prune-'));
+  git(['init', '-q', '-b', 'main'], pruneRepo);
+  git(['config', 'user.email', 'smoke@example.com'], pruneRepo);
+  git(['config', 'user.name', 'Smoke Test'], pruneRepo);
+  git(['config', 'commit.gpgsign', 'false'], pruneRepo);
+  git(['config', 'core.autocrlf', 'false'], pruneRepo);
+  write(pruneRepo, '.gitignore', '.local-review/\n');
+  write(pruneRepo, 'a.txt', 'a\n');
+  write(pruneRepo, 'b.txt', 'b\n');
+  write(pruneRepo, 'c.txt', 'c\n');
+  git(['add', '-A'], pruneRepo);
+  git(['commit', '-q', '-m', 'init'], pruneRepo);
+  write(pruneRepo, 'a.txt', 'a\nsecond\n');
+  write(pruneRepo, 'b.txt', 'b\nsecond\n');
+  git(['add', '-A'], pruneRepo);
+  git(['commit', '-q', '-m', 'second'], pruneRepo);
+  const pruneSha = git(['rev-parse', 'HEAD'], pruneRepo).trim();
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking\n');
+  write(pruneRepo, 'b.txt', 'b\nsecond\nworking\n');
+  write(pruneRepo, 'c.txt', 'c\nstaged\n');
+  git(['add', 'c.txt'], pruneRepo);
+  write(pruneRepo, 'untracked.txt', 'never added\n');
+
+  const pruneStoreFile = path.join(pruneRepo, '.local-review', 'comments.json');
+  const readPruneStore = () => JSON.parse(fs.readFileSync(pruneStoreFile, 'utf8'));
+  const startPrune = () => start({ cwd: pruneRepo, mode: 'working', base: '', port: 0, host: '127.0.0.1', open: false });
+  const stopServer = (s) => new Promise((resolve) => s.server.close(resolve));
+  // No `source` in the query: the descriptor is the repository the server was started in.
+  const pruneViews = {
+    working: 'mode=working',
+    staged: 'mode=staged',
+    base: 'mode=base&base=HEAD~1',
+    commits: `mode=commits&from=${pruneSha}&to=${pruneSha}`,
+  };
+  const pruneFiles = async (client, view) =>
+    new Map((await client(`/api/state?${pruneViews[view]}`)).body.files.map((f) => [f.path, f]));
+  const pruneMark = async (client, view, file) =>
+    client(
+      `/api/viewed?${pruneViews[view]}`,
+      json('POST', { file, fingerprint: (await pruneFiles(client, view)).get(file).fingerprint, viewed: true })
+    );
+
+  let pruneServer = await startPrune();
+  let pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 0, 'без отметок чистке нечего удалять');
+  ok(!fs.existsSync(pruneStoreFile), 'чистка не создаёт файл хранилища');
+  for (const [view, file] of [
+    ['working', 'a.txt'],
+    ['working', 'b.txt'],
+    ['working', 'untracked.txt'],
+    ['staged', 'c.txt'],
+    ['base', 'a.txt'],
+    ['base', 'b.txt'],
+    ['commits', 'a.txt'],
+    ['commits', 'b.txt'],
+  ]) {
+    const res = await pruneMark(pruneCall, view, file);
+    ok(res.status === 200 && res.body.viewed === true, `отметка ${view}: ${file}`, JSON.stringify(res.body));
+  }
+  await pruneCall('/api/comments?mode=working', json('POST', { file: 'a.txt', startLine: 1, endLine: 1, text: 'остаётся' }));
+  await stopServer(pruneServer);
+
+  // Marks no view can ever show again, written the way an old review file has them.
+  const DEAD_SHA = 'dead'.repeat(10);
+  const staleMark = (fingerprint) => ({ fingerprint, viewedAt: '2026-09-01T00:00:00.000Z' });
+  const pruneRangeKey = `commits:${pruneSha}..${pruneSha}`;
+  const seeded = readPruneStore();
+  seeded.viewed['a.txt'][`commits:${DEAD_SHA}..${DEAD_SHA}`] = staleMark('x1');
+  seeded.viewed['b.txt']['mode:base:no-such-branch'] = staleMark('x2');
+  seeded.viewed['only-gone-range.txt'] = { [`commits:${DEAD_SHA}..${pruneSha}`]: staleMark('x3') };
+  seeded.viewed['left-the-diff.txt'] = { 'mode:working': staleMark('x4'), 'mode:staged': staleMark('x8') };
+  // A revision may contain dots of its own; such a range is not taken apart.
+  seeded.viewed['symbolic.txt'] = { 'commits:HEAD^{/fix..bug}..HEAD': staleMark('x9') };
+  seeded.viewed['legacy.txt'] = staleMark('x5');
+  seeded.viewed['foreign.txt'] = { 'pr:all': staleMark('x6'), 'not a view key': staleMark('x7') };
+  fs.writeFileSync(pruneStoreFile, JSON.stringify(seeded, null, 2), 'utf8');
+  // a.txt changes while the server is down: its working and base diffs are new ones.
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking, edited\n');
+
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 7, 'старт сервера удалил семь мёртвых отметок');
+  const pruned = readPruneStore();
+  eq(
+    Object.keys(pruned.viewed['a.txt']),
+    [pruneRangeKey],
+    'a.txt: отметки изменившихся диффов (working, base) и исчезнувшего диапазона удалены, живая осталась'
+  );
+  eq(
+    Object.keys(pruned.viewed['b.txt']).sort(),
+    [pruneRangeKey, 'mode:base:HEAD~1', 'mode:working'].sort(),
+    'b.txt: живые отметки на месте, отметка под исчезнувшей базой удалена'
+  );
+  eq(Object.keys(pruned.viewed['c.txt']), ['mode:staged'], 'c.txt: живая отметка staged на месте');
+  eq(Object.keys(pruned.viewed['untracked.txt']), ['mode:working'], 'живая отметка untracked-файла на месте');
+  eq(
+    Object.keys(pruned.viewed['symbolic.txt']),
+    ['commits:HEAD^{/fix..bug}..HEAD'],
+    'диапазон, который не разобрать однозначно, не трогается'
+  );
+  ok(
+    !('only-gone-range.txt' in pruned.viewed) && !('left-the-diff.txt' in pruned.viewed),
+    'файл без единой оставшейся отметки теряет и свой ключ',
+    JSON.stringify(Object.keys(pruned.viewed))
+  );
+  eq(pruned.viewed['legacy.txt'], { '*': staleMark('x5') }, 'отметка старого формата («любой режим») не трогается');
+  eq(
+    pruned.viewed['foreign.txt'],
+    { 'pr:all': staleMark('x6'), 'not a view key': staleMark('x7') },
+    'отметки под ключами, которые git не умеет построить, не трогаются'
+  );
+  eq(pruned.comments.map((c) => c.text), ['остаётся'], 'чистка не трогает комментарии');
+  eq(pruned.version, 1, 'чистка не меняет версию формата хранилища');
+
+  const prunedWorking = await pruneFiles(pruneCall, 'working');
+  ok(prunedWorking.get('a.txt').viewed === false, 'изменённый файл не просмотрен');
+  ok(prunedWorking.get('b.txt').viewed === true, 'неизменённый файл остаётся просмотренным в working');
+  ok((await pruneFiles(pruneCall, 'staged')).get('c.txt').viewed === true, 'неизменённый файл остаётся просмотренным в staged');
+  const prunedBase = await pruneFiles(pruneCall, 'base');
+  ok(
+    prunedBase.get('b.txt').viewed === true && prunedBase.get('a.txt').viewed === false,
+    'base: живая отметка действует, удалённая нет'
+  );
+  const prunedCommits = await pruneFiles(pruneCall, 'commits');
+  ok(
+    prunedCommits.get('a.txt').viewed === true && prunedCommits.get('b.txt').viewed === true,
+    'отметки в диапазоне коммитов остались'
+  );
+
+  // The documented trade-off: a deleted mark does not come back with the old content.
+  write(pruneRepo, 'a.txt', 'a\nsecond\nworking\n');
+  ok(
+    (await pruneFiles(pruneCall, 'working')).get('a.txt').viewed === false,
+    'файл вернули ровно в прежнее состояние — удалённая отметка не оживает'
+  );
+  await stopServer(pruneServer);
+
+  // Nothing stale -> nothing written.
+  const pruneBytes = fs.readFileSync(pruneStoreFile, 'utf8');
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  eq(await pruneServer.viewedPruning, 0, 'повторный старт: удалять больше нечего');
+  eq(fs.readFileSync(pruneStoreFile, 'utf8'), pruneBytes, 'хранилище без мёртвых отметок не переписывается');
+
+  // A view git cannot build right now is not a view that is gone: keep its marks.
+  const { pruneLocalViewed } = require('./lib/viewed-prune');
+  const pruneNotRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-prune-norepo-'));
+  const notRepoStore = write(
+    pruneNotRepo,
+    '.local-review/comments.json',
+    JSON.stringify(
+      {
+        version: 1,
+        comments: [],
+        viewed: {
+          'a.txt': { 'mode:working': staleMark('y1'), [pruneRangeKey]: staleMark('y2'), 'mode:base:main': staleMark('y3') },
+          'b.txt': { 'mode:working': 'не запись' },
+        },
+      },
+      null,
+      2
+    )
+  );
+  const notRepoBytes = fs.readFileSync(notRepoStore, 'utf8');
+  eq(await pruneLocalViewed(pruneNotRepo), 0, 'git не отвечает — чистка ничего не удаляет и не падает');
+  eq(fs.readFileSync(notRepoStore, 'utf8'), notRepoBytes, 'git не отвечает — файл хранилища не тронут');
+
+  // The sweep must stay off the network even in a partial clone, where git
+  // would fetch a missing object on demand: its git calls carry GIT_NO_LAZY_FETCH.
+  const { gitTry: gitProbe, localOnly } = require('./lib/git');
+  const lazyFetchEnv = () => gitProbe(['-c', 'alias.probe=!echo "lazy=$GIT_NO_LAZY_FETCH"', 'probe'], pruneRepo);
+  eq((await localOnly(lazyFetchEnv)).trim(), 'lazy=1', 'git-вызовы чистки запрещают догрузку объектов из сети');
+  eq((await lazyFetchEnv()).trim(), 'lazy=', 'остальные git-вызовы запрет не получают');
+
+  console.log('\nпросмотренные файлы: PR-виды чистятся при открытии PR, а не при старте');
+  const prStoreFile = path.join(home, 'pr', 'github.com__o__r__40.json');
+  // app.js gets a live mark; logo.bin keeps the one its new blob made stale.
+  await call(
+    `/api/viewed?${prViewedQ}`,
+    json('POST', { file: 'src/app.js', fingerprint: (await prFiles()).get('src/app.js').fingerprint, viewed: true })
+  );
+  const prSeeded = JSON.parse(fs.readFileSync(prStoreFile, 'utf8'));
+  ok(Boolean(prSeeded.viewed['assets/logo.bin']['pr:all']), 'PR: мёртвая отметка лежит в хранилище до чистки');
+  // Another view of the same PR, not opened below: nobody has its diff, so it stays.
+  prSeeded.viewed['src/app.js']['commits:aaa..bbb'] = staleMark('z1');
+  fs.writeFileSync(prStoreFile, JSON.stringify(prSeeded, null, 2), 'utf8');
+  const prStoreBytes = fs.readFileSync(prStoreFile, 'utf8');
+
+  await stopServer(pruneServer);
+  const ghCallLog = path.join(home, 'gh-calls-prune.log');
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = ghCallLog;
+  pruneServer = await startPrune();
+  pruneCall = makeClient(pruneServer.port);
+  await pruneServer.viewedPruning;
+  ok(!fs.existsSync(ghCallLog), 'старт сервера не вызывает gh', fs.existsSync(ghCallLog) ? fs.readFileSync(ghCallLog, 'utf8') : '');
+  eq(fs.readFileSync(prStoreFile, 'utf8'), prStoreBytes, 'старт сервера не трогает PR-хранилище');
+
+  const prOpened = new Map((await pruneCall(`/api/state?${prViewedQ}`)).body.files.map((f) => [f.path, f]));
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+  const prPruned = JSON.parse(fs.readFileSync(prStoreFile, 'utf8'));
+  ok(
+    !('assets/logo.bin' in prPruned.viewed),
+    'PR: открытие PR удалило мёртвую отметку вместе с ключом файла',
+    JSON.stringify(prPruned.viewed)
+  );
+  eq(
+    Object.keys(prPruned.viewed['src/app.js']).sort(),
+    ['commits:aaa..bbb', 'pr:all'],
+    'PR: живая отметка и отметка неоткрытого вида остались'
+  );
+  ok(
+    prOpened.get('src/app.js').viewed === true && prOpened.get('assets/logo.bin').viewed === false,
+    'PR: живая отметка действует, удалённая нет'
+  );
+  await stopServer(pruneServer);
+
+  // A PR diff that came back empty says nothing about the marks: they stay.
+  const prBeforeEmpty = fs.readFileSync(prStoreFile, 'utf8');
+  prViewedFixture('');
+  pruneServer = await startPrune();
+  const emptyPr = await makeClient(pruneServer.port)(`/api/state?${prViewedQ}&fresh=1`);
+  eq(emptyPr.body.files, [], 'PR: дифф пришёл пустым');
+  eq(fs.readFileSync(prStoreFile, 'utf8'), prBeforeEmpty, 'PR: пустой дифф отметок не удаляет');
+  await stopServer(pruneServer);
+
+  const { localViewOf } = require('./lib/viewed');
+  eq(localViewOf('mode:staged'), { mode: 'staged', base: '' }, 'localViewOf: staged');
+  eq(localViewOf('mode:base:origin/main'), { mode: 'base', base: 'origin/main' }, 'localViewOf: base с базой');
+  eq(localViewOf('commits:a1..b2'), { mode: 'commits', from: 'a1', to: 'b2' }, 'localViewOf: диапазон коммитов');
+  ok(
+    ['*', 'pr:all', 'mode:base:', 'commits:a1', 'commits:a..b..c', 'commits:a...b', 'commits:..b', 'mode:commits'].every(
+      (k) => localViewOf(k) === null
+    ),
+    'localViewOf: всё, что не ключ локального вида, — null'
+  );
+
+  // A mark made again while the sweep was looking is not the mark it judged.
+  const { CommentStore } = require('./lib/store');
+  const guardFile = write(
+    pruneNotRepo,
+    'guard.json',
+    JSON.stringify({ version: 1, comments: [], viewed: { 'a.txt': { 'mode:working': staleMark('new') } } })
+  );
+  eq(
+    new CommentStore(guardFile).dropViewed([{ file: 'a.txt', modeKey: 'mode:working', fingerprint: 'old' }]),
+    0,
+    'dropViewed: отметка с другим fingerprint не удаляется'
+  );
+  eq(
+    new CommentStore(guardFile).dropViewed([{ file: 'a.txt', modeKey: 'mode:working', fingerprint: 'new' }]),
+    1,
+    'dropViewed: отметка с тем же fingerprint удаляется'
+  );
+  eq(JSON.parse(fs.readFileSync(guardFile, 'utf8')).viewed, {}, 'dropViewed: ключ файла без отметок удалён');
+
   // ------------------------------------ PR больше 300 файлов (issue #48)
   console.log('\nPR больше 300 файлов: `gh pr diff` -> HTTP 406 -> постраничный список файлов');
   // The exact stderr of gh 2.96.0 for microsoft/TypeScript#51387 (656 files).
@@ -2495,8 +3038,19 @@ async function main() {
     ),
     home
   );
+  // A mark on a file past the cap: the list does not have it, and the sweep of
+  // stale marks (lib/viewed-prune.js) must not take that for "gone from the diff".
+  const capStoreFile = path.join(home, 'pr', 'github.com__o__r__49.json');
+  const capMarks = { [bigName(3200)]: { 'pr:all': { fingerprint: 'past-the-cap', viewedAt: '2026-09-01T00:00:00.000Z' } } };
+  fs.mkdirSync(path.dirname(capStoreFile), { recursive: true });
+  fs.writeFileSync(capStoreFile, JSON.stringify({ version: 1, comments: [], viewed: capMarks }, null, 2), 'utf8');
   fs.writeFileSync(callLog, '');
   const capState = await call(`/api/state?${bigQ(49)}&fresh=1`);
+  eq(
+    JSON.parse(fs.readFileSync(capStoreFile, 'utf8')).viewed,
+    capMarks,
+    'PR на 3500 файлов: обрезанный список не удаляет отметки файлов, которых в нём нет'
+  );
   ok(capState.status === 200, 'PR на 3500 файлов открывается', JSON.stringify(capState.body).slice(0, 300));
   eq((capState.body.files || []).length, 3000, 'PR на 3500 файлов: показаны 3000 — предел GitHub');
   eq(capState.body.truncated, { shown: 3000, total: 3500, limit: 3000 }, 'PR на 3500 файлов: /api/state говорит, сколько показано и сколько всего');
@@ -2547,6 +3101,8 @@ async function main() {
   fs.rmSync(repo, { recursive: true, force: true });
   fs.rmSync(clean, { recursive: true, force: true });
   fs.rmSync(viewedRepo, { recursive: true, force: true });
+  fs.rmSync(pruneRepo, { recursive: true, force: true });
+  fs.rmSync(pruneNotRepo, { recursive: true, force: true });
   fs.rmSync(notRepo, { recursive: true, force: true });
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });

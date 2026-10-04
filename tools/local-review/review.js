@@ -12,6 +12,7 @@ const { CommentStore, STORE_DIR, STORE_FILE } = require('./lib/store');
 const { sendJson, getPublicDir } = require('./lib/http');
 const { createApp, MODES } = require('./lib/routes');
 const config = require('./lib/config');
+const { pruneLocalViewed } = require('./lib/viewed-prune');
 
 function parseArgs(argv) {
   const options = {
@@ -281,7 +282,14 @@ async function start(options) {
   });
 
   const port = await listen(server, options.port, options.host, 50);
-  return { server, port, repoRoot, store, gitignore, homeDir, resolvedBase };
+
+  // Stale "viewed" marks of this repository go once per start. Deliberately
+  // not awaited: the server is already listening, and a review file with many
+  // views means many git calls nobody should wait for. The promise never
+  // rejects and resolves with the number of marks removed.
+  const viewedPruning = repoRoot ? pruneLocalViewed(repoRoot) : Promise.resolve(0);
+
+  return { server, port, repoRoot, store, gitignore, homeDir, resolvedBase, viewedPruning };
 }
 
 async function main() {

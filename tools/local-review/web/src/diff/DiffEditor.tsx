@@ -11,6 +11,7 @@ import { finalEmptyLine } from './cm/lastLine';
 import { gitDiffOverride, unpairedAddedLines } from './gitDiff';
 import { chunkInfo, pureInsertions } from './cm/chunks';
 import { PortalRegistry, blocksField, setBlocks, type Block } from './cm/blocks';
+import { pinBlocks } from './cm/blockPin';
 import { selectedLines, setSelectedLines } from './cm/selection';
 import { foldUnchanged } from './cm/collapse';
 import { diffGutters, lineAtY } from './cm/gutters';
@@ -172,6 +173,7 @@ export function DiffEditor({
           chunkInfo,
           pureInsertions(unpairedAddedLines(hunks)),
           blocksField(registry),
+          pinBlocks,
           selectedLines,
           foldUnchanged,
           diffGutters({ onLineMouseDown }),

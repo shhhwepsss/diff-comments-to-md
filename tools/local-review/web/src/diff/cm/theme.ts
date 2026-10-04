@@ -160,6 +160,12 @@ export const githubTheme = EditorView.theme({
     // Cards sit inside `.cm-content`, whose transparent caret is inherited;
     // without this the comment textarea has no visible caret.
     caretColor: 'auto',
+    // Pinned to the visible part of the editor while long lines scroll
+    // sideways under it (cm/blockPin.ts keeps the two variables).
+    position: 'sticky',
+    left: 'var(--rv-pin-left, 0px)',
+    width: 'var(--rv-pin-width, auto)',
+    boxSizing: 'border-box',
   },
 });
 

@@ -46,7 +46,7 @@ async function resolve(req, res, ctx, url) {
     sendJson(res, 400, { error: 'Нужен дескриптор PR-а (source=pr)' });
     return;
   }
-  sendJson(res, 200, await resolvePr(descriptor));
+  sendJson(res, 200, await resolvePr(descriptor, { fresh: true }));
 }
 
 module.exports = { status, repos, search, resolve };
