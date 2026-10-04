@@ -42,6 +42,40 @@ describe('renderMarkdown: GitHub-flavored markdown', () => {
   });
 });
 
+describe('renderMarkdown: mermaid blocks', () => {
+  const ER = 'erDiagram\n    CUSTOMER ||--o{ ORDER : places\n';
+
+  it('wraps a fenced mermaid block and counts it', () => {
+    const r = renderMarkdown(`# Schema\n\n\`\`\`mermaid\n${ER}\`\`\`\n\ntext\n`);
+    expect(r.mermaidBlocks).toBe(1);
+    const el = document.createElement('div');
+    el.innerHTML = r.html;
+    const code = el.querySelector('.rv-mermaid > pre > code.language-mermaid');
+    expect(code?.textContent).toBe(ER);
+    expect(el.querySelector('h1')?.textContent).toBe('Schema');
+    expect(el.querySelector('p')?.textContent).toBe('text');
+  });
+
+  it('counts every mermaid block and leaves other code blocks alone', () => {
+    const r = renderMarkdown('```mermaid\ngraph TD; A-->B\n```\n\n```ts\nconst a = 1;\n```\n\n```mermaid\npie\n```\n');
+    expect(r.mermaidBlocks).toBe(2);
+    const el = document.createElement('div');
+    el.innerHTML = r.html;
+    expect(el.querySelectorAll('.rv-mermaid')).toHaveLength(2);
+    expect(el.querySelector('code.language-ts')?.closest('.rv-mermaid')).toBeNull();
+  });
+
+  it('reports no mermaid blocks for a document without them', () => {
+    expect(renderMarkdown('# Title\n\n```\nmermaid\n```\n').mermaidBlocks).toBe(0);
+  });
+
+  it('keeps the diagram source as text, never as markup', () => {
+    const el = dom('```mermaid\ngraph TD; A["<img src=x onerror=alert(1)>"]\n```\n');
+    expect(el.querySelector('img, script')).toBeNull();
+    expect(el.querySelector('.rv-mermaid code')?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
+
 describe('renderMarkdown: links', () => {
   it('opens absolute links in a new tab without an opener', () => {
     const a = dom('[site](https://example.com/x) <mailto:me@example.com>').querySelectorAll('a');

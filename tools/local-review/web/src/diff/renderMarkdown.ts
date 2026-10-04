@@ -1,5 +1,6 @@
 import { Marked } from 'marked';
 import DOMPurify, { type DOMPurify as Purifier } from 'dompurify';
+import { MERMAID_BLOCK } from './mermaidBlocks';
 
 // Markdown -> sanitized HTML for the rendered view. The text comes from the
 // diff, so it is untrusted: marked passes raw HTML through, and DOMPurify with
@@ -105,7 +106,7 @@ function placeholder(doc: Document, img: Element, url: string, kind: 'external' 
 }
 
 export type RenderOptions = { loadExternalImages?: boolean };
-export type RenderedMarkdown = { html: string; externalImages: number };
+export type RenderedMarkdown = { html: string; externalImages: number; mermaidBlocks: number };
 
 export function renderMarkdown(text: string, { loadExternalImages = false }: RenderOptions = {}): RenderedMarkdown {
   const raw = marked.parse(text, { async: false });
@@ -137,5 +138,18 @@ export function renderMarkdown(text: string, { loadExternalImages = false }: Ren
     box.title = 'Картинка по относительному пути не загружается';
     img.replaceWith(box);
   }
-  return { html: doc.body.innerHTML, externalImages };
+
+  // ```mermaid fences only get a wrapper here; the source stays escaped text
+  // in its code block. MarkdownPreview draws the diagram over it afterwards.
+  let mermaidBlocks = 0;
+  for (const code of [...doc.body.querySelectorAll('pre > code.language-mermaid')]) {
+    const pre = code.parentElement;
+    if (!pre) continue;
+    const box = doc.createElement('div');
+    box.className = MERMAID_BLOCK;
+    pre.replaceWith(box);
+    box.append(pre);
+    mermaidBlocks++;
+  }
+  return { html: doc.body.innerHTML, externalImages, mermaidBlocks };
 }
