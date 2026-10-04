@@ -20,10 +20,14 @@ async function getState(req, res, ctx, url) {
   const store = storeFor(descriptor, ctx.homeDir);
   const source = createSource(descriptor);
 
-  const { files, range } = await source.listFiles({ fresh: isFresh(url) });
   // The PR header is metadata, not diff: a failure here surfaces as a readable
-  // JSON error instead of an empty screen.
-  const pr = descriptor.source === 'pr' ? await source.meta() : null;
+  // JSON error instead of an empty screen. Asked for beside the file list, not
+  // after it: for a PR both are a gh run of their own.
+  const fresh = isFresh(url);
+  const [{ files, range }, pr] = await Promise.all([
+    source.listFiles({ fresh }),
+    descriptor.source === 'pr' ? source.meta({ fresh }) : null,
+  ]);
   const counts = store.countsByFile();
   const viewed = store.viewedFiles();
 

@@ -6,6 +6,14 @@
 //
 // Manifest: { "<argv joined by spaces>": { "code": 0, "stdout": "...", "stderr": "..." } }
 // The special key "*" is the fallback.
+//
+// For the request-reliability tests an entry may also:
+//   - be an array of such objects: the n-th run of that argv answers with the
+//     n-th element (the last one repeats). Runs are counted in the call log,
+//     so this needs LOCAL_REVIEW_GH_CALL_LOG.
+//   - carry "delayMs": the answer is held back that long, which is what lets
+//     a test see requests overlap (LOCAL_REVIEW_GH_SPAN_LOG gets a
+//     "start <ms> <key>" / "end <ms> <key>" pair per run).
 
 const fs = require('node:fs');
 
@@ -26,7 +34,13 @@ const key = argv.join(' ');
 // a second invocation (e.g. per-file PR content fetches). Only written when
 // a test opts in, so it costs nothing to every other caller of this fixture.
 const callLogPath = process.env.LOCAL_REVIEW_GH_CALL_LOG;
+let earlierRuns = 0;
 if (callLogPath) {
+  try {
+    earlierRuns = fs.readFileSync(callLogPath, 'utf8').split('\n').filter((l) => l === key).length;
+  } catch {
+    /* no log yet: this is the first run */
+  }
   try {
     fs.appendFileSync(callLogPath, `${key}\n`);
   } catch {
@@ -34,11 +48,27 @@ if (callLogPath) {
   }
 }
 
-const hit = manifest[key] || manifest['*'];
+const entry = manifest[key] || manifest['*'];
+const hit = Array.isArray(entry) ? entry[Math.min(earlierRuns, entry.length - 1)] : entry;
 if (!hit) {
   process.stderr.write(`gh-fixture: no fixture for: ${key}\n`);
   process.exit(98);
 }
-if (hit.stdout) process.stdout.write(hit.stdout);
-if (hit.stderr) process.stderr.write(hit.stderr);
-process.exit(hit.code === undefined ? 0 : hit.code);
+
+const spanLogPath = process.env.LOCAL_REVIEW_GH_SPAN_LOG;
+function span(edge) {
+  if (!spanLogPath) return;
+  try {
+    fs.appendFileSync(spanLogPath, `${edge} ${Date.now()} ${key}\n`);
+  } catch {
+    /* same as the call log: never a reason to fail the fixture */
+  }
+}
+
+span('start');
+setTimeout(() => {
+  if (hit.stdout) process.stdout.write(hit.stdout);
+  if (hit.stderr) process.stderr.write(hit.stderr);
+  span('end');
+  process.exitCode = hit.code === undefined ? 0 : hit.code;
+}, hit.delayMs || 0);

@@ -76,16 +76,18 @@ async function loadPrCommits(descriptor, fresh) {
   const hit = PR_COMMITS_CACHE.get(key);
   if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
 
-  const view = await ghJson([
-    'pr',
-    'view',
-    String(descriptor.number),
-    '--repo',
-    `${descriptor.owner}/${descriptor.repo}`,
-    '--json',
-    'baseRefName',
+  const [view, { commits, truncated }] = await Promise.all([
+    ghJson([
+      'pr',
+      'view',
+      String(descriptor.number),
+      '--repo',
+      `${descriptor.owner}/${descriptor.repo}`,
+      '--json',
+      'baseRefName',
+    ]),
+    fetchAllPrCommits(descriptor),
   ]);
-  const { commits, truncated } = await fetchAllPrCommits(descriptor);
 
   const result = { at: Date.now(), commits, truncated, base: view.baseRefName || null };
   PR_COMMITS_CACHE.set(key, result);

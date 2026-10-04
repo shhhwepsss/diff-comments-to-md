@@ -119,8 +119,25 @@ async function searchPrs({ repo, q, state, limit, author }) {
   };
 }
 
+// "host/owner/repo#number" -> { at, pr }. /api/state asks for the header on
+// every view switch (commit range, mode), and without this each of them cost
+// a `gh pr view` of its own. Same lifetime and `fresh` bypass as the diff
+// caches in lib/sources/pr-source.js.
+const PR_CACHE = new Map();
+const PR_TTL_MS = 120000;
+
 /** The screen header, and the place a globally-found PR gets its branch name. */
-async function resolvePr({ host, owner, repo, number }) {
+async function resolvePr({ host, owner, repo, number }, options) {
+  const key = `${host || 'github.com'}/${owner}/${repo}#${number}`;
+  const hit = PR_CACHE.get(key);
+  if (!(options && options.fresh) && hit && Date.now() - hit.at < PR_TTL_MS) return hit.pr;
+
+  const pr = await fetchPr({ host, owner, repo, number });
+  PR_CACHE.set(key, { at: Date.now(), pr });
+  return pr;
+}
+
+async function fetchPr({ host, owner, repo, number }) {
   const row = await ghJson([
     'pr',
     'view',
