@@ -1,6 +1,31 @@
 'use strict';
 
 const { spawn } = require('node:child_process');
+const { AsyncLocalStorage } = require('node:async_hooks');
+
+// Set for the calls made under localOnly() below: { unstarted }.
+const localOnlyScope = new AsyncLocalStorage();
+
+/**
+ * Runs `fn` as background work nobody asked for and nobody waits on — the
+ * startup sweep of lib/viewed-prune.js — which changes two things about
+ * every git call made under it:
+ *
+ *  - it stays off the network. In a partial clone git fetches a missing
+ *    object from the remote on demand, even for a plain `rev-parse` or a
+ *    rename-detecting `diff`; with GIT_NO_LAZY_FETCH (git 2.45+, ignored by
+ *    older ones) the call fails instead;
+ *  - a git that could not be started, or was killed, fails the whole of
+ *    `fn`. The probes below (gitTry, revExists, hasHead) answer "no" to that
+ *    as well as to a real "no", and work that deletes on a "no" must not
+ *    mistake one for the other.
+ */
+async function localOnly(fn) {
+  const scope = { unstarted: false };
+  const result = await localOnlyScope.run(scope, fn);
+  if (scope.unstarted) throw new Error('git could not be run');
+  return result;
+}
 
 /**
  * Runs git with an argv array (never a shell string): Windows paths contain
@@ -8,16 +33,22 @@ const { spawn } = require('node:child_process');
  * Returns stdout as a Buffer so we can handle -z output and any encoding.
  */
 function gitRaw(args, cwd) {
+  const scope = localOnlyScope.getStore();
   return new Promise((resolve) => {
     const child = spawn('git', args, {
       cwd,
       windowsHide: true,
       shell: false,
       // Keep git from paging / colorizing / prompting for credentials.
-      env: Object.assign({}, process.env, {
-        GIT_PAGER: 'cat',
-        GIT_TERMINAL_PROMPT: '0',
-      }),
+      env: Object.assign(
+        {},
+        process.env,
+        {
+          GIT_PAGER: 'cat',
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        scope ? { GIT_NO_LAZY_FETCH: '1' } : null
+      ),
     });
 
     const out = [];
@@ -25,9 +56,12 @@ function gitRaw(args, cwd) {
     child.stdout.on('data', (chunk) => out.push(chunk));
     child.stderr.on('data', (chunk) => err.push(chunk));
     child.on('error', (e) => {
+      if (scope) scope.unstarted = true;
       resolve({ code: -1, stdout: Buffer.alloc(0), stderr: Buffer.from(String(e.message)) });
     });
     child.on('close', (code) => {
+      // A null code is a process ended by a signal, not an answer from git.
+      if (scope && code === null) scope.unstarted = true;
       resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
     });
   });
@@ -126,6 +160,7 @@ async function setGlobalConfig(key, value, cwd) {
 
 module.exports = {
   git,
+  localOnly,
   gitText,
   gitTry,
   getGlobalConfig,

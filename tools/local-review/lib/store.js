@@ -165,8 +165,8 @@ class CommentStore {
    * (lib/viewed.js modeKeyOf) so that marking a file in `base` does not erase
    * the mark made on the same file in `working`. Whether a mark still holds
    * is decided by the caller against the current fingerprint (lib/viewed.js
-   * isViewed); a stale mark is left in place, so it is harmless and never
-   * needs a cleanup pass.
+   * isViewed); a stale mark is left in place and is harmless. Stale marks
+   * are swept separately, once per server start (lib/viewed-prune.js).
    */
   viewedFiles() {
     return Object.assign({}, this.data.viewed || {});
@@ -202,6 +202,30 @@ class CommentStore {
     if (Object.keys(bucket).length === 0) delete this.data.viewed[file];
     this.save();
     return true;
+  }
+
+  /**
+   * Deletes exactly the marks listed — [{ file, modeKey, fingerprint }] — and
+   * returns how many went. A mark whose fingerprint is not the listed one any
+   * more was made again after the list was drawn up, and stays. A file left
+   * with no marks loses its key. Nothing is written when nothing was deleted,
+   * so a store with no stale marks keeps its file byte for byte.
+   */
+  dropViewed(marks) {
+    const viewed = this.data.viewed;
+    if (!isPlainObject(viewed)) return 0;
+    let removed = 0;
+    for (const { file, modeKey, fingerprint } of marks) {
+      const bucket = Object.prototype.hasOwnProperty.call(viewed, file) ? viewed[file] : null;
+      if (!isPlainObject(bucket) || !Object.prototype.hasOwnProperty.call(bucket, modeKey)) continue;
+      const record = bucket[modeKey];
+      if (!isPlainObject(record) || record.fingerprint !== fingerprint) continue;
+      delete bucket[modeKey];
+      removed += 1;
+      if (Object.keys(bucket).length === 0) delete viewed[file];
+    }
+    if (removed > 0) this.save();
+    return removed;
   }
 
   /**
