@@ -68,3 +68,55 @@ export function stepId(items: PanelItem[], current: string | null, delta: number
   if (i === -1) return (delta >= 0 ? items[0] : items[items.length - 1]).comment.id;
   return items[Math.max(0, Math.min(items.length - 1, i + delta))].comment.id;
 }
+
+/** The text search's query as it is compared: trimmed, case folded. */
+function needleOf(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+/**
+ * Comments whose text or file path contains `query` — a plain substring, not
+ * a regexp. A general comment has no path. No query: the list itself.
+ */
+export function searchItems(items: PanelItem[], query: string): PanelItem[] {
+  const needle = needleOf(query);
+  if (!needle) return items;
+  return items.filter(
+    ({ comment }) => comment.text.toLowerCase().includes(needle) || (comment.file ?? '').toLowerCase().includes(needle),
+  );
+}
+
+export type TextPart = { text: string; hit: boolean };
+
+/** `text` cut into matched and unmatched runs, for marking the hits. */
+export function highlightParts(text: string, query: string): TextPart[] {
+  const needle = needleOf(query);
+  const lower = text.toLowerCase();
+  // Case folding can change the length ('İ'): offsets would point elsewhere.
+  if (!needle || lower.length !== text.length) return [{ text, hit: false }];
+  const parts: TextPart[] = [];
+  let at = 0;
+  for (let i = lower.indexOf(needle); i !== -1; i = lower.indexOf(needle, at)) {
+    if (i > at) parts.push({ text: text.slice(at, i), hit: false });
+    at = i + needle.length;
+    parts.push({ text: text.slice(i, at), hit: true });
+  }
+  if (at < text.length || !parts.length) parts.push({ text: text.slice(at), hit: false });
+  return parts;
+}
+
+/** How much text may stand before the first match of a clamped row. */
+const EXCERPT_LEAD = 40;
+
+/**
+ * A row shows two lines of a comment; a match further down would be cut off.
+ * Start the text shortly before it instead, at a word boundary if one is near.
+ */
+export function excerpt(text: string, query: string): string {
+  const needle = needleOf(query);
+  const i = needle ? text.toLowerCase().indexOf(needle) : -1;
+  if (i <= EXCERPT_LEAD || text.toLowerCase().length !== text.length) return text;
+  const from = i - EXCERPT_LEAD;
+  const space = text.slice(from, i).search(/\s/);
+  return '…' + text.slice(space === -1 ? from : from + space + 1);
+}

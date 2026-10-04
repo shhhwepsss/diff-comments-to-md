@@ -63,6 +63,17 @@ body.rv-dragging-sidebar .rv-cpanel__resize:active {
   background: var(--bgColor-muted);
 }
 
+.rv-cpanel__found {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text search hits, in the row's text and file name. */
+.rv-cpanel__hit {
+  border-radius: var(--borderRadius-small);
+  background: var(--bgColor-attention-muted);
+  color: inherit;
+}
+
 .rv-cpanel__list {
   flex: 1;
   min-height: 0;
@@ -70,9 +81,18 @@ body.rv-dragging-sidebar .rv-cpanel__resize:active {
 }
 
 .rv-cpanel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--base-size-8);
   padding: var(--base-size-24) var(--base-size-16);
   text-align: center;
   color: var(--fgColor-muted);
+}
+
+.rv-cpanel__query {
+  color: var(--fgColor-default);
+  overflow-wrap: anywhere;
 }
 
 .rv-cpanel__section {
