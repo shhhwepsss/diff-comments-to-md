@@ -41,6 +41,8 @@ type Props = {
 };
 
 const FLASH_MS = 1600;
+/** How long after a reveal the scroll still follows the growing content. */
+const SETTLE_MS = 500;
 
 /**
  * One read-only unified diff of a file: the new text is the document, the old
@@ -74,6 +76,8 @@ export function DiffEditor({
   // The editor is created asynchronously (the language chunk), so a reveal
   // asked for before that runs once the view exists.
   const flashTimer = useRef<number | undefined>(undefined);
+  const settle = useRef<ResizeObserver | null>(null);
+  const settleTimer = useRef<number | undefined>(undefined);
   const applyReveal = useCallback(() => {
     const v = view.current;
     const r = latest.current.reveal;
@@ -83,13 +87,33 @@ export function DiffEditor({
     v.dispatch({
       effects: [EditorView.scrollIntoView(line.from, { y: 'center' }), setSelectedLines.of({ from: r.from, to: r.to })],
     });
+    // The comment's card under the line is drawn a moment later (a React
+    // portal). Near the end of the file it would land below the fold, so the
+    // scroll is repeated while the content is still growing.
+    settle.current?.disconnect();
+    const grown = new ResizeObserver(() => {
+      if (view.current !== v) return;
+      const at = v.state.doc.line(Math.min(line.number, v.state.doc.lines)).from;
+      v.dispatch({ effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+    });
+    grown.observe(v.contentDOM);
+    settle.current = grown;
+    window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(() => grown.disconnect(), SETTLE_MS);
     window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => {
       if (!drag.current) view.current?.dispatch({ effects: setSelectedLines.of(latest.current.selected) });
     }, FLASH_MS);
     latest.current.onRevealed?.(r.nonce);
   }, []);
-  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(flashTimer.current);
+      window.clearTimeout(settleTimer.current);
+      settle.current?.disconnect();
+    },
+    [],
+  );
 
   // Drag over line numbers: anchor line + current line, painted live.
   const drag = useRef<{ anchor: number; current: number } | null>(null);
