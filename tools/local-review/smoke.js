@@ -199,6 +199,10 @@ async function main() {
   fs.writeFileSync(path.join(staticDir, 'index.html'), staticIndexHtml, 'utf8');
   process.env.LOCAL_REVIEW_STATIC_DIR = staticDir;
 
+  // A failing gh fixture of a transient kind is retried (lib/gh.js); the
+  // suite must not sit out the real backoff between those attempts.
+  require('./lib/gh').configure({ retryDelaysMs: [0, 0] });
+
   const repo = buildRepo();
   console.log(`\ntemp repo: ${repo}`);
   console.log(`temp home: ${home}\n`);
@@ -1583,6 +1587,270 @@ async function main() {
   );
 
   delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+
+  // --------------------------------------- gh: надёжность запросов (#55)
+  console.log('\ngh: надёжность запросов');
+  const ghLib = require('./lib/gh');
+  const relLog = path.join(home, 'gh-reliability-calls.log');
+  const relCalls = (needle) =>
+    fs.existsSync(relLog)
+      ? fs.readFileSync(relLog, 'utf8').split('\n').filter((l) => l && l.includes(needle)).length
+      : 0;
+  const rejection = (promise) => promise.then(() => null, (e) => e);
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = relLog;
+
+  // -- классификация: у каждого класса ошибок своя причина и своё сообщение
+  const classOf = (stderr) => ghLib.classifyGhError({ code: 1, stderr: Buffer.from(stderr) }, ['api', 'x']);
+  const CLASSES = [
+    [
+      'timeout',
+      'Get "https://api.github.com/x": dial tcp 140.82.121.6:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time',
+    ],
+    ['timeout', 'Get "https://api.github.com/x": net/http: TLS handshake timeout'],
+    ['network', 'dial tcp: lookup api.github.com: no such host'],
+    ['network', 'Get "https://api.github.com/x": dial tcp 140.82.121.6:443: connect: connection refused'],
+    ['server', 'gh: Bad Gateway (HTTP 502)'],
+    ['server', 'gh: Gateway Timeout (HTTP 504)'],
+    ['rate-limit', 'gh: API rate limit exceeded for user ID 1. (HTTP 403)'],
+    ['rate-limit', 'gh: You have exceeded a secondary rate limit. Please wait a few minutes (HTTP 403)'],
+    ['not-authenticated', 'gh: Bad credentials (HTTP 401)'],
+    ['not-found', 'gh: Not Found (HTTP 404)'],
+    ['unknown', 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300)'],
+    ['unknown', 'gh: Validation Failed (HTTP 422)'],
+  ];
+  for (const [reason, stderr] of CLASSES) {
+    eq(classOf(stderr).ghReason, reason, `классификация: ${reason} <- ${stderr.slice(-48)}`);
+  }
+  const timedOut = ghLib.classifyGhError(
+    { code: null, stderr: Buffer.alloc(0), timedOut: true, timeoutMs: 12000 },
+    ['api', 'x']
+  );
+  eq(timedOut.ghReason, 'timeout', 'классификация: gh, убитый по таймауту, — timeout');
+  eq(timedOut.status, 504, 'таймаут -> HTTP 504');
+  const messages = ['timeout', 'network', 'server', 'rate-limit', 'not-authenticated', 'not-found'].map(
+    (reason) => classOf(CLASSES.find((c) => c[0] === reason)[1]).message
+  );
+  eq(new Set(messages).size, messages.length, 'у каждого класса ошибок своё сообщение');
+  ok(
+    !/нет связи/i.test(classOf(CLASSES[0][1]).message) && /нет связи/i.test(classOf(CLASSES[2][1]).message),
+    '«нет связи» говорится только про отсутствие сети, а не про таймаут соединения'
+  );
+  eq(
+    ['timeout', 'network', 'server', 'rate-limit', 'not-authenticated', 'not-found', 'not-installed', 'unknown'].filter(
+      (reason) => ghLib.isTransient({ ghReason: reason })
+    ),
+    ['timeout', 'network', 'server'],
+    'временными считаются только таймаут, сеть и 5xx'
+  );
+
+  // -- повтор: задержки подставные, тест реально не ждёт
+  const slept = [];
+  const restoreGh = ghLib.configure({
+    retryDelaysMs: [300, 1200],
+    sleep: (ms) => {
+      slept.push(ms);
+      return Promise.resolve();
+    },
+  });
+  const DIAL = { code: 1, stderr: 'Get "https://api.github.com/x": dial tcp 1.2.3.4:443: i/o timeout\n' };
+  ghFixtures(
+    {
+      'api flaky': [DIAL, { code: 0, stdout: 'recovered\n' }],
+      'api always-down': DIAL,
+      'api bad-gateway-once': [{ code: 1, stderr: 'gh: Bad Gateway (HTTP 502)\n' }, { code: 0, stdout: 'ok\n' }],
+      'api gone': { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      'api too-big': {
+        code: 1,
+        stderr: 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300)\n',
+      },
+      'api invalid': { code: 1, stderr: 'gh: Validation Failed (HTTP 422)\n' },
+      'api limited': { code: 1, stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)\n' },
+      'api no-auth': { code: 1, stderr: 'gh: Bad credentials (HTTP 401)\n' },
+    },
+    home
+  );
+  eq(await ghLib.gh(['api', 'flaky']), 'recovered\n', 'временный сбой, затем успех -> запрос удаётся');
+  eq(relCalls('api flaky'), 2, 'временный сбой: gh запущен дважды');
+  eq(slept, [300], 'перед повтором выдержана первая задержка (подставная)');
+  eq(await ghLib.gh(['api', 'bad-gateway-once']), 'ok\n', 'HTTP 502, затем успех -> запрос удаётся');
+
+  slept.length = 0;
+  const down = await rejection(ghLib.gh(['api', 'always-down']));
+  ok(down && down.ghReason === 'timeout' && down.userFacing === true, 'постоянный сбой -> ошибка своего класса', String(down));
+  eq(relCalls('api always-down'), 3, 'постоянный сбой: три попытки и не больше');
+  eq(slept, [300, 1200], 'задержки между попытками растут');
+
+  for (const [name, reason] of [
+    ['gone', 'not-found'],
+    ['too-big', 'unknown'],
+    ['invalid', 'unknown'],
+    ['limited', 'rate-limit'],
+    ['no-auth', 'not-authenticated'],
+  ]) {
+    const err = await rejection(ghLib.gh(['api', name]));
+    ok(err && err.ghReason === reason, `невременная ошибка (${name}) -> ${reason}`, String(err));
+    eq(relCalls(`api ${name}`), 1, `невременная ошибка (${name}) не повторяется`);
+  }
+
+  // -- таймаут: зависший gh убивается, а не держит запрос вечно
+  ghFixtures({ 'api hang': { code: 0, stdout: 'late\n', delayMs: 5000 } }, home);
+  ghLib.configure({ attemptTimeoutsMs: [150], retryDelaysMs: [] });
+  const hangStarted = Date.now();
+  const hung = await rejection(ghLib.gh(['api', 'hang']));
+  ok(hung && hung.ghReason === 'timeout' && hung.status === 504, 'зависший gh -> timeout / 504', String(hung));
+  ok(Date.now() - hangStarted < 3000, 'зависший gh прерван по таймауту, а не дождался ответа');
+  ghLib.configure({ attemptTimeoutsMs: [10000], retryDelaysMs: [0, 0] });
+
+  // -- одинаковые одновременные запросы -> один gh
+  ghFixtures({ 'api same': { code: 0, stdout: 'shared\n', delayMs: 200 } }, home);
+  const shared = await Promise.all(Array.from({ length: 5 }, () => ghLib.gh(['api', 'same'])));
+  eq(shared, Array(5).fill('shared\n'), 'пять одновременных одинаковых запросов получают один ответ');
+  eq(relCalls('api same'), 1, 'пять одновременных одинаковых запросов -> один запуск gh');
+  await ghLib.gh(['api', 'same']);
+  eq(relCalls('api same'), 2, 'следующий запрос после завершения снова идёт в gh (это не кэш)');
+
+  // -- неизменяемый ресурс (адресован sha) запоминается
+  ghFixtures({ 'api by-sha': { code: 0, stdout: 'frozen\n' } }, home);
+  await ghLib.gh(['api', 'by-sha'], { immutable: true });
+  eq(await ghLib.gh(['api', 'by-sha'], { immutable: true }), 'frozen\n', 'immutable: повторный ответ тот же');
+  eq(relCalls('api by-sha'), 1, 'immutable: повторный запрос не запускает gh');
+
+  // -- ограничение числа одновременных gh
+  const limiter = ghLib.createLimiter(() => 3);
+  let active = 0;
+  let peak = 0;
+  await Promise.all(
+    Array.from({ length: 10 }, () =>
+      limiter.run(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
+      })
+    )
+  );
+  eq(peak, 3, 'ограничитель: одновременно идёт ровно столько задач, сколько разрешено');
+  const afterThrow = await rejection(limiter.run(() => Promise.reject(new Error('boom'))));
+  ok(
+    afterThrow && (await limiter.run(async () => 'next')) === 'next',
+    'ограничитель: упавшая задача освобождает место'
+  );
+
+  const spanLog = path.join(home, 'gh-spans.log');
+  process.env.LOCAL_REVIEW_GH_SPAN_LOG = spanLog;
+  ghFixtures({ '*': { code: 0, stdout: 'x\n', delayMs: 250 } }, home);
+  ghLib.configure({ maxConcurrent: 3 });
+  await Promise.all(Array.from({ length: 9 }, (_, i) => ghLib.gh(['api', `burst-${i}`])));
+  delete process.env.LOCAL_REVIEW_GH_SPAN_LOG;
+  let running = 0;
+  let maxRunning = 0;
+  fs.readFileSync(spanLog, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split(' '))
+    .sort((a, b) => Number(a[1]) - Number(b[1]) || (a[0] === 'end' ? -1 : 1))
+    .forEach(([edge]) => {
+      running += edge === 'start' ? 1 : -1;
+      maxRunning = Math.max(maxRunning, running);
+    });
+  eq(relCalls('api burst-'), 9, 'все девять запросов дошли до gh');
+  ok(maxRunning <= 3, 'одновременных gh не больше лимита (3)', `пик ${maxRunning}`);
+  ok(maxRunning >= 2, 'при этом запросы действительно идут параллельно', `пик ${maxRunning}`);
+  ghLib.configure({ maxConcurrent: restoreGh.maxConcurrent });
+
+  // -- насквозь: лента открывает несколько файлов PR-а сразу
+  const REL_BASE = 'relBaseSha';
+  const REL_HEAD = 'relHeadSha';
+  const REL_MB = 'relMergeBaseSha';
+  const relMeta =
+    'pr view 77 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url';
+  ghFixtures(
+    {
+      'pr diff 77 --repo o/r': { code: 0, stdout: PR_DIFF, delayMs: 150 },
+      [relMeta]: {
+        code: 0,
+        stdout: JSON.stringify({
+          number: 77,
+          title: 'rel',
+          author: { login: 'a' },
+          state: 'OPEN',
+          headRefName: 'h',
+          baseRefName: 'b',
+          headRefOid: REL_HEAD,
+          url: 'u',
+        }),
+      },
+      'pr view 77 --repo o/r --json baseRefOid,headRefOid': {
+        code: 0,
+        stdout: JSON.stringify({ baseRefOid: REL_BASE, headRefOid: REL_HEAD }),
+        delayMs: 150,
+      },
+      [`api repos/o/r/compare/${REL_BASE}...${REL_HEAD}`]: {
+        code: 0,
+        stdout: JSON.stringify({ merge_base_commit: { sha: REL_MB } }),
+        delayMs: 150,
+      },
+      [ghContentsKey('src/app.js', REL_MB)]: [DIAL, { code: 0, stdout: 'old app\n' }],
+      [ghContentsKey('src/app.js', REL_HEAD)]: { code: 0, stdout: 'new app\n' },
+      [ghContentsKey('created.txt', REL_MB)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+      [ghContentsKey('created.txt', REL_HEAD)]: { code: 0, stdout: 'created\n' },
+      [ghContentsKey('gone.txt', REL_MB)]: { code: 0, stdout: 'gone\n' },
+      [ghContentsKey('gone.txt', REL_HEAD)]: { code: 1, stderr: 'gh: Not Found (HTTP 404)\n' },
+    },
+    home
+  );
+  const relQ = 'source=pr&host=github.com&owner=o&repo=r&number=77';
+  const relDiffs = await Promise.all(
+    ['src/app.js', 'created.txt', 'gone.txt', 'src/app.js'].map((f) =>
+      call(`/api/diff?file=${encodeURIComponent(f)}&${relQ}`)
+    )
+  );
+  ok(
+    relDiffs.every((r) => r.status === 200),
+    'четыре одновременных /api/diff по PR-у -> все 200',
+    JSON.stringify(relDiffs.map((r) => [r.status, r.body.error]))
+  );
+  eq(relDiffs[0].body.oldText, 'old app\n', 'временный сбой на содержимом файла пережит повтором');
+  eq(relCalls('pr diff 77'), 1, 'одновременные /api/diff -> один gh pr diff');
+  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 1, 'одновременные /api/diff -> один gh pr view за sha');
+  eq(relCalls(`compare/${REL_BASE}...${REL_HEAD}`), 1, 'одновременные /api/diff -> один compare за merge-base');
+  eq(
+    relCalls(`contents/created.txt?ref=${REL_MB}`),
+    1,
+    '404 на содержимом (файла нет на этой стороне) не повторяется'
+  );
+
+  await call(`/api/state?${relQ}`);
+  await call(`/api/state?${relQ}`);
+  eq(relCalls(relMeta), 1, 'шапка PR-а кэшируется: второй /api/state не запускает gh pr view');
+  await call(`/api/state?${relQ}&fresh=1`);
+  eq(relCalls(relMeta), 2, 'fresh=1 перечитывает шапку PR-а');
+  await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${relQ}&fresh=1`);
+  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 2, 'fresh=1 заново спрашивает sha концов PR-а');
+  eq(
+    relCalls(`compare/${REL_BASE}...${REL_HEAD}`),
+    1,
+    'merge-base тех же двух sha не перезапрашивается: он неизменяем'
+  );
+
+  ghFixtures({ '*': { code: 1, stderr: 'dial tcp: lookup api.github.com: no such host\n' } }, home);
+  const offline = await call('/api/state?source=pr&host=github.com&owner=o&repo=r&number=78');
+  ok(
+    offline.status === 502 && /нет связи/i.test(offline.body.error),
+    'нет сети -> 502 и «нет связи»',
+    JSON.stringify(offline.body)
+  );
+  ghFixtures({ '*': { code: 1, stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)\n' } }, home);
+  const limited = await call('/api/state?source=pr&host=github.com&owner=o&repo=r&number=79');
+  ok(
+    limited.status === 429 && /лимит/i.test(limited.body.error),
+    'лимит API -> 429 и сообщение про лимит',
+    JSON.stringify(limited.body)
+  );
+
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+  ghLib.configure(restoreGh);
+  ghLib.configure({ retryDelaysMs: [0, 0] });
 
   // ----------------------------------- clear-all with confirm actually clears
   console.log('\nclear-all с подтверждением');

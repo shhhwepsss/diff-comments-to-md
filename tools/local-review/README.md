@@ -115,6 +115,7 @@ review                 # или: review --staged / review --base origin/main
 | --- | --- |
 | `LOCAL_REVIEW_HOME` | каталог конфига вместо `~/.local-review` |
 | `LOCAL_REVIEW_GH_BIN` | путь к `gh`; нужен только smoke-тесту для подстановки фикстур |
+| `LOCAL_REVIEW_GH_DEBUG` | `1` — печатать в stderr строку на каждый запуск `gh`: длительность, номер попытки, исход. Так видно, где ждём GitHub |
 | `LOCAL_REVIEW_STATIC_DIR` | каталог собранного UI вместо `tools/local-review/dist`; нужен smoke-тесту |
 
 ## Работа в UI

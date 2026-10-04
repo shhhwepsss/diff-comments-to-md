@@ -108,10 +108,11 @@ async function loadShas(descriptor, fresh) {
     '--json',
     'baseRefOid,headRefOid',
   ]);
-  const compare = await ghJson([
-    'api',
-    `repos/${descriptor.owner}/${descriptor.repo}/compare/${view.baseRefOid}...${view.headRefOid}`,
-  ]);
+  // The merge-base of two given commits never changes.
+  const compare = await ghJson(
+    ['api', `repos/${descriptor.owner}/${descriptor.repo}/compare/${view.baseRefOid}...${view.headRefOid}`],
+    { immutable: true }
+  );
   const mergeBaseSha = (compare.merge_base_commit && compare.merge_base_commit.sha) || view.baseRefOid;
 
   const result = { at: Date.now(), mergeBaseSha, headRefOid: view.headRefOid };
@@ -129,8 +130,10 @@ async function loadPrTexts(descriptor, shas, entry) {
   if (entry.binary) return { oldText: null, newText: null };
 
   const oldPath = entry.oldPath || entry.path;
-  const oldText = await fetchContent(descriptor, shas.mergeBaseSha, oldPath);
-  const newText = await fetchContent(descriptor, shas.headRefOid, entry.path);
+  const [oldText, newText] = await Promise.all([
+    fetchContent(descriptor, shas.mergeBaseSha, oldPath),
+    fetchContent(descriptor, shas.headRefOid, entry.path),
+  ]);
 
   const tooBig = (t) => t !== null && Buffer.byteLength(t, 'utf8') > MAX_TEXT_BYTES;
   if (tooBig(oldText) || tooBig(newText)) {
@@ -292,10 +295,10 @@ async function resolveRangeLeft(descriptor, fresh) {
   const hit = RANGE_LEFT_CACHE.get(key);
   if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit.left;
 
-  const commit = await ghJson([
-    'api',
-    `repos/${descriptor.owner}/${descriptor.repo}/commits/${descriptor.from}`,
-  ]);
+  // A commit's parents never change.
+  const commit = await ghJson(['api', `repos/${descriptor.owner}/${descriptor.repo}/commits/${descriptor.from}`], {
+    immutable: true,
+  });
   const parents = commit.parents || [];
   const left = parents.length ? parents[0].sha : EMPTY_TREE_SHA1;
   RANGE_LEFT_CACHE.set(key, { at: Date.now(), left });
@@ -387,8 +390,8 @@ function createPrSource(descriptor) {
     id: descriptorKey(descriptor),
     kind: 'pr',
     descriptor,
-    async meta() {
-      return resolvePr(descriptor);
+    async meta(options) {
+      return resolvePr(descriptor, options);
     },
     async listFiles(options) {
       const fresh = options && options.fresh;
