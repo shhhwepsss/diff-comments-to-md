@@ -9,7 +9,7 @@ import { FileFeed, type FeedFile } from './FileFeed';
 import { buildTree, filesOf } from './fileTree';
 import type { FileFilter } from './useFileFilter';
 import { setFileHidden, type HiddenFiles } from './hiddenComments';
-import { isMarkdownPath } from './markdownFile';
+import { previewKind } from './previewFile';
 import { NO_RENDER_CHOICE, isRendered, setFileRendered, switchRendered, type RenderChoice } from './renderMode';
 import { staleTarget } from '../review/commentAge';
 import './diff.css';
@@ -50,11 +50,13 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, filt
   const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
   const activeDiff = useFileDiff(diffs, activeFile);
   const [wrap, setWrap] = useState(readWrap);
-  // Source diff or rendered markdown; source is the default. One choice for
+  // Source diff or rendered markdown / html; source is the default. One choice for
   // every file or one per file, as the setting says (renderMode.ts). Not persisted.
   const [renderChoice, setRenderChoice] = useState<RenderChoice>(NO_RENDER_CHOICE);
   // Files whose remote images the reviewer chose to load (not persisted).
   const [externalImageFiles, setExternalImageFiles] = useState<Record<string, boolean>>({});
+  // Html files whose scripts the reviewer chose to run (not persisted).
+  const [scriptFiles, setScriptFiles] = useState<Record<string, boolean>>({});
   // Files whose comments the reviewer hid with the header button (not persisted).
   const [hiddenFiles, setHiddenFiles] = useState<HiddenFiles>({});
   // Unsaved text of the open new-comment form. Switching Код/Просмотр remounts
@@ -94,6 +96,7 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, filt
     [],
   );
   const loadExternalImages = useCallback((path: string) => setExternalImageFiles((prev) => ({ ...prev, [path]: true })), []);
+  const runScripts = useCallback((path: string) => setScriptFiles((prev) => ({ ...prev, [path]: true })), []);
 
   // Every comment of a file, stale ones too: written against other code
   // (another commit, or before a commit), they stay on their line in grey
@@ -200,13 +203,15 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, filt
       onWrap: toggleWrap,
       // Only for a file that has a rendered view: the common switch must not
       // re-render every other file of the feed.
-      rendered: isMarkdownPath(path) && isRendered(renderChoice, path, renderAllFiles),
+      rendered: previewKind(path) !== null && isRendered(renderChoice, path, renderAllFiles),
       onRendered: switchRenderedView,
       onFileRendered: setFileRenderedView,
       commentsHidden: Boolean(hiddenFiles[path]),
       onCommentsHidden: setCommentsHidden,
       externalImages: Boolean(externalImageFiles[path]),
       onExternalImages: loadExternalImages,
+      scripts: Boolean(scriptFiles[path]),
+      onRunScripts: runScripts,
       zen,
       onZen,
     };
