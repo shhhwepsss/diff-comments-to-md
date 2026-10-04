@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
-import { api, failureMessage, DEFAULT_VIEW_MODE } from './api/client';
+import { api, failureMessage, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
 import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
@@ -56,6 +56,8 @@ export function App({ theme, onTheme }: Props) {
     setChosenMode(mode);
     writeViewMode(mode);
   }, []);
+  // «Код» / «Просмотр» as one switch for every file, or one per file.
+  const [renderAllFiles, setRenderAllFiles] = useState(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
 
   const route = routeFromHash(hash);
   const onSettings = route.screen === 'settings';
@@ -75,8 +77,9 @@ export function App({ theme, onTheme }: Props) {
 
   // The shortcut lives in ~/.local-review/settings.json, which only the
   // settings page writes: read it at boot and again on the way out of that
-  // page. A failure here costs the shortcuts and the chosen default view mode,
-  // nothing else: the diff must still open, so the mode falls back.
+  // page. A failure here costs the shortcuts, the chosen default view mode and
+  // the render mode setting, nothing else: the diff must still open, so the
+  // mode falls back.
   useEffect(() => {
     if (onSettings) return;
     let alive = true;
@@ -86,6 +89,7 @@ export function App({ theme, onTheme }: Props) {
         if (!alive) return;
         setKeys(keybindingsFrom(s.keybindings));
         setDefaultMode(s.defaultViewMode);
+        setRenderAllFiles(s.renderModeForAllFiles);
       })
       .catch(() => alive && setDefaultMode((mode) => mode ?? DEFAULT_VIEW_MODE));
     return () => {
@@ -177,6 +181,7 @@ export function App({ theme, onTheme }: Props) {
             onCommentsPanel={setCommentsPanel}
             viewedKey={keys.viewedFile}
             viewMode={viewMode}
+            renderAllFiles={renderAllFiles}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />

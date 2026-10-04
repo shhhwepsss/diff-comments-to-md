@@ -8,6 +8,7 @@ import { useToast } from '../lib/toast';
 import { CopyPromptSection } from './CopyPromptSection';
 import { GitignoreSection } from './GitignoreSection';
 import { KeybindingsSection } from './KeybindingsSection';
+import { RenderModeSection } from './RenderModeSection';
 import { ViewModeSection } from './ViewModeSection';
 import './settings.css';
 
@@ -162,6 +163,10 @@ export function SettingsScreen({ back }: { back: string }) {
           <ViewModeSection
             value={draft.defaultViewMode}
             onChange={(defaultViewMode) => setDraft({ ...draft, defaultViewMode })}
+          />
+          <RenderModeSection
+            value={draft.renderModeForAllFiles}
+            onChange={(renderModeForAllFiles) => setDraft({ ...draft, renderModeForAllFiles })}
           />
           <KeybindingsSection value={draft.keybindings} onChange={(keybindings) => setDraft({ ...draft, keybindings })} />
           {/* Следующая настройка — ещё одна управляемая секция здесь. */}

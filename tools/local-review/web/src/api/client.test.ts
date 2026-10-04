@@ -3,12 +3,14 @@ import {
   api,
   ApiError,
   commitsListDescriptor,
+  DEFAULT_RENDER_MODE_FOR_ALL_FILES,
   DEFAULT_VIEW_MODE,
   descriptorQuery,
   errorMessage,
   failureMessage,
   NO_RESPONSE,
   normalizeSettings,
+  renderModeForAllFilesFrom,
   responseErrorMessage,
   viewModeFrom,
 } from './client';
@@ -47,6 +49,7 @@ describe('normalizeSettings', () => {
     gitignoreTarget: 'project' as const,
     keybindings: { ...KEYBINDING_DEFAULTS },
     defaultViewMode: 'single' as const,
+    renderModeForAllFiles: false,
   };
 
   it('keeps a valid view mode', () => {
@@ -59,6 +62,15 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings(older as Settings).defaultViewMode).toBe('all');
     expect(normalizeSettings({ ...full, defaultViewMode: 'grid' } as unknown as Settings).defaultViewMode).toBe('all');
     expect(viewModeFrom(null)).toBe(DEFAULT_VIEW_MODE);
+  });
+
+  it('keeps the shared render mode switch, and turns it on when it is missing or not a boolean', () => {
+    expect(normalizeSettings(full).renderModeForAllFiles).toBe(false);
+    expect(normalizeSettings({ ...full, renderModeForAllFiles: true }).renderModeForAllFiles).toBe(true);
+    const { renderModeForAllFiles: _dropped, ...older } = full;
+    expect(normalizeSettings(older as Settings).renderModeForAllFiles).toBe(true);
+    expect(normalizeSettings({ ...full, renderModeForAllFiles: 'no' } as unknown as Settings).renderModeForAllFiles).toBe(true);
+    expect(renderModeForAllFilesFrom(null)).toBe(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
   });
 
   it('still completes the keybindings map', () => {

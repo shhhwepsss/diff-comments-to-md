@@ -79,6 +79,9 @@ function writeState(next) {
  * '' — cleared is a choice, not a gap.
  * `defaultViewMode` is the view mode ('single' or 'all', see VIEW_MODES) a
  * browser starts in while it has no remembered choice of its own.
+ * `renderModeForAllFiles` says whether «Код» / «Просмотр» switched in one file
+ * switches every file that has a rendered view (true, the default) or only
+ * that file (false, the historical behaviour).
  */
 function defaultKeybindings() {
   return { ...KEYBINDING_DEFAULTS };
@@ -89,6 +92,7 @@ const SETTINGS_DEFAULTS = {
   gitignoreTarget: 'project',
   keybindings: defaultKeybindings(),
   defaultViewMode: 'all',
+  renderModeForAllFiles: true,
 };
 
 /**
@@ -119,6 +123,10 @@ function readSettings() {
         parsed && VIEW_MODES.includes(parsed.defaultViewMode)
           ? parsed.defaultViewMode
           : SETTINGS_DEFAULTS.defaultViewMode,
+      renderModeForAllFiles:
+        parsed && typeof parsed.renderModeForAllFiles === 'boolean'
+          ? parsed.renderModeForAllFiles
+          : SETTINGS_DEFAULTS.renderModeForAllFiles,
     };
   } catch {
     // Same as state.json: missing or corrupt just means defaults.

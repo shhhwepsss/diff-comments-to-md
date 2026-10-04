@@ -144,7 +144,10 @@ export type FileDiffProps = {
   onWrap: (next: boolean) => void;
   /** Rendered markdown instead of the source diff. */
   rendered: boolean;
+  /** The reviewer used the «Код» / «Просмотр» switch; other files may follow (renderMode.ts). */
   onRendered: (path: string, rendered: boolean) => void;
+  /** This file alone changes its view: the others are not touched. */
+  onFileRendered: (path: string, rendered: boolean) => void;
   commentsHidden: boolean;
   onCommentsHidden: (path: string, hidden: boolean) => void;
   externalImages: boolean;
@@ -183,6 +186,7 @@ export const FileDiff = memo(function FileDiff({
   onWrap,
   rendered: renderedChoice,
   onRendered,
+  onFileRendered,
   commentsHidden,
   onCommentsHidden,
   externalImages,
@@ -260,7 +264,7 @@ export const FileDiff = memo(function FileDiff({
   // shown.
   useEffect(() => {
     if (!reveal) return;
-    onRendered(path, false);
+    onFileRendered(path, false);
     onCommentsHidden(path, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.nonce, reveal?.comment.id, path]);
@@ -442,7 +446,7 @@ export const FileDiff = memo(function FileDiff({
           <div className="rv-diff-frame">
             <PreviewBoundary
               onError={(e) => {
-                onRendered(path, false);
+                onFileRendered(path, false);
                 toast(failureMessage('Просмотр markdown не загрузился', e), true);
               }}
             >
