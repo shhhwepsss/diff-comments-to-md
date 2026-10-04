@@ -123,7 +123,13 @@ export function unpairedAddedLines(hunks: readonly Hunk[]): number[] {
   return lines;
 }
 
+// Without hunks the whole file goes through CodeMirror's diff. A file of a
+// large PR comes that way (GitHub leaves its patch out), megabytes long and
+// mostly rewritten: unbounded, that diff froze the page for minutes. The scan
+// limit is the merge view's own default; the timeout is the backstop.
+const WHOLE_FILE_DIFF = { scanLimit: 500, timeout: 1500 };
+
 /** A `diffConfig.override` for the merge view. */
 export function gitDiffOverride(hunks: readonly Hunk[]) {
-  return (a: string, b: string): readonly Change[] => changesFromHunks(hunks, a, b) ?? charDiff(a, b);
+  return (a: string, b: string): readonly Change[] => changesFromHunks(hunks, a, b) ?? charDiff(a, b, WHOLE_FILE_DIFF);
 }

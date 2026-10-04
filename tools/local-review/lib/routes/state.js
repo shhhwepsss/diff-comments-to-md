@@ -25,14 +25,16 @@ async function getState(req, res, ctx, url) {
   // JSON error instead of an empty screen. Asked for beside the file list, not
   // after it: for a PR both are a gh run of their own.
   const fresh = isFresh(url);
-  const [{ files, range }, pr] = await Promise.all([
+  const [{ files, range, truncated }, pr] = await Promise.all([
     source.listFiles({ fresh }),
     descriptor.source === 'pr' ? source.meta({ fresh }) : null,
   ]);
   // A PR's stale marks are swept here, with the diff this request fetched
   // anyway, rather than at startup, where it would take a network call. The
   // marks read below may still include them: they do not count either way.
-  if (descriptor.source === 'pr') pruneOpenedPrView(ctx, descriptor, files);
+  // A list GitHub cut short says nothing about the files it left out, so a
+  // truncated one sweeps nothing.
+  if (descriptor.source === 'pr' && !truncated) pruneOpenedPrView(ctx, descriptor, files);
   const counts = store.countsByFile();
   const viewed = store.viewedFiles();
 
@@ -64,6 +66,10 @@ async function getState(req, res, ctx, url) {
         ? `${pr.baseRefName} ← ${pr.headRefName}`
         : range.label,
     totalComments: store.all().length,
+    // { shown, total, limit } when GitHub cut the file list at its own limit
+    // (3000 files of a PR, 300 of a commit range); `total` is null when it
+    // does not say how many there are.
+    truncated: truncated || null,
     files: files.map((f) => ({
       path: f.path,
       oldPath: f.oldPath,
