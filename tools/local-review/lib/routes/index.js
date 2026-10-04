@@ -39,21 +39,24 @@ const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;
 
 function createApp(ctx) {
   return async function handle(req, res) {
-    const originProblem = checkOrigin(req);
-    if (originProblem) {
-      sendJson(res, 403, { error: originProblem });
-      return;
-    }
-
     const url = new URL(req.url, 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
 
+    // The shell and its assets are read-only and carry no repository data, and
+    // a link on another site navigates here with Sec-Fetch-Site: cross-site,
+    // so only /api/* below is gated by the origin check.
     if (!pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         sendText(res, 405, 'Method not allowed');
         return;
       }
       serveStatic(req, res, pathname);
+      return;
+    }
+
+    const originProblem = checkOrigin(req);
+    if (originProblem) {
+      sendJson(res, 403, { error: originProblem });
       return;
     }
 

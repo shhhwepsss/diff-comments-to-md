@@ -1006,6 +1006,24 @@ async function main() {
   ok(sameOrigin.status === 200, 'свой Origin + same-origin -> 200');
   const noHeaders = await call('/api/state');
   ok(noHeaders.status === 200, 'запрос без Origin и Sec-Fetch-Site пропускается');
+  // A link on another site (GitHub, Slack, Notion) navigates here with
+  // Sec-Fetch-Site: cross-site. The shell and its assets carry no data, so
+  // they must load; only /api/* is the surface the check protects.
+  const crossSiteHeaders = { 'sec-fetch-site': 'cross-site' };
+  const crossSiteShell = await call('/', { headers: crossSiteHeaders });
+  ok(crossSiteShell.status === 200, 'GET / с Sec-Fetch-Site: cross-site -> 200', String(crossSiteShell.status));
+  eq(crossSiteShell.body, staticIndexHtml, 'GET / с Sec-Fetch-Site: cross-site отдаёт оболочку SPA');
+  const crossSiteIndex = await call('/index.html', { headers: { ...crossSiteHeaders, origin: 'http://evil.example' } });
+  ok(crossSiteIndex.status === 200, 'статика с чужим Origin -> 200', String(crossSiteIndex.status));
+  const crossSitePost = await call('/api/comments', {
+    ...json('POST', { file: 'src/app.js', line: 1, side: 'new', body: 'csrf' }),
+    headers: { 'content-type': 'application/json', ...crossSiteHeaders },
+  });
+  ok(crossSitePost.status === 403, 'POST /api/comments с cross-site -> 403', JSON.stringify(crossSitePost.body));
+  const crossSiteEncoded = await call('/%61pi/state', { headers: crossSiteHeaders });
+  ok(crossSiteEncoded.status === 403, '/%61pi/state с cross-site -> 403', JSON.stringify(crossSiteEncoded.body));
+  const crossSiteUnknown = await call('/api/nope', { headers: crossSiteHeaders });
+  ok(crossSiteUnknown.status === 403, 'неизвестный /api/* с cross-site -> 403, а не 404', JSON.stringify(crossSiteUnknown.body));
 
   // ------------------------------------------------------------ фикстура gh
   console.log('\nфикстура gh');
