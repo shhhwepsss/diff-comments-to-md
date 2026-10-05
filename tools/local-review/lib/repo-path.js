@@ -8,11 +8,24 @@ const path = require('node:path');
 // symlinks that point outside are refused before anything is read or handed
 // to a language server.
 
-function bad(message) {
+function bad(message, status) {
   const err = new Error(message);
   err.userFacing = true;
-  err.status = 400;
+  err.status = status || 400;
   return err;
+}
+
+/**
+ * A path into git's own data: `.git/` (a folder, or the file a worktree has)
+ * at any depth, in any letter case (case-insensitive file systems). It holds
+ * the remote URLs with their tokens, hooks and the object store, none of which
+ * a review shows — and a page that tricked the browser into asking must not
+ * read them either.
+ */
+function isGitInternal(rel) {
+  return String(rel)
+    .split(/[\\/]+/)
+    .some((part) => part.toLowerCase() === '.git');
 }
 
 function realOrSelf(p) {
@@ -43,10 +56,15 @@ function resolveInRepo(root, rel) {
   const base = path.resolve(root);
   const abs = path.resolve(base, rel);
   if (abs === base || !isInside(base, abs)) throw bad('Путь вне репозитория');
+  if (isGitInternal(path.relative(base, abs))) throw bad('Служебные файлы .git недоступны', 403);
   // The deepest part of the path that exists decides where it really leads.
   let probe = abs;
   while (!fs.existsSync(probe) && probe !== base) probe = path.dirname(probe);
-  if (!isInside(realOrSelf(base), realOrSelf(probe))) throw bad('Путь вне репозитория (символическая ссылка)');
+  const realBase = realOrSelf(base);
+  const realProbe = realOrSelf(probe);
+  if (!isInside(realBase, realProbe)) throw bad('Путь вне репозитория (символическая ссылка)');
+  // A symlink inside the repository that leads into .git is .git all the same.
+  if (isGitInternal(path.relative(realBase, realProbe))) throw bad('Служебные файлы .git недоступны', 403);
   return abs;
 }
 
@@ -67,4 +85,4 @@ function relativeToRepo(root, abs) {
   return null;
 }
 
-module.exports = { resolveInRepo, relativeToRepo, isInside };
+module.exports = { resolveInRepo, relativeToRepo, isInside, isGitInternal };

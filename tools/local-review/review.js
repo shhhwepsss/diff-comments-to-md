@@ -268,7 +268,7 @@ async function start(options) {
     ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
     : null;
   const store = repoRoot ? new CommentStore(path.join(repoRoot, STORE_DIR, STORE_FILE)) : null;
-  const handler = createApp({ defaults, homeDir });
+  const handler = createApp({ defaults, homeDir, host: options.host });
 
   const server = http.createServer((req, res) => {
     Promise.resolve(handler(req, res)).catch((err) => {

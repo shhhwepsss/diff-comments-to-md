@@ -176,6 +176,102 @@ function json(method, payload) {
 
 // ------------------------------------------------------------------- LSP
 
+/** Sorted `[path, line, character]` of places, for comparisons that do not depend on directory order. */
+function placesOf(list) {
+  return (list || []).map((l) => [l.path === null ? `external:${path.basename(l.external)}` : l.path, l.line, l.character]).sort((a, b) =>
+    JSON.stringify(a) < JSON.stringify(b) ? -1 : 1
+  );
+}
+
+/** References, implementations and the call hierarchy against the fixture (src/calls.ts). */
+async function lspNavigationChecks(lsp, lspRepo, lspRoutes, symlinked) {
+  console.log('\nLSP: ссылки');
+  // `helper` in `export const value = helper() + helper();` (a.ts, line 1).
+  const refs = await lsp({ method: 'references', path: 'src/a.ts', line: 1, character: 22 });
+  ok(refs.status === 200 && refs.body.ok, 'POST /api/lsp references -> ok', JSON.stringify(refs.body));
+  eq(placesOf(refs.body.locations), [
+    ['external:lib.d.ts', 0, 0],
+    ['src/a.ts', 0, 9], ['src/a.ts', 1, 21], ['src/a.ts', 1, 32],
+    ['src/b.ts', 0, 16],
+    ['src/calls.ts', 0, 9], ['src/calls.ts', 2, 20], ['src/calls.ts', 5, 9],
+  ], 'references: все вхождения helper по файлам репозитория и одно снаружи');
+  const callsRef = (refs.body.locations || []).find((l) => l.path === 'src/calls.ts' && l.line === 2);
+  eq(callsRef && callsRef.preview, { text: 'return middle() + helper();', start: 2 }, 'references: превью строки без отступа и где оно начинается');
+  const ext = (refs.body.locations || []).find((l) => l.path === null);
+  ok(ext && ext.external === path.join(path.dirname(lspRepo), 'lib.d.ts') && !('preview' in ext),
+    'references: место вне репозитория помечено external и не читается', JSON.stringify(ext));
+  // The shown version (staged, a commit) is what the server sees and what the preview quotes.
+  const shown = "import { helper } from './b';\n\nexport const value = helper(); // shown\n";
+  const shownRefs = await lsp({ method: 'references', path: 'src/a.ts', line: 2, character: 22, text: shown });
+  const shownA = (shownRefs.body.locations || []).find((l) => l.path === 'src/a.ts' && l.line === 2);
+  eq(shownA && shownA.preview && shownA.preview.text, 'export const value = helper(); // shown', 'references: превью из показанного текста, а не с диска');
+  if (symlinked) {
+    const secret = await lsp({ method: 'references', path: 'src/a.ts', line: 0, character: 0, text: 'secret\n' });
+    const viaLink = (secret.body.locations || []).find((l) => l.path === 'src/link.ts');
+    ok(viaLink && viaLink.preview === null, 'references: файл-симлинк наружу в превью не читается', JSON.stringify(secret.body));
+  }
+  // Back to the file on disk for the rest.
+  await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 22 });
+
+  console.log('\nLSP: реализации');
+  const impl = await lsp({ method: 'implementation', path: 'src/calls.ts', line: 7, character: 19 });
+  eq([impl.body.ok, placesOf(impl.body.locations)], [true, [['src/calls.ts', 8, 13]]], 'implementation: Shape -> class Square');
+  const none = await lsp({ method: 'implementation', path: 'src/calls.ts', line: 1, character: 18 });
+  eq([none.body.ok, none.body.locations], [true, []], 'implementation: ничего не найдено -> пустой список');
+
+  console.log('\nLSP: иерархия вызовов');
+  const prep = await lsp({ method: 'prepareCallHierarchy', path: 'src/b.ts', line: 0, character: 18 });
+  const root = prep.body.items && prep.body.items[0];
+  ok(prep.body.ok && prep.body.items.length === 1 && root.name === 'helper' && root.kind === 12 && root.path === 'src/b.ts' &&
+    root.line === 0 && root.character === 16 && typeof root.token === 'string' && root.item && root.item.data.fixture === true,
+    'prepareCallHierarchy: элемент helper с подписью и исходным item', JSON.stringify(prep.body));
+  eq(root && root.preview, { text: 'export function helper() {', start: 0 }, 'prepareCallHierarchy: превью строки объявления');
+  const notCallable = await lsp({ method: 'prepareCallHierarchy', path: 'src/calls.ts', line: 7, character: 19 });
+  eq([notCallable.body.ok, notCallable.body.items], [true, []], 'prepareCallHierarchy: не функция -> пустой список');
+
+  const incoming = await lsp({ method: 'incomingCalls', path: 'src/b.ts', item: root.item, token: root.token });
+  ok(incoming.body.ok, 'incomingCalls -> ok', JSON.stringify(incoming.body));
+  const callers = (incoming.body.calls || []).map((c) => [c.node.name, c.node.path, placesOf(c.sites)]).sort();
+  eq(callers, [
+    ['a.ts', 'src/a.ts', [['src/a.ts', 1, 21], ['src/a.ts', 1, 32]]],
+    ['middle', 'src/calls.ts', [['src/calls.ts', 5, 9]]],
+    ['top', 'src/calls.ts', [['src/calls.ts', 2, 20]]],
+  ], 'incomingCalls: кто вызывает helper и места вызовов в файле вызывающего');
+  const top = (incoming.body.calls || []).find((c) => c.node.name === 'top');
+  eq(top && top.sites[0].preview, { text: 'return middle() + helper();', start: 2 }, 'incomingCalls: превью места вызова');
+
+  const outgoing = await lsp({ method: 'outgoingCalls', path: 'src/b.ts', item: top.node.item, token: top.node.token });
+  const callees = (outgoing.body.calls || []).map((c) => [c.node.name, c.node.path, placesOf(c.sites)]).sort();
+  eq(callees, [
+    ['helper', 'src/b.ts', [['src/calls.ts', 2, 20]]],
+    ['middle', 'src/calls.ts', [['src/calls.ts', 2, 9]]],
+  ], 'outgoingCalls: что вызывает top, места вызовов — в файле top');
+
+  const forged = Object.assign({}, root.item, { uri: 'file:///etc/passwd' });
+  eq((await lsp({ method: 'incomingCalls', path: 'src/b.ts', item: forged, token: root.token })).status, 403,
+    'incomingCalls: подменённый item -> 403');
+  eq((await lsp({ method: 'outgoingCalls', path: 'src/b.ts', item: root.item })).status, 403, 'outgoingCalls: item без подписи -> 403');
+  eq((await lsp({ method: 'incomingCalls', path: 'src/b.ts' })).status, 400, 'incomingCalls без item -> 400');
+  eq((await lsp({ method: 'references', path: 'src/a.ts', line: 'x', character: 0 })).status, 400, 'references без позиции -> 400');
+  eq((await lsp({ method: 'toString', path: 'src/a.ts', line: 0, character: 0 })).status, 400, 'метод из прототипа объекта -> 400');
+
+  console.log('\nLSP: метод не поддерживается сервером');
+  await lspRoutes.getManager().stopAll();
+  process.env.LOCAL_REVIEW_LSP_FIXTURE_DROP = 'callHierarchyProvider,implementationProvider';
+  try {
+    const noCalls = await lsp({ method: 'prepareCallHierarchy', path: 'src/b.ts', line: 0, character: 18 });
+    ok(noCalls.body.ok === false && noCalls.body.reason === 'not-supported' && /не поддерживает иерархию вызовов/.test(noCalls.body.message),
+      'нет callHierarchyProvider -> not-supported с понятным текстом', JSON.stringify(noCalls.body));
+    const noImpl = await lsp({ method: 'implementation', path: 'src/calls.ts', line: 7, character: 19 });
+    eq([noImpl.body.ok, noImpl.body.reason], [false, 'not-supported'], 'нет implementationProvider -> not-supported');
+    const stillRefs = await lsp({ method: 'references', path: 'src/a.ts', line: 1, character: 22 });
+    ok(stillRefs.body.ok, 'остальные методы работают', JSON.stringify(stillRefs.body));
+  } finally {
+    delete process.env.LOCAL_REVIEW_LSP_FIXTURE_DROP;
+    await lspRoutes.getManager().stopAll();
+  }
+}
+
 const FIXTURE_LSP = path.join(__dirname, 'smoke-fixtures', 'lsp-fixture.js');
 
 /** A launcher for the fake server where the registry looks first: <repo>/node_modules/.bin. */
@@ -282,6 +378,17 @@ async function lspChecks(call, home) {
   git(['config', 'commit.gpgsign', 'false'], lspRepo);
   write(lspRepo, 'src/b.ts', 'export function helper() {\n  return 1;\n}\n');
   write(lspRepo, 'src/a.ts', "import { helper } from './b';\nexport const value = helper();\n");
+  write(lspRepo, 'src/calls.ts', [
+    "import { helper } from './b';",
+    'export function top() {',
+    '  return middle() + helper();',
+    '}',
+    'export function middle() {',
+    '  return helper();',
+    '}',
+    'export interface Shape { area(): number }',
+    'export class Square implements Shape { area() { return 1; } }',
+  ].join('\n') + '\n');
   write(lspRepo, 'README.md', '# lsp\n');
   write(lspRepo, '.gitignore', 'node_modules/\n.local-review/\n');
   git(['add', '-A'], lspRepo);
@@ -437,6 +544,17 @@ async function lspChecks(call, home) {
   eq((await call(`/api/file?${lq}&path=src/nope.ts`)).status, 404, 'GET /api/file: нет файла -> 404');
   eq((await call(`/api/file?${lq}&path=src`)).status, 404, 'GET /api/file: каталог -> 404');
 
+  console.log('\nLSP: содержимое .git не отдаётся');
+  for (const gitPath of ['.git/config', '.git/HEAD', '.GIT/config', 'src/../.git/config', 'src/.git']) {
+    eq((await call(`/api/file?${lq}&path=${encodeURIComponent(gitPath)}`)).status, 403, `GET /api/file: ${gitPath} -> 403`);
+  }
+  eq((await lsp({ method: 'hover', path: '.git/config', line: 0, character: 0 })).status, 403, 'POST /api/lsp: .git/config -> 403');
+  if (symlinked) {
+    fs.symlinkSync(path.join(lspRepo, '.git', 'config'), path.join(lspRepo, 'src', 'gitlink.ts'));
+    eq((await call(`/api/file?${lq}&path=src/gitlink.ts`)).status, 403, 'GET /api/file: симлинк внутрь .git -> 403');
+    fs.unlinkSync(path.join(lspRepo, 'src', 'gitlink.ts'));
+  }
+
   console.log('\nLSP: GitHub PR без клона');
   const prq = 'source=pr&host=github.com&owner=o&repo=r&number=7';
   const prLsp = await lsp({ method: 'definition', path: 'src/a.ts', line: 0, character: 0 }, prq);
@@ -489,6 +607,8 @@ async function lspChecks(call, home) {
   }
   ok(noServer.body.ok === false && noServer.body.reason === 'no-server' && /gopls/.test(noServer.body.hint),
     'нет gopls -> no-server и подсказка, что поставить', JSON.stringify(noServer.body));
+
+  await lspNavigationChecks(lsp, lspRepo, lspRoutes, symlinked);
 
   await lspRoutes.getManager().stopAll();
   delete process.env.LOCAL_REVIEW_LSP_FIXTURE_LOG;
@@ -1354,6 +1474,34 @@ async function main() {
     repo.split('\\').join('/'),
     'defaults = репозиторий запуска, даже когда last указывает в другой'
   );
+
+  // ------------------------------------------------- Host (DNS rebinding)
+  console.log('\nпроверка Host');
+  const withHost = (host, pathname = '/api/state') =>
+    new Promise((resolve, reject) => {
+      const req = require('node:http').request({ host: '127.0.0.1', port: server.port, path: pathname, headers: { host } }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  eq(await withHost('evil.example'), 403, 'Host: evil.example -> 403 (DNS rebinding)');
+  eq(await withHost(`evil.example:${server.port}`), 403, 'Host: evil.example:<порт> -> 403');
+  eq(await withHost('127.0.0.1.evil.example'), 403, 'Host: 127.0.0.1.evil.example -> 403');
+  eq(await withHost(`localhost:${server.port}`), 200, 'Host: localhost -> 200');
+  eq(await withHost(`LOCALHOST:${server.port}`), 200, 'Host: LOCALHOST -> 200');
+  eq(await withHost(`127.0.0.1:${server.port}`), 200, 'Host: 127.0.0.1 -> 200');
+  eq(await withHost(`[::1]:${server.port}`), 200, 'Host: [::1] -> 200');
+  eq(await withHost('evil.example', '/'), 200, 'статика с чужим Host отдаётся (данных в ней нет)');
+  {
+    const { checkHost, allowedHosts } = require('./lib/http');
+    const req = (host) => ({ headers: { host } });
+    eq(checkHost(req('192.168.1.5:4321'), allowedHosts('192.168.1.5')), null, '--host 192.168.1.5: этот адрес в Host разрешён');
+    ok(checkHost(req('192.168.1.6:4321'), allowedHosts('192.168.1.5')) !== null, '--host 192.168.1.5: другой адрес -> отказ');
+    eq(checkHost(req('[fe80::1]:4321'), allowedHosts('fe80::1')), null, '--host с IPv6-адресом: он же в скобках в Host');
+    eq(checkHost({ headers: {} }, allowedHosts('127.0.0.1')), null, 'без Host (HTTP/1.0, не браузер) — пропускается');
+  }
 
   // ------------------------------------------- Origin / Sec-Fetch-Site
   console.log('\nпроверка происхождения запроса');
@@ -2634,7 +2782,7 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","definition":"F12","navBack":"Alt+Left","navForward":"Alt+Right"}',
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","definition":"F12","references":"Shift+F12","implementation":"Ctrl+F12","callHierarchy":"Alt+Shift+H","navBack":"Alt+Left","navForward":"Alt+Right"}',
     'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра и навигации по коду');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
@@ -2646,7 +2794,7 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
     'клавиша панели комментариев сохраняется рядом с Zen');
   const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
   eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
@@ -2672,7 +2820,7 @@ async function main() {
     {
       copyPrompt: '',
       gitignoreTarget: 'project',
-      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
       defaultViewMode: 'single',
       renderModeForAllFiles: true,
     },

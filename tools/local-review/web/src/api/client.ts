@@ -8,8 +8,13 @@ import type {
   FileResponse,
   GhStatus,
   Gitignore,
+  LspCallDirection,
+  LspCallItemsResponse,
+  LspCallsRequest,
+  LspCallsResponse,
   LspDefinitionResponse,
   LspHoverResponse,
+  LspLocationsMethod,
   LspRequest,
   LspStatusResponse,
   PickFolderResponse,
@@ -213,6 +218,16 @@ export const api = {
   // Code navigation. The descriptor rides in the query, like everywhere else.
   lspDefinition: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
     request<LspDefinitionResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'definition', ...body }), signal }),
+  /** definition, references or implementation: all answer with places. */
+  lspLocations: (d: Descriptor, method: LspLocationsMethod, body: LspRequest, signal?: AbortSignal) =>
+    request<LspDefinitionResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method, ...body }), signal }),
+  lspPrepareCalls: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspCallItemsResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'prepareCallHierarchy', ...body }), signal }),
+  lspCalls: (d: Descriptor, direction: LspCallDirection, body: LspCallsRequest, signal?: AbortSignal) =>
+    request<LspCallsResponse>(`/api/lsp?${descriptorQuery(d)}`, {
+      ...jsonBody('POST', { method: direction === 'incoming' ? 'incomingCalls' : 'outgoingCalls', ...body }),
+      signal,
+    }),
   lspHover: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
     request<LspHoverResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'hover', ...body }), signal }),
   /** No descriptor: what is installed on PATH and what runs anywhere (the settings page). */

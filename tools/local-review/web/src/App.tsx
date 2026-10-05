@@ -67,10 +67,17 @@ export function App({ theme, onTheme }: Props) {
   // «Код» / «Просмотр» as one switch for every file, or one per file.
   const [renderAllFiles, setRenderAllFiles] = useState(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
 
-  // A new object only when one of the three changes: every file of the feed reads it.
+  // A new object only when one of these changes: every file of the feed reads it.
   const navKeys = useMemo(
-    () => ({ definition: keys.definition, navBack: keys.navBack, navForward: keys.navForward }),
-    [keys.definition, keys.navBack, keys.navForward],
+    () => ({
+      definition: keys.definition,
+      references: keys.references,
+      implementation: keys.implementation,
+      callHierarchy: keys.callHierarchy,
+      navBack: keys.navBack,
+      navForward: keys.navForward,
+    }),
+    [keys.definition, keys.references, keys.implementation, keys.callHierarchy, keys.navBack, keys.navForward],
   );
 
   const route = routeFromHash(hash);

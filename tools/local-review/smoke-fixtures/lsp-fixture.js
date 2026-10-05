@@ -17,6 +17,16 @@
 //                `crash` exits with code 3 (and says so on stderr).
 //   hover      — «```ts\n(word) <word>\n```\nversion <n>», n being the
 //                document's version, so the test sees didOpen/didChange.
+//   references — every whole-word occurrence in the open documents and the
+//                files on disk (an open document wins over its file), then
+//                one place outside the repository.
+//   implementation — `class X implements <word>`: the X of each.
+//   prepareCallHierarchy — the `function <word>` declaration, if any.
+//   incomingCalls / outgoingCalls — calls `name(` between one `function`
+//                line and the next; a call outside any function comes from
+//                the file itself (kind Module).
+// LOCAL_REVIEW_LSP_FIXTURE_DROP (comma-separated capability names) leaves
+// those capabilities out of the initialize answer.
 // Every method received is appended as a JSON line to
 // LOCAL_REVIEW_LSP_FIXTURE_LOG when that is set.
 
@@ -78,14 +88,132 @@ function definition(word) {
   return [];
 }
 
+/** Every source text: open documents over the files on disk. */
+function allTexts() {
+  const texts = new Map();
+  for (const abs of sourceFiles(root)) texts.set(pathToFileURL(abs).href, fs.readFileSync(abs, 'utf8'));
+  for (const [uri, doc] of docs) texts.set(uri, doc.text);
+  return texts;
+}
+
+function rangeOf(line, character, length) {
+  return { start: { line, character }, end: { line, character: character + length } };
+}
+
+function references(word) {
+  const out = [];
+  const re = new RegExp(`(?<![\\w$])${word.replace(/\$/g, '\\$')}(?![\\w$])`, 'g');
+  for (const [uri, text] of allTexts()) {
+    text.split(/\r?\n/).forEach((line, i) => {
+      for (const m of line.matchAll(re)) out.push({ uri, range: rangeOf(i, m.index, word.length) });
+    });
+  }
+  if (out.length) out.push({ uri: pathToFileURL(path.join(path.dirname(root), 'lib.d.ts')).href, range: rangeOf(0, 0, word.length) });
+  return out;
+}
+
+function implementations(word) {
+  const out = [];
+  const re = new RegExp(`\\bclass\\s+(\\w+)\\s+implements\\s+${word}\\b`);
+  for (const [uri, text] of allTexts()) {
+    text.split(/\r?\n/).forEach((line, i) => {
+      const m = re.exec(line);
+      if (m) out.push({ uri, range: rangeOf(i, m.index + m[0].indexOf(m[1], 5), m[1].length) });
+    });
+  }
+  return out;
+}
+
+/** The functions of every file: name, where, and the lines of its body. */
+function functions() {
+  const out = [];
+  for (const [uri, text] of allTexts()) {
+    const lines = text.split(/\r?\n/);
+    lines.forEach((line, i) => {
+      const m = /\bfunction\s+(\w+)/.exec(line);
+      if (m) {
+        out.push({ name: m[1], uri, line: i, character: m.index + m[0].length - m[1].length, from: i, to: lines.length - 1 });
+        const prev = out[out.length - 2];
+        if (prev && prev.uri === uri) prev.to = i - 1;
+      }
+    });
+  }
+  return out;
+}
+
+function itemOf(fn) {
+  const range = rangeOf(fn.line, fn.character, fn.name.length);
+  return { name: fn.name, kind: 12, detail: path.basename(fileURLToPath(fn.uri)), uri: fn.uri, range, selectionRange: range, data: { fixture: true } };
+}
+
+function moduleItem(uri) {
+  const range = rangeOf(0, 0, 0);
+  return { name: path.basename(fileURLToPath(uri)), kind: 2, uri, range, selectionRange: range };
+}
+
+function callsIn(text, from, to, name) {
+  const ranges = [];
+  const re = new RegExp(`(?<![\\w$])${name}\\(`, 'g');
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (i < from || i > to || /\bfunction\s/.test(line)) return;
+    for (const m of line.matchAll(re)) ranges.push(rangeOf(i, m.index, name.length));
+  });
+  return ranges;
+}
+
+function incomingCalls(item) {
+  const fns = functions();
+  const texts = allTexts();
+  const out = [];
+  for (const [uri, text] of texts) {
+    const own = fns.filter((f) => f.uri === uri);
+    const first = own.length ? own[0].from : text.split(/\r?\n/).length;
+    const top = callsIn(text, 0, first - 1, item.name);
+    if (top.length) out.push({ from: moduleItem(uri), fromRanges: top });
+    for (const fn of own) {
+      const ranges = callsIn(text, fn.from, fn.to, item.name);
+      if (ranges.length) out.push({ from: itemOf(fn), fromRanges: ranges });
+    }
+  }
+  return out;
+}
+
+function outgoingCalls(item) {
+  const fns = functions();
+  const self = fns.find((f) => f.uri === item.uri && f.name === item.name);
+  if (!self) return [];
+  const text = allTexts().get(item.uri);
+  const out = [];
+  for (const fn of fns) {
+    const ranges = callsIn(text, self.from, self.to, fn.name);
+    if (ranges.length) out.push({ to: itemOf(fn), fromRanges: ranges });
+  }
+  return out;
+}
+
+function wordOf(params) {
+  const doc = docs.get(params.textDocument.uri);
+  return doc ? wordAt(doc.text, params.position.line, params.position.character) : '';
+}
+
 function handle(message) {
   if (log && message.method) fs.appendFileSync(log, JSON.stringify({ method: message.method, pid: process.pid }) + '\n');
   const { id, method, params } = message;
   switch (method) {
-    case 'initialize':
+    case 'initialize': {
       if (params && params.rootUri) root = fileURLToPath(params.rootUri);
-      send({ jsonrpc: '2.0', id, result: { capabilities: { hoverProvider: true, definitionProvider: true, textDocumentSync: 1 } } });
+      const capabilities = {
+        hoverProvider: true,
+        definitionProvider: true,
+        referencesProvider: true,
+        implementationProvider: true,
+        callHierarchyProvider: true,
+        textDocumentSync: 1,
+      };
+      for (const name of (process.env.LOCAL_REVIEW_LSP_FIXTURE_DROP || '').split(',')) delete capabilities[name.trim()];
+      send({ jsonrpc: '2.0', id, result: { capabilities } });
       return;
+    }
     case 'initialized':
       // A request of our own, which the client must answer, and some progress.
       send({ jsonrpc: '2.0', id: 'cfg-1', method: 'workspace/configuration', params: { items: [{ section: 'x' }] } });
@@ -124,6 +252,24 @@ function handle(message) {
       send({ jsonrpc: '2.0', id, result: definition(word) });
       return;
     }
+    case 'textDocument/references':
+      send({ jsonrpc: '2.0', id, result: references(wordOf(params)) });
+      return;
+    case 'textDocument/implementation':
+      send({ jsonrpc: '2.0', id, result: implementations(wordOf(params)) });
+      return;
+    case 'textDocument/prepareCallHierarchy': {
+      const word = wordOf(params);
+      const fn = functions().find((f) => f.name === word);
+      send({ jsonrpc: '2.0', id, result: fn ? [itemOf(fn)] : null });
+      return;
+    }
+    case 'callHierarchy/incomingCalls':
+      send({ jsonrpc: '2.0', id, result: incomingCalls(params.item) });
+      return;
+    case 'callHierarchy/outgoingCalls':
+      send({ jsonrpc: '2.0', id, result: outgoingCalls(params.item) });
+      return;
     case 'shutdown':
       send({ jsonrpc: '2.0', id, result: null });
       return;

@@ -39,6 +39,9 @@ export const KEYBINDING_ACTIONS = [
   { id: 'viewedFile', label: 'Отметить файл просмотренным и открыть следующий' },
   { id: 'viewMode', label: 'Переключить режим: один файл / все файлы' },
   { id: 'definition', label: 'Перейти к определению (слово под курсором)' },
+  { id: 'references', label: 'Найти ссылки (слово под курсором)' },
+  { id: 'implementation', label: 'Реализации (слово под курсором)' },
+  { id: 'callHierarchy', label: 'Иерархия вызовов (слово под курсором)' },
   { id: 'navBack', label: 'Назад по переходам' },
   { id: 'navForward', label: 'Вперёд по переходам' },
 ] as const;
@@ -55,6 +58,9 @@ export const KEYBINDING_DEFAULTS: Keybindings = {
   // F12 is also DevTools in every browser; Ctrl+click and the context menu
   // are the ways that always work, this is for those who rebind DevTools.
   definition: 'F12',
+  references: 'Shift+F12',
+  implementation: 'Ctrl+F12',
+  callHierarchy: 'Alt+Shift+H',
   navBack: 'Alt+Left',
   navForward: 'Alt+Right',
 };

@@ -17,7 +17,12 @@
 `lsp-fixture.js` — подставной language server для LSP-проверок `smoke.js`:
 говорит по stdio с framing `Content-Length`, отвечает на `initialize`,
 `definition` (ищет объявление слова под курсором) и `hover` (возвращает слово и
-версию документа, чтобы было видно `didOpen`/`didChange`). На слово `crash`
-падает с кодом 3. Смоук кладёт запускалку для него в
+версию документа, чтобы было видно `didOpen`/`didChange`), `references` (все
+вхождения слова и одно место вне репозитория), `implementation`
+(`class X implements <слово>`) и иерархию вызовов (`prepareCallHierarchy`,
+`incomingCalls`, `outgoingCalls` — по строкам `function name` и вызовам
+`name(`). На слово `crash` падает с кодом 3. `LOCAL_REVIEW_LSP_FIXTURE_DROP`
+(имена capabilities через запятую) убирает их из ответа на `initialize` — для
+проверки «сервер не поддерживает». Смоук кладёт запускалку для него в
 `node_modules/.bin/typescript-language-server` временного репозитория, так что
 `lib/lsp/registry.js` находит его тем же путём, что и настоящий сервер.

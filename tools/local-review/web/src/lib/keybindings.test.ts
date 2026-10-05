@@ -139,6 +139,9 @@ describe('keybindingsFrom', () => {
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
       definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
     });
@@ -151,6 +154,9 @@ describe('keybindingsFrom', () => {
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
       definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
     });
@@ -164,6 +170,9 @@ describe('keybindingsFrom', () => {
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
       definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
     });
@@ -214,5 +223,26 @@ describe('arrow keys', () => {
     expect(displayBinding('Ctrl+Right')).toBe('Ctrl+→');
     expect(displayBinding('F12')).toBe('F12');
     expect(displayBinding('')).toBe('');
+  });
+});
+
+describe('code navigation panel shortcuts', () => {
+  it('ship as Shift+F12, Ctrl+F12 and Shift+Alt+H, stored canonically', () => {
+    expect([KEYBINDING_DEFAULTS.references, KEYBINDING_DEFAULTS.implementation, KEYBINDING_DEFAULTS.callHierarchy]).toEqual([
+      'Shift+F12',
+      'Ctrl+F12',
+      'Alt+Shift+H',
+    ]);
+    expect(normalizeBinding('Shift+Alt+H')).toBe('Alt+Shift+H');
+  });
+
+  it('tell F12 from Shift+F12 and Ctrl+F12', () => {
+    const f12 = press('F12');
+    const shiftF12 = press('F12', { shiftKey: true });
+    const ctrlF12 = press('F12', { ctrlKey: true });
+    expect([matchesEvent('F12', f12), matchesEvent('F12', shiftF12), matchesEvent('F12', ctrlF12)]).toEqual([true, false, false]);
+    expect([matchesEvent('Shift+F12', shiftF12), matchesEvent('Ctrl+F12', ctrlF12)]).toEqual([true, true]);
+    // By physical key: Alt+Shift+H on a Cyrillic layout is still KeyH.
+    expect(matchesEvent('Alt+Shift+H', press('KeyH', { altKey: true, shiftKey: true }))).toBe(true);
   });
 });

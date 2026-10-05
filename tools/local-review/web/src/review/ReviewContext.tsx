@@ -153,7 +153,7 @@ export type Review = {
    * other file of the repository, read-only) at its line, as a history step;
    * the entry left behind remembers `from`, so Back returns to that line.
    */
-  navigateTo: (target: NavTarget, from: { path: string; line: number }) => void;
+  navigateTo: (target: NavTarget, from: { path: string; line: number | null }) => void;
   /** Drops a file from «Открыто через навигацию». */
   closeNavFile: (path: string) => void;
   /**
@@ -764,7 +764,7 @@ export function ReviewProvider({
   );
 
   const navigateTo = useCallback(
-    (target: NavTarget, from: { path: string; line: number }) => {
+    (target: NavTarget, from: { path: string; line: number | null }) => {
       const d = descriptorRef.current;
       // The entry being left remembers the line the jump started from.
       navHistory.replace(viewHash(d, from.path, from.line));

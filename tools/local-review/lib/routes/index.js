@@ -1,6 +1,6 @@
 'use strict';
 
-const { sendJson, sendText, serveStatic, checkOrigin } = require('../http');
+const { sendJson, sendText, serveStatic, checkOrigin, checkHost, allowedHosts } = require('../http');
 const state = require('./state');
 const comments = require('./comments');
 const exportRoutes = require('./export');
@@ -43,6 +43,8 @@ const ROUTES = [
 const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;
 
 function createApp(ctx) {
+  // ctx.host: the address given with --host, which the Host header may then name too.
+  const hosts = allowedHosts(ctx.host);
   return async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
@@ -56,6 +58,12 @@ function createApp(ctx) {
         return;
       }
       serveStatic(req, res, pathname);
+      return;
+    }
+
+    const hostProblem = checkHost(req, hosts);
+    if (hostProblem) {
+      sendJson(res, 403, { error: hostProblem });
       return;
     }
 

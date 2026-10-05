@@ -1,9 +1,14 @@
 import { api, commitsListDescriptor, errorMessage } from '../api/client';
 import type {
   Descriptor,
+  LspCallDirection,
+  LspCallItemsResponse,
+  LspCallsRequest,
+  LspCallsResponse,
   LspDefinitionResponse,
   LspFailure,
   LspHoverResponse,
+  LspLocationsMethod,
   LspRequest,
   LspServerStatus,
   LspState,
@@ -147,13 +152,27 @@ export class LspSession {
     return this.ask(req.path, () => api.lspHover(this.descriptor(), req, signal), signal);
   }
 
-  private async ask<T extends LspDefinitionResponse | LspHoverResponse>(path: string, send: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  locations(method: LspLocationsMethod, req: LspRequest, signal?: AbortSignal): Promise<LspDefinitionResponse> {
+    return this.ask(req.path, () => api.lspLocations(this.descriptor(), method, req, signal), signal);
+  }
+
+  prepareCalls(req: LspRequest, signal?: AbortSignal): Promise<LspCallItemsResponse> {
+    return this.ask(req.path, () => api.lspPrepareCalls(this.descriptor(), req, signal), signal);
+  }
+
+  calls(direction: LspCallDirection, req: LspCallsRequest, signal?: AbortSignal): Promise<LspCallsResponse> {
+    return this.ask(req.path, () => api.lspCalls(this.descriptor(), direction, req, signal), signal);
+  }
+
+  private async ask<T extends { ok: boolean; server?: { id: string; label: string; state: LspState }; message?: string; reason?: string }>(path: string, send: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const server = this.serverFor(path);
     // A first request starts the server: say so at once, not after it answers.
     if (server && server.found && (server.state === 'stopped' || server.state === 'failed')) this.setState(server.id, 'starting', null);
     try {
       const res = await send();
-      if (res.server) this.setState(res.server.id, res.server.state, res.ok ? null : res.message, res.server.label);
+      // «Does not support call hierarchy» is about the question, not the server's health.
+      const problem = res.ok || res.reason === 'not-supported' ? null : (res.message ?? null);
+      if (res.server) this.setState(res.server.id, res.server.state, problem, res.server.label);
       return res;
     } catch (e) {
       // Given up by the caller (a newer hover): nothing to learn from it.

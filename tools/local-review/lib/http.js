@@ -125,6 +125,45 @@ function checkOrigin(req) {
   return null;
 }
 
+/** Host names every local server answers to. */
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/** The host part of a Host header, lower-cased, without the port; IPv6 keeps its brackets. */
+function hostName(header) {
+  const value = String(header || '').trim().toLowerCase();
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    return end === -1 ? value : value.slice(0, end + 1);
+  }
+  const colon = value.indexOf(':');
+  return colon === -1 ? value : value.slice(0, colon);
+}
+
+/** The names the Host header may carry: the local ones and the address given with --host. */
+function allowedHosts(listenHost) {
+  const names = new Set(LOCAL_HOSTS);
+  if (listenHost) {
+    const h = String(listenHost).trim().toLowerCase();
+    names.add(h.includes(':') && !h.startsWith('[') ? `[${h}]` : h);
+  }
+  return names;
+}
+
+/**
+ * Against DNS rebinding: a page on evil.example whose name was re-pointed
+ * to 127.0.0.1 is same-origin with itself, so Origin and Sec-Fetch-Site say
+ * nothing — but its requests carry `Host: evil.example`. Only the names this
+ * server is really reached by pass. No Host at all is a non-browser client
+ * (HTTP/1.0), which a rebinding page cannot be.
+ */
+function checkHost(req, allowed) {
+  const header = req.headers.host;
+  if (header === undefined) return null;
+  const name = hostName(header);
+  if (allowed.has(name)) return null;
+  return `Запрос к неизвестному адресу отклонён (Host: ${String(header).slice(0, 100)})`;
+}
+
 module.exports = {
   sendJson,
   sendText,
@@ -132,6 +171,9 @@ module.exports = {
   readJsonBody,
   serveStatic,
   checkOrigin,
+  checkHost,
+  allowedHosts,
+  hostName,
   getPublicDir,
   MIME,
 };

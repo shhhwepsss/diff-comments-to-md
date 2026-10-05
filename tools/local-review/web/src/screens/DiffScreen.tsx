@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -14,8 +14,9 @@ import { CommentsPanel } from '../comments/CommentsPanel';
 import { selHi, selLo } from '../review/commitSelection';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
-import { CodeNavContext, type CodeNav, type CodeNavKeys } from '../nav/codeNav';
-import { closeLspMenu, definitionAtCaret, navKeysBlocked } from '../diff/cm/lsp';
+import { CodeNavContext, type CodeNav, type CodeNavKeys, type NavQuery } from '../nav/codeNav';
+import { NavPanel } from '../nav/NavPanel';
+import { closeLspMenu, definitionAtCaret, navKeysBlocked, panelAtCaret } from '../diff/cm/lsp';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -175,9 +176,27 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
   // tree: the index (staged) or a commit range. Base compares against the
   // working tree, so its new side is on disk.
   const sendText = descriptor.source === 'local' && (descriptor.mode === 'staged' || descriptor.mode === 'commits');
+
+  // The navigation panel (references, implementations, calls). It takes the
+  // comments panel's place on the right while open — the diff keeps its
+  // width — and the comments panel comes back when it closes. Each opening
+  // is a new query: `nonce` remounts the panel with fresh answers.
+  const [navPanel, setNavPanel] = useState<{ query: NavQuery; nonce: number } | null>(null);
+  const openPanel = useCallback((query: NavQuery) => setNavPanel((p) => ({ query, nonce: (p?.nonce ?? 0) + 1 })), []);
+  const closePanel = useCallback(() => setNavPanel(null), []);
+  // The comments panel asked for (its button, its shortcut) wins the place back.
+  const commentsWas = useRef(commentsPanel);
+  useEffect(() => {
+    if (commentsWas.current !== commentsPanel) setNavPanel(null);
+    commentsWas.current = commentsPanel;
+  }, [commentsPanel]);
+  // Another repository or view: the answers were about other code.
+  const viewKey = JSON.stringify(descriptor);
+  useEffect(() => setNavPanel(null), [viewKey]);
+
   const codeNav = useMemo<CodeNav>(
-    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText }),
-    [lsp, navHistory, navKeys, sendText],
+    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText, openPanel }),
+    [lsp, navHistory, navKeys, sendText, openPanel],
   );
 
   // F12 (or its replacement) and Alt+←/→. F12 may open DevTools first: the
@@ -188,6 +207,16 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       if (matchesEvent(navKeys.definition, e)) {
         if (definitionAtCaret()) e.preventDefault();
         return;
+      }
+      for (const [key, tab] of [
+        [navKeys.references, 'references'],
+        [navKeys.implementation, 'implementation'],
+        [navKeys.callHierarchy, 'calls'],
+      ] as const) {
+        if (matchesEvent(key, e)) {
+          if (panelAtCaret(tab)) e.preventDefault();
+          return;
+        }
       }
       // With nothing to go back to inside the review, the key stays the browser's.
       if (matchesEvent(navKeys.navBack, e)) {
@@ -273,7 +302,7 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
             <DiffPane
               zen={zen}
               onZen={onZen}
-              panelOpen={commentsPanel}
+              panelOpen={commentsPanel && !navPanel}
               viewMode={viewMode}
               renderAllFiles={renderAllFiles}
               wrap={wrap}
@@ -282,7 +311,11 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
             />
           </CodeNavContext.Provider>
         </main>
-        {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
+        {navPanel ? (
+          <NavPanel key={navPanel.nonce} query={navPanel.query} onClose={closePanel} />
+        ) : (
+          commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />
+        )}
         {loading && (
           <div className="rv-reload" role="status">
             <div className="rv-reload__bar" />

@@ -17,6 +17,9 @@ const KEYBINDING_DEFAULTS = {
   viewedFile: 'Alt+V',
   viewMode: 'Alt+A',
   definition: 'F12',
+  references: 'Shift+F12',
+  implementation: 'Ctrl+F12',
+  callHierarchy: 'Alt+Shift+H',
   navBack: 'Alt+Left',
   navForward: 'Alt+Right',
 };

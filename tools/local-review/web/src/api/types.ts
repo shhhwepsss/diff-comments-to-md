@@ -155,7 +155,30 @@ export type LspLocation = {
   character: number;
   endLine: number;
   endCharacter: number;
+  /**
+   * References, implementations, calls: a piece of the line (no indent) and
+   * the column it starts at; null when the file could not be read. Absent for
+   * a definition and outside the repository.
+   */
+  preview?: LspPreview | null;
 };
+
+export type LspPreview = { text: string; start: number };
+
+/** A function or method in a call hierarchy: where it is declared, and the server's item to expand it by. */
+export type LspCallNode = LspLocation & {
+  name: string;
+  /** LSP SymbolKind (12 function, 6 method, 2 module, …); null when the server did not say. */
+  kind: number | null;
+  /** The class or file it belongs to, as the server words it. */
+  detail: string;
+  /** Opaque: sent back as it came for the next level. */
+  item: unknown;
+  token: string;
+};
+
+/** One edge of the tree: the function at the other end and the places of the calls. */
+export type LspCall = { node: LspCallNode; sites: LspLocation[] };
 
 export type LspHover = { kind: 'markdown' | 'plaintext'; value: string };
 
@@ -163,7 +186,8 @@ type LspServerInfo = { id: string; label: string; state: LspState };
 
 export type LspFailure = {
   ok: false;
-  reason: 'no-clone' | 'unsupported' | 'no-server' | 'failed' | 'timeout';
+  /** not-supported: the server runs but does not do this (no such capability). */
+  reason: 'no-clone' | 'unsupported' | 'not-supported' | 'no-server' | 'failed' | 'timeout';
   message: string;
   hint?: string | null;
   server?: LspServerInfo;
@@ -171,6 +195,12 @@ export type LspFailure = {
 
 export type LspDefinitionResponse = ({ ok: true; server: LspServerInfo; locations: LspLocation[] }) | LspFailure;
 export type LspHoverResponse = ({ ok: true; server: LspServerInfo; hover: LspHover | null }) | LspFailure;
+export type LspCallItemsResponse = ({ ok: true; server: LspServerInfo; items: LspCallNode[] }) | LspFailure;
+export type LspCallsResponse = ({ ok: true; server: LspServerInfo; calls: LspCall[] }) | LspFailure;
+
+/** Asked about a symbol at a position: the answer is a list of places. */
+export type LspLocationsMethod = 'definition' | 'references' | 'implementation';
+export type LspCallDirection = 'incoming' | 'outgoing';
 
 export type LspRequest = {
   path: string;
@@ -180,6 +210,9 @@ export type LspRequest = {
   /** The text on screen when it is not the working tree (staged, commits). */
   text?: string;
 };
+
+/** Expanding a node of a call hierarchy: the node's item and token as they came, and the file the hierarchy began in. */
+export type LspCallsRequest = { path: string; text?: string; item: unknown; token: string };
 
 /** Commit range a comment was written against; omitted for the latest-commit-only selection. */
 export type CommitContext = { from: string; to: string; label: string };

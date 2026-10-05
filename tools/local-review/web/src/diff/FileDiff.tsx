@@ -229,7 +229,7 @@ export type FileDiffActions = {
   setCurrentComment: (id: string | null) => void;
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
   /** Go to definition landed somewhere: open it (ReviewContext.navigateTo). */
-  navigateTo: (target: NavTarget, from: { path: string; line: number }) => void;
+  navigateTo: (target: NavTarget, from: { path: string; line: number | null }) => void;
 };
 
 export type FileDiffProps = {
@@ -435,11 +435,12 @@ export const FileDiff = memo(function FileDiff({
   lsp.path = path;
   lsp.session = nav?.session ?? null;
   lsp.sendText = Boolean(nav?.sendText) && !navFile;
-  lsp.definitionKey = nav?.keys.definition ?? '';
+  lsp.keys = nav?.keys ?? null;
   lsp.toast = toast;
   lsp.onNavigate = (loc, fromLine) => {
     if (loc.path) actions.navigateTo({ path: loc.path, line: loc.line, character: loc.character }, { path, line: fromLine });
   };
+  lsp.onPanel = (query) => nav?.openPanel(query);
 
   const onSelectLines = useCallback(
     (r: LineRange) => actions.openEditor({ file: path, start: r.from, end: r.to }),

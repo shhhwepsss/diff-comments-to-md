@@ -2,7 +2,9 @@ import { StateEffect, StateField, type EditorState, type Extension } from '@code
 import { Decoration, EditorView, ViewPlugin, closeHoverTooltips, hoverTooltip, type DecorationSet, type Tooltip } from '@codemirror/view';
 import { language } from '@codemirror/language';
 import { highlightCode } from '@lezer/highlight';
-import type { LspHover, LspLocation } from '../../api/types';
+import type { LspCallDirection, LspHover, LspLocation } from '../../api/types';
+import type { CodeNavKeys, NavQuery, NavTab } from '../../nav/codeNav';
+import { kindFromHover, mayHaveCalls, mayHaveImplementations, type SymbolKind } from '../../nav/navList';
 import { displayBinding, isTypingTarget } from '../../lib/keybindings';
 import { portalOpen } from '../../lib/portal';
 import { failureText, indicatorFor, type LspSession } from '../../lsp/session';
@@ -11,9 +13,12 @@ import { githubHighlightStyle } from './theme';
 import { wordAt } from './occurrenceMatch';
 
 // Code navigation in a diff: hover for the signature and docs, Ctrl/Cmd+click
-// (and F12, and the context menu) for «go to definition». Everything asks the
-// language server through the review's LspSession; this file is the editor
-// side — which word is under the pointer, the tooltip, the menu.
+// (and F12, and the context menu) for «go to definition»; references,
+// implementations and the call hierarchy open the navigation panel
+// (nav/NavPanel.tsx) from the menu, the hover's buttons and their shortcuts.
+// Everything asks the language server through the review's LspSession; this
+// file is the editor side — which word is under the pointer, the tooltip,
+// the menu.
 //
 // Only the document is navigable: it is the new side of the diff (added and
 // unchanged lines), the text the server sees. Deleted lines are the merge
@@ -60,10 +65,12 @@ export class LspHub {
   session: LspSession | null = null;
   /** The text on screen is not the working tree (staged, commits): send it along. */
   sendText = false;
-  /** The definition shortcut, for the menu. */
-  definitionKey = '';
+  /** The shortcuts, for the menu. */
+  keys: CodeNavKeys | null = null;
   /** Open the place a definition is at; `fromLine` (1-based) is where the jump started. */
   onNavigate: (loc: LspLocation, fromLine: number) => void = () => undefined;
+  /** Show the navigation panel for a symbol of this file. */
+  onPanel: (query: NavQuery) => void = () => undefined;
   toast: (text: string, error?: boolean) => void = () => undefined;
 
   /** Why this file cannot be asked, or null when it can. */
@@ -83,6 +90,18 @@ export class LspHub {
       character: w.character,
       ...(this.sendText ? { text: view.state.doc.toString() } : {}),
     };
+  }
+
+  /** References, implementations or calls of the word at `pos`, in the side panel. */
+  openPanel(view: EditorView, pos: number, tab: NavTab, direction: LspCallDirection = 'incoming', kind?: SymbolKind | null) {
+    const w = wordRange(view.state, pos);
+    if (!w) return;
+    const reason = this.unavailable();
+    if (reason) {
+      this.toast(reason, true);
+      return;
+    }
+    this.onPanel({ tab, direction, word: view.state.sliceDoc(w.from, w.to), kind, ...this.request(view, w) });
   }
 
   async goToDefinition(view: EditorView, pos: number) {
@@ -129,13 +148,27 @@ function linkModifier(e: { ctrlKey: boolean; metaKey: boolean }): boolean {
 /** The editor whose caret F12 acts on: the one clicked last. */
 let active: { hub: LspHub; view: EditorView } | null = null;
 
-/** F12 (or whatever it is bound to): definition of the word at the caret of the last clicked file. */
-export function definitionAtCaret(): boolean {
-  if (!active || !active.view.dom.isConnected) return false;
+/** The word at the caret of the last clicked file, if that file is still on screen. */
+function caretWord(): { hub: LspHub; view: EditorView; pos: number } | null {
+  if (!active || !active.view.dom.isConnected) return null;
   const { hub, view } = active;
   const pos = view.state.selection.main.head;
-  if (!wordRange(view.state, pos)) return false;
-  void hub.goToDefinition(view, pos);
+  return wordRange(view.state, pos) ? { hub, view, pos } : null;
+}
+
+/** F12 (or whatever it is bound to): definition of the word at the caret of the last clicked file. */
+export function definitionAtCaret(): boolean {
+  const at = caretWord();
+  if (!at) return false;
+  void at.hub.goToDefinition(at.view, at.pos);
+  return true;
+}
+
+/** Shift+F12, Ctrl+F12, Alt+Shift+H: the panel for the word at the caret. */
+export function panelAtCaret(tab: NavTab): boolean {
+  const at = caretWord();
+  if (!at) return false;
+  at.hub.openPanel(at.view, at.pos, tab);
   return true;
 }
 
@@ -251,11 +284,24 @@ function hoverDom(view: EditorView, hub: LspHub, hover: LspHover, word: Word): H
   }
   const acts = dom.appendChild(document.createElement('div'));
   acts.className = 'rv-lsp-tip__acts';
-  const go = acts.appendChild(document.createElement('button'));
-  go.type = 'button';
-  go.textContent = 'Перейти к определению';
-  go.addEventListener('mousedown', (e) => e.preventDefault());
-  go.addEventListener('click', () => void hub.goToDefinition(view, word.from));
+  const action = (label: string, title: string, run: () => void) => {
+    const b = acts.appendChild(document.createElement('button'));
+    b.type = 'button';
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.addEventListener('click', () => {
+      view.dispatch({ effects: closeHoverTooltips });
+      run();
+    });
+  };
+  // The first code block is the signature: `(method) …`, `class …`.
+  const kind = kindFromHover(hoverBlocks(hover).find((b) => b.type === 'code')?.text);
+  const keyOf = (k: keyof CodeNavKeys) => displayBinding(hub.keys?.[k] ?? '');
+  action('Определение', keyOf('definition'), () => void hub.goToDefinition(view, word.from));
+  action('Ссылки', keyOf('references'), () => hub.openPanel(view, word.from, 'references', 'incoming', kind));
+  if (mayHaveImplementations(kind)) action('Реализации', keyOf('implementation'), () => hub.openPanel(view, word.from, 'implementation', 'incoming', kind));
+  if (mayHaveCalls(kind)) action('Кто вызывает', keyOf('callHierarchy'), () => hub.openPanel(view, word.from, 'calls', 'incoming', kind));
   const hint = acts.appendChild(document.createElement('span'));
   hint.className = 'rv-lsp-tip__hint';
   hint.textContent = MAC ? '⌘+клик' : 'Ctrl+клик';
@@ -331,7 +377,11 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
     return b;
   };
 
-  item('Перейти к определению', displayBinding(hub.definitionKey), () => void hub.goToDefinition(view, w.from), reason);
+  const keys = hub.keys;
+  item('Перейти к определению', displayBinding(keys?.definition ?? ''), () => void hub.goToDefinition(view, w.from), reason);
+  item('Найти ссылки', displayBinding(keys?.references ?? ''), () => hub.openPanel(view, w.from, 'references'), reason);
+  item('Реализации', displayBinding(keys?.implementation ?? ''), () => hub.openPanel(view, w.from, 'implementation'), reason);
+  item('Иерархия вызовов', displayBinding(keys?.callHierarchy ?? ''), () => hub.openPanel(view, w.from, 'calls'), reason);
   el.appendChild(document.createElement('hr'));
   item('Подсветить совпадения', '', () => view.dispatch({ selection: { anchor: w.from, head: w.to } }));
   item('Копировать имя', '', () => {

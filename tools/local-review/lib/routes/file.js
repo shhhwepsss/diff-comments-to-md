@@ -9,8 +9,8 @@ const { repoRootOf } = require('./lsp');
 
 // GET /api/file?<descriptor>&path=<repo-relative path> — a whole file of the
 // working tree, for a file outside the diff that «go to definition» led to.
-// Only inside the repository; only for a local folder (a PR has no files on
-// disk until it is cloned).
+// Only inside the repository and never under .git/ (lib/repo-path.js); only
+// for a local folder (a PR has no files on disk until it is cloned).
 
 function looksBinary(buf) {
   const limit = Math.min(buf.length, 8000);
