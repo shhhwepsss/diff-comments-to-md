@@ -13,7 +13,7 @@ import {
 } from '@codemirror/view';
 import { chunkInfo } from './chunks';
 import { PortalWidget } from './blocks';
-import { FoldWidget } from './collapse';
+import { isFoldWidget } from './collapse';
 
 // Two number columns like GitHub: old line, new line. Deleted lines are not
 // part of the document (the merge view draws them as one block widget), so
@@ -62,7 +62,7 @@ const deletedClass = new ClassMarker('rv-gutter-del');
 
 /** The deletion block the merge view put at `block.from`, if that is what this widget is. */
 function deletionAt(view: EditorView, widget: WidgetType, block: BlockInfo) {
-  if (widget instanceof PortalWidget || widget instanceof FoldWidget) return null;
+  if (widget instanceof PortalWidget || isFoldWidget(widget)) return null;
   const info = getChunks(view.state);
   if (!info) return null;
   const docLength = view.state.doc.length;

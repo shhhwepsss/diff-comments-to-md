@@ -27,6 +27,7 @@ import {
   EyeIcon,
   FileBinaryIcon,
   FileIcon,
+  FoldIcon,
   KebabHorizontalIcon,
   QuestionIcon,
   ScreenFullIcon,
@@ -43,6 +44,7 @@ import { stripFinalNewline, type LineRange } from './lineMap';
 import { previewToRender } from './previewFile';
 import { fileLayout } from './fileLayout';
 import { OccurrenceHub } from './cm/occurrences';
+import { FoldHub } from './cm/collapse';
 import { LspHub } from './cm/lsp';
 import { CodeNavContext, type CodeNav } from '../nav/codeNav';
 import { indicatorFor } from '../lsp/session';
@@ -82,6 +84,21 @@ function OccurrenceCounter({ hub }: { hub: OccurrenceHub }) {
         onClick={() => hub.step(1)}
       />
     </span>
+  );
+}
+
+/**
+ * «Свернуть неизменённое» in the file header, while the reviewer has unfolded
+ * runs of unchanged lines in this file. Subscribed to the hub itself, like the
+ * counter above.
+ */
+function FoldAllButton({ hub }: { hub: FoldHub }) {
+  const open = useSyncExternalStore(hub.subscribe, hub.getSnapshot);
+  if (!open) return null;
+  return (
+    <Button size="small" variant="invisible" leadingVisual={FoldIcon} onClick={() => hub.collapseAll()}>
+      Свернуть неизменённое
+    </Button>
   );
 }
 
@@ -435,6 +452,8 @@ export const FileDiff = memo(function FileDiff({
 
   // The clicked word's occurrences: the editor finds them, the header counts.
   const occurrences = useMemo(() => new OccurrenceHub(), []);
+  // The runs of unchanged lines the reviewer unfolded: the editor keeps them, the header folds them back.
+  const folds = useMemo(() => new FoldHub(), []);
 
   // Code navigation for this file. The hub outlives editor rebuilds; what it
   // needs from the review is refreshed here on every render.
@@ -517,6 +536,7 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         <div className="rv-file-header__spacer" />
+        {!collapsed && !rendered && <FoldAllButton hub={folds} />}
         {!collapsed && !rendered && <OccurrenceCounter hub={occurrences} />}
         {nav && !collapsed && <LspIndicator nav={nav} path={path} />}
         {!collapsed && preview && (
@@ -692,6 +712,7 @@ export const FileDiff = memo(function FileDiff({
             onRevealed={onEditorRevealed}
             occurrences={occurrences}
             lsp={lsp}
+            folds={folds}
             full={Boolean(diff.fullFile)}
           />
         </div>

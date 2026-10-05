@@ -70,7 +70,32 @@ describe('collapsedRanges', () => {
   });
 
   it('skips expanded ranges', () => {
-    expect(collapsedRanges(100, [change], [], 3, 4, new Set(['1-46']))).toEqual([{ from: 54, to: 100 }]);
+    expect(collapsedRanges(100, [change], [], 3, 4, [{ from: 1, to: 46 }])).toEqual([{ from: 54, to: 100 }]);
+  });
+
+  it('folds a range again once it is no longer expanded', () => {
+    const expanded = [{ from: 1, to: 46 }, { from: 54, to: 100 }];
+    expect(collapsedRanges(100, [change], [], 3, 4, expanded)).toEqual([]);
+    expect(collapsedRanges(100, [change], [], 3, 4, expanded.slice(1))).toEqual([{ from: 1, to: 46 }]);
+  });
+
+  it('keeps an expanded range open when a comment lands inside it', () => {
+    // The comment splits the run into 1–19 and 21–46: neither is the range that was expanded.
+    expect(collapsedRanges(100, [change], [20], 3, 4, [{ from: 1, to: 46 }])).toEqual([{ from: 54, to: 100 }]);
+  });
+
+  it('keeps expanded ranges open when the comment that split them is gone', () => {
+    // Expanded around a comment on line 20, then the comment is deleted: line 20 is alone, too short to fold.
+    const expanded = [{ from: 1, to: 19 }, { from: 21, to: 46 }];
+    expect(collapsedRanges(100, [change], [], 3, 4, expanded)).toEqual([{ from: 54, to: 100 }]);
+  });
+
+  it('folds what is left of a run around an expanded part', () => {
+    expect(collapsedRanges(100, [change], [], 3, 4, [{ from: 10, to: 20 }])).toEqual([
+      { from: 1, to: 9 },
+      { from: 21, to: 46 },
+      { from: 54, to: 100 },
+    ]);
   });
 
   it('folds the whole file when there is no change and nothing to keep', () => {

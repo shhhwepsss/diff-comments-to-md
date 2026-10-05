@@ -12,7 +12,7 @@ import {
 import { isTypingTarget } from '../../lib/keybindings';
 import { portalOpen } from '../../lib/portal';
 import { PortalWidget } from './blocks';
-import { FoldWidget, unfoldAt } from './collapse';
+import { isFoldWidget, unfoldAt } from './collapse';
 import {
   compareKeys,
   findWord,
@@ -306,7 +306,7 @@ function deletionTop(block: BlockInfo): number {
   const parts = block.type;
   if (!Array.isArray(parts)) return block.top;
   const w = parts.find(
-    (b) => b.type === BlockType.WidgetBefore && !(b.widget instanceof PortalWidget) && !(b.widget instanceof FoldWidget),
+    (b) => b.type === BlockType.WidgetBefore && !(b.widget instanceof PortalWidget) && !isFoldWidget(b.widget),
   );
   return (w ?? block).top;
 }

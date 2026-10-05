@@ -13,7 +13,7 @@ import { chunkInfo, pureInsertions } from './cm/chunks';
 import { PortalRegistry, blocksField, setBlocks, type Block } from './cm/blocks';
 import { pinBlocks } from './cm/blockPin';
 import { selectedLines, setSelectedLines } from './cm/selection';
-import { foldUnchanged, unfoldAt } from './cm/collapse';
+import { folding, unfoldAt, type FoldHub } from './cm/collapse';
 import { diffGutters, fullFileGutter, lineAtY } from './cm/gutters';
 import { githubHighlight, githubTheme } from './cm/theme';
 import { languageFor } from './cm/language';
@@ -48,6 +48,8 @@ type Props = {
   occurrences: OccurrenceHub;
   /** Hover, Ctrl+click and the context menu of code navigation. */
   lsp: LspHub;
+  /** Where the unfolded runs of unchanged lines are reported (the file header folds them back). */
+  folds: FoldHub;
   /**
    * A whole file outside the diff (opened by code navigation, or one with
    * comments): `newText` is the file, there is no old side, nothing is
@@ -80,6 +82,7 @@ export function DiffEditor({
   onRevealed,
   occurrences,
   lsp,
+  folds,
   full = false,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -231,7 +234,7 @@ export function DiffEditor({
           blocksField(registry),
           pinBlocks,
           selectedLines,
-          full ? [] : foldUnchanged,
+          full ? [] : folding(folds),
           occurrenceHighlight(occurrences),
           lspNavigation(lsp),
           full ? [] : diffGutters({ onLineMouseDown }),
@@ -246,6 +249,7 @@ export function DiffEditor({
       view.current = v;
       registry.view = v;
       occurrences.attach(v);
+      folds.attach(v);
       v.dispatch({
         effects: [setBlocks.of(latest.current.blocks), setSelectedLines.of(latest.current.selected)],
       });
@@ -272,12 +276,13 @@ export function DiffEditor({
       stopDrag();
       drag.current = null;
       if (view.current) occurrences.detach(view.current);
+      if (view.current) folds.detach(view.current);
       view.current?.destroy();
       view.current = null;
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences, lsp, full]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences, lsp, folds, full]);
 
   useEffect(() => {
     if (reveal) applyReveal();
