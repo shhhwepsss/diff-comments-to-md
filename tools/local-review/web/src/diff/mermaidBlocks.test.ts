@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { hasRemoteReference, mermaidErrorText, renderMermaidBlocks, svgImageUrl } from './mermaidBlocks';
+import { diagramAt, diagramIndexOf, hasRemoteReference, mermaidErrorText, renderMermaidBlocks, svgImageUrl } from './mermaidBlocks';
 
 // The real mermaid needs a browser to lay a diagram out, so these tests feed
 // renderMermaidBlocks a fake `draw` and only check what ends up in the DOM.
@@ -121,6 +121,59 @@ describe('renderMermaidBlocks', () => {
     await renderMermaidBlocks(el, draw, never);
     expect(draw).not.toHaveBeenCalled();
     expect(el.innerHTML).toBe('<div class="rv-mermaid">forged</div>');
+  });
+});
+
+describe('expanding a diagram', () => {
+  it('puts an expand button next to a drawn diagram', async () => {
+    const el = root('x');
+    await renderMermaidBlocks(el, async () => IMAGE, never);
+    const button = el.querySelector('.rv-mermaid button')!;
+    expect(button.getAttribute('type')).toBe('button');
+    expect(button.textContent).toBe('Развернуть');
+  });
+
+  it('has no expand button on a block that was not drawn', async () => {
+    const el = root('x');
+    await renderMermaidBlocks(el, async () => IMAGE, never);
+    await renderMermaidBlocks(el, async () => Promise.reject(new Error('boom')), never);
+    expect(el.querySelector('button')).toBeNull();
+  });
+
+  it('keeps one expand button on a second pass', async () => {
+    const el = root('x');
+    await renderMermaidBlocks(el, async () => IMAGE, never);
+    await renderMermaidBlocks(el, async () => IMAGE, never);
+    expect(el.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('finds the block a click on the diagram or its button belongs to', async () => {
+    const el = root('x', 'y');
+    await renderMermaidBlocks(el, async () => IMAGE, never);
+    const [first, second] = [...el.querySelectorAll('.rv-mermaid')];
+    expect(diagramIndexOf(el, first.querySelector('img')!)).toBe(0);
+    expect(diagramIndexOf(el, second.querySelector('img')!)).toBe(1);
+    expect(diagramIndexOf(el, second.querySelector('button')!)).toBe(1);
+  });
+
+  it('ignores a click anywhere else', async () => {
+    const el = root('x', 'y');
+    await renderMermaidBlocks(el, async (source) => (source === 'x' ? IMAGE : Promise.reject(new Error('boom'))), never);
+    const [drawn, failed] = [...el.querySelectorAll('.rv-mermaid')];
+    expect(diagramIndexOf(el, drawn)).toBe(-1);
+    expect(diagramIndexOf(el, failed.querySelector('.rv-mermaid__error')!)).toBe(-1);
+    expect(diagramIndexOf(el, failed.querySelector('code')!)).toBe(-1);
+    expect(diagramIndexOf(el, el)).toBe(-1);
+  });
+
+  it('gives the image of a drawn block by its index', async () => {
+    const other = 'data:image/svg+xml;charset=utf-8,%3Csvg%20id%3D%22b%22%2F%3E';
+    const el = root('x', 'y', 'z');
+    await renderMermaidBlocks(el, async (source) => (source === 'x' ? IMAGE : source === 'z' ? other : Promise.reject(new Error('boom'))), never);
+    expect(diagramAt(el, 0)).toBe(IMAGE);
+    expect(diagramAt(el, 1)).toBeNull();
+    expect(diagramAt(el, 2)).toBe(other);
+    expect(diagramAt(el, 3)).toBeNull();
   });
 });
 
