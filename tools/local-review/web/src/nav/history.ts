@@ -10,9 +10,15 @@
 // What the browser does not tell a page is whether there is anything to go
 // back or forward *to* inside the review. So each entry the review pushes
 // carries its position in `history.state` (rvNav: 1, 2, …; the entry the
-// review opened on has none and counts as 0), and the furthest position
+// review opened on is 0), and the furthest position
 // reached is remembered per tab. ← is enabled above 0, → below that furthest
 // one.
+//
+// An entry with no position at all is one nobody stamped yet: the review was
+// opened on it, or the address was changed by hand, or the app came back
+// from the settings page. Either way the browser just created it, and that
+// dropped whatever was ahead — so the remembered furthest position is stale
+// and the entry gets stamped with where it really is.
 
 export type HistoryLike = {
   readonly state: unknown;
@@ -35,6 +41,11 @@ const FIELD = 'rvNav';
 export function navIndexOf(state: unknown): number {
   const value = state && typeof state === 'object' ? (state as Record<string, unknown>)[FIELD] : undefined;
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+/** Whether the review has stamped this entry with a position (0 included). */
+export function hasNavIndex(state: unknown): boolean {
+  return Boolean(state && typeof state === 'object' && FIELD in (state as Record<string, unknown>));
 }
 
 /** `state` with its position set; whatever else is in it (another library's data) is kept. */
@@ -63,8 +74,16 @@ export class NavHistory {
     private readonly storage: StorageLike | null,
     private readonly scope: string,
   ) {
-    this.index = navIndexOf(history.state);
-    this.top = Math.max(this.index, this.readTop());
+    if (hasNavIndex(history.state)) {
+      // A reload or a return to an entry seen before: what was ahead is still there.
+      this.index = navIndexOf(history.state);
+      this.top = Math.max(this.index, this.readTop());
+    } else {
+      this.index = 0;
+      this.top = 0;
+      this.stamp();
+      this.writeTop();
+    }
     this.snapshot = snapshotOf(this.index, this.top);
   }
 
@@ -91,10 +110,18 @@ export class NavHistory {
 
   /** After popstate: the browser moved, read where to. */
   sync() {
-    this.index = navIndexOf(this.history.state);
-    if (this.index > this.top) {
+    if (!hasNavIndex(this.history.state)) {
+      // An address typed by hand: a new entry right after the one we were on.
+      this.index += 1;
       this.top = this.index;
+      this.stamp();
       this.writeTop();
+    } else {
+      this.index = navIndexOf(this.history.state);
+      if (this.index > this.top) {
+        this.top = this.index;
+        this.writeTop();
+      }
     }
     this.publish();
   }
@@ -110,6 +137,10 @@ export class NavHistory {
     if (!this.snapshot.canForward) return false;
     this.history.forward();
     return true;
+  }
+
+  private stamp() {
+    this.history.replaceState(withNavIndex(this.history.state, this.index), '', null);
   }
 
   private publish() {

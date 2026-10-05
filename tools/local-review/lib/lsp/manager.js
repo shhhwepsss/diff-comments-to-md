@@ -82,7 +82,8 @@ class ServerProcess {
     // A .cmd shim (npm's node_modules/.bin on Windows) runs only through the
     // shell since Node 20; quoting is then ours to do.
     const viaShell = win && /\.(cmd|bat)$/i.test(command);
-    const quote = (s) => (/[\s"]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : s);
+    // cmd.exe metacharacters too: a path with `&` or `(` would otherwise split the command.
+    const quote = (s) => (/[\s"&|<>^()]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : s);
     this.child = spawn(viaShell ? quote(command) : command, viaShell ? args.map(quote) : args, {
       cwd: this.root,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -94,7 +95,9 @@ class ServerProcess {
       env: process.env,
     });
     const child = this.child;
+    this.manager.live.add(this);
     this.exited = new Promise((resolve) => child.once('close', resolve));
+    child.once('close', () => this.manager.live.delete(this));
     this.conn = new Connection(
       { write: (buf) => child.stdin.write(buf) },
       {
@@ -267,8 +270,17 @@ class ServerProcess {
         continue;
       }
       if (doc.mtimeMs === stat.mtimeMs) continue;
+      let text;
+      try {
+        text = fs.readFileSync(doc.abs, 'utf8');
+      } catch {
+        // Gone between the stat and the read: as good as deleted.
+        this.docs.delete(uri);
+        this.conn.notify('textDocument/didClose', { textDocument: { uri } });
+        continue;
+      }
       doc.mtimeMs = stat.mtimeMs;
-      this.change(uri, doc, fs.readFileSync(doc.abs, 'utf8'));
+      this.change(uri, doc, text);
     }
   }
 
@@ -312,16 +324,25 @@ class ServerProcess {
     killer.unref();
     await this.exited;
     clearTimeout(killer);
+    // The launcher left; whatever it started (jdtls's JVM) goes with it.
+    this.kill({ group: true });
   }
 
-  /** Synchronous, for process exit: the whole process group goes. */
-  kill() {
+  /**
+   * Synchronous, for process exit: the whole process group goes. With
+   * `group`, also after the process itself has exited — a launcher script
+   * that died leaves its group (the JVM it started) behind.
+   */
+  kill(options) {
     const child = this.child;
-    if (!child || child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+    if (!child || !child.pid) return;
+    const exited = child.exitCode !== null || child.signalCode !== null;
+    if (exited && !(options && options.group && process.platform !== 'win32')) return;
     try {
       if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
       else process.kill(-child.pid, 'SIGTERM');
     } catch {
+      if (exited) return; // ESRCH: nothing of the group is left
       try {
         child.kill('SIGTERM');
       } catch {
@@ -350,7 +371,7 @@ class ServerProcess {
     this.conn.close(new LspError('failed', this.message));
     this.manager.crashed(this);
     // A launcher that died may leave its JVM behind.
-    this.kill();
+    this.kill({ group: true });
   }
 }
 
@@ -362,6 +383,11 @@ class LspManager {
   constructor(options) {
     this.options = Object.assign({}, DEFAULTS, options || {});
     this.servers = new Map();
+    /**
+     * Every process not yet reaped, including those being stopped or that
+     * failed (no longer in `servers`): process exit must kill them all.
+     */
+    this.live = new Set();
     this.failures = new Map();
     this.exitHooked = false;
   }
@@ -399,19 +425,21 @@ class LspManager {
     }
     const server = new ServerProcess(this, root, def, spec);
     this.servers.set(key, server);
-    try {
-      return await server.start();
-    } catch (e) {
+    // `ready` is what a second request arriving during the handshake awaits
+    // too, so it is the promise that must fail with an LspError.
+    // A synchronous throw of spawn() lands in the same place as a failed handshake.
+    server.ready = new Promise((resolve) => resolve(server.start())).catch((e) => {
       // A handshake that failed or timed out leaves nothing usable behind.
       if (server.state !== 'failed') {
         server.state = 'failed';
         server.message = e instanceof LspError ? e.message : `LSP-сервер ${server.label} не запустился: ${e.message}`;
-        server.conn.close(e);
+        if (server.conn) server.conn.close(e);
         this.crashed(server);
-        server.kill();
+        server.kill({ group: true });
       }
       throw e instanceof LspError ? e : new LspError('failed', server.message);
-    }
+    });
+    return server.ready;
   }
 
   forget(server) {
@@ -467,7 +495,7 @@ class LspManager {
   }
 
   killAll() {
-    for (const server of this.servers.values()) server.kill();
+    for (const server of this.live) server.kill({ group: true });
   }
 
   async stopAll() {

@@ -126,6 +126,39 @@ describe('NavHistory', () => {
     expect(bare.getSnapshot()).toEqual({ canBack: true, canForward: false });
   });
 
+  it('a fresh entry (back from settings) has nothing ahead, whatever was remembered', () => {
+    const storage = memoryStorage();
+    const h = fakeHistory({ state: null, url: '#/r?file=a.ts' });
+    const nav = new NavHistory(h, storage, '#/r');
+    nav.push('#/r?file=b.ts');
+    nav.push('#/r?file=c.ts');
+    // The settings page and back: two entries the review did not push, then a remount.
+    h.pushState(null, '', '#/settings');
+    h.pushState(null, '', '#/r?file=c.ts');
+    const again = new NavHistory(h, storage, '#/r');
+    expect(again.getSnapshot()).toEqual({ canBack: false, canForward: false });
+    // Reloaded on that entry, it is still the same: the stamp survives.
+    expect(new NavHistory(h, storage, '#/r').getSnapshot()).toEqual({ canBack: false, canForward: false });
+  });
+
+  it('an address typed by hand is a step forward from where the review was', () => {
+    const h = fakeHistory({ state: null, url: '#/r?file=a.ts' });
+    const nav = new NavHistory(h, memoryStorage(), '#/r');
+    nav.push('#/r?file=b.ts');
+    nav.back();
+    nav.sync();
+    expect(nav.getSnapshot()).toEqual({ canBack: false, canForward: true });
+    h.pushState(null, '', '#/r?file=z.ts'); // the browser, on a typed address
+    nav.sync();
+    expect(nav.getSnapshot()).toEqual({ canBack: true, canForward: false });
+    nav.sync(); // hashchange after popstate: no second step
+    expect(nav.getSnapshot()).toEqual({ canBack: true, canForward: false });
+    expect(nav.back()).toBe(true);
+    nav.sync();
+    expect(h.url()).toBe('#/r?file=a.ts');
+    expect(nav.getSnapshot()).toEqual({ canBack: false, canForward: true });
+  });
+
   it('notifies only when the buttons change', () => {
     const nav = new NavHistory(fakeHistory({ state: null, url: '#/r' }), null, '#/r');
     let calls = 0;

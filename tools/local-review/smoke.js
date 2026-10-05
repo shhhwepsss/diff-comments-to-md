@@ -238,6 +238,11 @@ async function lspChecks(call, home) {
     got.length = 0;
     tolerant.feed(Buffer.concat([Buffer.from('Content-Length: 3\r\n\r\n{x}', 'ascii'), two]));
     ok(errors.length === 1 && got.length === 1, 'MessageReader: битый JSON пропущен, следующее сообщение прочитано', JSON.stringify({ errors, got }));
+    got.length = 0;
+    errors.length = 0;
+    tolerant.feed(Buffer.concat([Buffer.from('launcher: starting\n', 'ascii'), two]));
+    ok(errors.length === 0 && got.length === 1, 'MessageReader: строка мусора перед первым заголовком не теряет сообщение',
+      JSON.stringify({ errors, got }));
   }
 
   console.log('\nLSP: Connection');
@@ -487,7 +492,43 @@ async function lspChecks(call, home) {
 
   await lspRoutes.getManager().stopAll();
   delete process.env.LOCAL_REVIEW_LSP_FIXTURE_LOG;
-  return [lspRepo, outsideDir, emptyDir];
+
+  const extraDirs = [];
+  if (process.platform !== 'win32') {
+    console.log('\nLSP: неудачный старт и группа процессов');
+    const { LspManager, LspError } = require('./lib/lsp/manager');
+    const badRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-bad-'));
+    extraDirs.push(badRepo);
+    const bin = path.join(badRepo, 'node_modules', '.bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const script = (name, body) => {
+      fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`);
+      fs.chmodSync(path.join(bin, name), 0o755);
+    };
+    const pidFile = path.join(badRepo, 'child.pid');
+    // Never answers initialize.
+    script('mute-lsp', 'exec sleep 30');
+    // A launcher that starts a «JVM» and dies.
+    script('dying-lsp', `sleep 30 &\necho $! > "${pidFile}"\nexit 1`);
+    const def = (bin2) => ({ id: bin2, name: bin2, label: bin2, commands: [{ bin: bin2, args: [] }], languageIds: {}, hint: '' });
+    const mgr = new LspManager({ homeDir: home, startTimeoutMs: 300, restartDelayMs: 0, stopTimeoutMs: 200 });
+    const both = await Promise.all([mgr.ensure(badRepo, def('mute-lsp')), mgr.ensure(badRepo, def('mute-lsp'))].map((p) => p.catch((e) => e)));
+    ok(both.every((e) => e instanceof LspError && e.reason === 'failed'),
+      'два параллельных первых запроса, initialize не дождались -> оба LspError failed', both.map((e) => e && e.constructor.name).join(','));
+    const dying = await mgr.ensure(badRepo, def('dying-lsp')).catch((e) => e);
+    ok(dying instanceof LspError && /код 1/.test(dying.message), 'лаунчер упал при старте -> failed', String(dying && dying.message));
+    const orphan = Number(fs.readFileSync(pidFile, 'utf8'));
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    ok(await waitFor(() => !alive(orphan), 2000), 'после падения лаунчера его дочерний процесс (группа) убит');
+  }
+  return [lspRepo, outsideDir, emptyDir, ...extraDirs];
 }
 
 // -------------------------------------------------------------------- suite

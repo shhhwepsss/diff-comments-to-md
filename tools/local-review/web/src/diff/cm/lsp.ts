@@ -162,7 +162,7 @@ function linkPlugin(hub: LspHub) {
 
       constructor(readonly view: EditorView) {
         view.contentDOM.addEventListener('mousemove', this.onMove);
-        view.contentDOM.addEventListener('mouseleave', this.clear);
+        view.contentDOM.addEventListener('mouseleave', this.onLeave);
         window.addEventListener('keydown', this.onKey);
         window.addEventListener('keyup', this.onKey);
         window.addEventListener('blur', this.clear);
@@ -179,6 +179,13 @@ function linkPlugin(hub: LspHub) {
 
       clear = () => this.set(null);
 
+      // The pointer is in another file now: Ctrl pressed there must not
+      // underline a word here, at the spot the pointer last was.
+      onLeave = () => {
+        this.last = null;
+        this.set(null);
+      };
+
       refresh(mod: boolean) {
         const w = mod && this.last && hub.session?.canAsk(hub.path) ? wordAtPointer(this.view, this.last) : null;
         this.set(w && { from: w.from, to: w.to });
@@ -194,7 +201,7 @@ function linkPlugin(hub: LspHub) {
 
       destroy() {
         this.view.contentDOM.removeEventListener('mousemove', this.onMove);
-        this.view.contentDOM.removeEventListener('mouseleave', this.clear);
+        this.view.contentDOM.removeEventListener('mouseleave', this.onLeave);
         window.removeEventListener('keydown', this.onKey);
         window.removeEventListener('keyup', this.onKey);
         window.removeEventListener('blur', this.clear);
@@ -345,6 +352,9 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
   el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - box.width - 8))}px`;
   el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - box.height - 8))}px`;
   const items = () => [...el.querySelectorAll<HTMLButtonElement>('.rv-lsp-menu__item:not(:disabled)')];
+  // Focus moves into the menu for the arrows; it goes back where it was when
+  // the menu closes with focus inside, so the keyboard does not land on <body>.
+  const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   items()[0]?.focus();
 
   const onDown = (e: MouseEvent) => {
@@ -354,6 +364,11 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
+      close();
+      return;
+    }
+    // Tab would walk out of the menu and leave it open behind the focus.
+    if (e.key === 'Tab') {
       close();
       return;
     }
@@ -376,7 +391,9 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
     window.removeEventListener('scroll', onScroll, true);
     window.removeEventListener('blur', close);
     window.removeEventListener('resize', close);
+    const hadFocus = el.contains(document.activeElement);
     el.remove();
+    if (hadFocus && before?.isConnected) before.focus({ preventScroll: true });
     if (openMenu?.el === el) openMenu = null;
   };
   window.addEventListener('mousedown', onDown, true);

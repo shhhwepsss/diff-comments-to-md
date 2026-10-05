@@ -8,6 +8,8 @@
 const HEADER_END = Buffer.from('\r\n\r\n', 'ascii');
 /** A header block longer than this is not LSP: the stream is garbage. */
 const MAX_HEADER_BYTES = 8 * 1024;
+/** A body announced bigger than this is a garbled length, not a message to wait for. */
+const MAX_BODY_BYTES = 256 * 1024 * 1024;
 
 /** Standard JSON-RPC error codes the client side ever sends back. */
 const ErrorCodes = {
@@ -47,9 +49,12 @@ class MessageReader {
         }
         const header = this.buffer.subarray(0, end).toString('ascii');
         this.buffer = this.buffer.subarray(end + HEADER_END.length);
-        const match = /(?:^|\r\n)content-length:\s*(\d+)/i.exec(header);
-        if (!match) {
-          this.fail(new Error(`LSP: нет Content-Length в заголовке «${header}»`));
+        // Any line of the block may carry the length: a server (or the
+        // launcher around it) that printed a stray line to stdout before its
+        // first message leaves that line glued to the header, with a bare \n.
+        const match = /(?:^|[\r\n])content-length[ \t]*:[ \t]*(\d+)/i.exec(header);
+        if (!match || Number(match[1]) > MAX_BODY_BYTES) {
+          this.fail(new Error(`LSP: нет корректного Content-Length в заголовке «${header.slice(0, 200)}»`));
           return;
         }
         this.expected = Number(match[1]);
