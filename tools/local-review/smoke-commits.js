@@ -341,7 +341,7 @@ async function main() {
   const C1 = 'c1111111111111111111111111111111111111a'; // root of the PR's own history: no parent
   const C2 = 'c2222222222222222222222222222222222222b';
   const viewKey = (n) =>
-    `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url`;
+    `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url`;
   const commitsListKey = `api repos/o/r/pulls/30/commits?per_page=100&page=1`;
 
   ghFixtures(
@@ -357,10 +357,10 @@ async function main() {
           headRefName: 'feat/range',
           baseRefName: 'main',
           headRefOid: C2,
+          baseRefOid: 'baseOfPr30',
           url: 'https://github.com/o/r/pull/30',
         }),
       },
-      'pr view 30 --repo o/r --json baseRefName': { code: 0, stdout: JSON.stringify({ baseRefName: 'main' }) },
       // The whole-PR diff: the "no range selected" view, which keeps its own
       // viewed marks (a different diff of the same file than any range).
       'pr diff 30 --repo o/r': {

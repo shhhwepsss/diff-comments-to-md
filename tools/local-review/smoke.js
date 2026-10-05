@@ -805,7 +805,7 @@ async function prCloneChecks(call, home) {
   });
   ghFixtures(
     {
-      'pr view 7 --repo acme/web --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url': {
+      'pr view 7 --repo acme/web --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url': {
         code: 0,
         stdout: JSON.stringify({
           number: 7, title: 'Use helper', author: { login: 'octocat' }, state: 'OPEN', isDraft: false,
@@ -2159,7 +2159,7 @@ async function main() {
   // -------------------------------------------------------- метаданные PR-а
   console.log('\nметаданные PR-а');
   const viewKey =
-    'pr view 25 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url';
+    'pr view 25 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url';
   ghFixtures(
     {
       [viewKey]: {
@@ -2176,7 +2176,7 @@ async function main() {
           url: 'https://github.com/o/r/pull/25',
         }),
       },
-      'pr view 999 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url':
+      'pr view 999 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url':
         {
           code: 1,
           stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 999.\n',
@@ -2235,7 +2235,7 @@ async function main() {
     '',
   ].join('\r\n');
 
-  const prView = (n) => ({
+  const prView = (n, ends = {}) => ({
     code: 0,
     stdout: JSON.stringify({
       number: n,
@@ -2245,12 +2245,13 @@ async function main() {
       isDraft: false,
       headRefName: 'feat/x',
       baseRefName: 'main',
-      headRefOid: 'abc123',
+      headRefOid: ends.head || 'abc123',
+      baseRefOid: ends.base || 'earlyBaseSha',
       url: `https://github.com/o/r/pull/${n}`,
     }),
   });
   const viewKeyFor = (n) =>
-    `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url`;
+    `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url`;
 
   // gh's path segments are percent-encoded one segment at a time (spaces and
   // Cyrillic survive git paths, not raw URLs) — mirrors lib/sources/pr-source.js.
@@ -2275,10 +2276,6 @@ async function main() {
       // oldText/newText plumbing (§2 of the design doc) kicks in for every
       // /api/diff in PR mode from here on, so PR #25's file-text fetches need
       // fixtures too, not just its `pr diff`.
-      'pr view 25 --repo o/r --json baseRefOid,headRefOid': {
-        code: 0,
-        stdout: JSON.stringify({ baseRefOid: 'earlyBaseSha', headRefOid: 'abc123' }),
-      },
       'api repos/o/r/compare/earlyBaseSha...abc123': {
         code: 0,
         stdout: JSON.stringify({ merge_base_commit: { sha: 'earlyMergeBaseSha' } }),
@@ -2376,12 +2373,8 @@ async function main() {
 
   ghFixtures(
     {
-      [viewKeyFor(25)]: prView(25),
+      [viewKeyFor(25)]: prView(25, { base: PR_BASE_SHA, head: PR_HEAD_SHA }),
       'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
-      'pr view 25 --repo o/r --json baseRefOid,headRefOid': {
-        code: 0,
-        stdout: JSON.stringify({ baseRefOid: PR_BASE_SHA, headRefOid: PR_HEAD_SHA }),
-      },
       [`api repos/o/r/compare/${PR_BASE_SHA}...${PR_HEAD_SHA}`]: {
         code: 0,
         stdout: JSON.stringify({ merge_base_commit: { sha: PR_MERGE_BASE_SHA } }),
@@ -2632,7 +2625,7 @@ async function main() {
   const REL_HEAD = 'relHeadSha';
   const REL_MB = 'relMergeBaseSha';
   const relMeta =
-    'pr view 77 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url';
+    'pr view 77 --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url';
   ghFixtures(
     {
       'pr diff 77 --repo o/r': { code: 0, stdout: PR_DIFF, delayMs: 150 },
@@ -2646,12 +2639,9 @@ async function main() {
           headRefName: 'h',
           baseRefName: 'b',
           headRefOid: REL_HEAD,
+          baseRefOid: REL_BASE,
           url: 'u',
         }),
-      },
-      'pr view 77 --repo o/r --json baseRefOid,headRefOid': {
-        code: 0,
-        stdout: JSON.stringify({ baseRefOid: REL_BASE, headRefOid: REL_HEAD }),
         delayMs: 150,
       },
       [`api repos/o/r/compare/${REL_BASE}...${REL_HEAD}`]: {
@@ -2681,7 +2671,7 @@ async function main() {
   );
   eq(relDiffs[0].body.oldText, 'old app\n', 'временный сбой на содержимом файла пережит повтором');
   eq(relCalls('pr diff 77'), 1, 'одновременные /api/diff -> один gh pr diff');
-  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 1, 'одновременные /api/diff -> один gh pr view за sha');
+  eq(relCalls(relMeta), 1, 'одновременные /api/diff -> один gh pr view за концами PR-а');
   eq(relCalls(`compare/${REL_BASE}...${REL_HEAD}`), 1, 'одновременные /api/diff -> один compare за merge-base');
   eq(
     relCalls(`contents/created.txt?ref=${REL_MB}`),
@@ -2694,13 +2684,92 @@ async function main() {
   eq(relCalls(relMeta), 1, 'шапка PR-а кэшируется: второй /api/state не запускает gh pr view');
   await call(`/api/state?${relQ}&fresh=1`);
   eq(relCalls(relMeta), 2, 'fresh=1 перечитывает шапку PR-а');
+  eq(relCalls('pr diff 77'), 2, 'fresh=1 перечитывает патч PR-а');
+  await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${relQ}`);
+  eq(
+    [relCalls('pr diff 77'), relCalls(relMeta)],
+    [2, 2],
+    'дифф файла после перечитанного списка — из его же кэша: ни патч, ни концы PR-а заново не спрашиваются'
+  );
   await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${relQ}&fresh=1`);
-  eq(relCalls('pr view 77 --repo o/r --json baseRefOid'), 2, 'fresh=1 заново спрашивает sha концов PR-а');
+  eq([relCalls('pr diff 77'), relCalls(relMeta)], [3, 3], 'fresh=1 на диффе перечитывает патч вместе с концами PR-а');
   eq(
     relCalls(`compare/${REL_BASE}...${REL_HEAD}`),
     1,
     'merge-base тех же двух sha не перезапрашивается: он неизменяем'
   );
+
+  // -- возврат на вкладку: список, история и файл перечитываются разом
+  const relCommitsKey = 'api repos/o/r/pulls/77/commits?per_page=100&page=1';
+  const relCommit = (sha, parents) => ({
+    sha,
+    commit: { author: { name: 'a', date: '2026-09-01T10:00:00Z' }, message: sha },
+    parents,
+  });
+  const relView = (head) => ({
+    code: 0,
+    stdout: JSON.stringify({
+      number: 77,
+      title: 'rel',
+      author: { login: 'a' },
+      state: 'OPEN',
+      headRefName: 'h',
+      baseRefName: 'b',
+      headRefOid: head,
+      baseRefOid: REL_BASE,
+      url: 'u',
+    }),
+    delayMs: 150,
+  });
+  const REL_HEAD2 = 'relHeadSha2';
+  const relRound = {
+    'pr diff 77 --repo o/r': { code: 0, stdout: PR_DIFF, delayMs: 150 },
+    [relMeta]: relView(REL_HEAD),
+    [relCommitsKey]: { code: 0, stdout: JSON.stringify([relCommit(REL_HEAD, [])]) },
+    [`api repos/o/r/compare/${REL_BASE}...${REL_HEAD2}`]: {
+      code: 0,
+      stdout: JSON.stringify({ merge_base_commit: { sha: REL_MB } }),
+    },
+    [ghContentsKey('created.txt', REL_HEAD2)]: { code: 0, stdout: 'created again\n' },
+  };
+  ghFixtures(relRound, home);
+  // What the screen asks on a return to the tab (ReviewContext.tsx, revalidate).
+  const relReturn = async () => {
+    const [, history] = await Promise.all([call(`/api/state?${relQ}&fresh=1`), call(`/api/commits?${relQ}&fresh=1`)]);
+    const diff = await call(`/api/diff?file=${encodeURIComponent('created.txt')}&${relQ}`);
+    return { history, diff };
+  };
+  const relRuns = () =>
+    fs.readFileSync(relLog, 'utf8').split('\n').filter((l) => l && !l.includes('/contents/')).sort();
+  await relReturn(); // the first one lists the commits: nothing to compare with yet
+  fs.writeFileSync(relLog, '');
+  const quiet = await relReturn();
+  eq(
+    relRuns(),
+    ['pr diff 77 --repo o/r', relMeta],
+    'возврат на вкладку, PR не менялся: один gh pr diff и один gh pr view на всё'
+  );
+  eq(quiet.history.body.commits.map((c) => c.sha), [REL_HEAD], 'история при этом отдана: та же, что была');
+
+  ghFixtures(
+    Object.assign({}, relRound, {
+      [relMeta]: relView(REL_HEAD2),
+      [relCommitsKey]: {
+        code: 0,
+        stdout: JSON.stringify([relCommit(REL_HEAD, []), relCommit(REL_HEAD2, [{ sha: REL_HEAD }])]),
+      },
+    }),
+    home
+  );
+  fs.writeFileSync(relLog, '');
+  const moved = await relReturn();
+  eq(
+    relRuns(),
+    [`api repos/o/r/compare/${REL_BASE}...${REL_HEAD2}`, relCommitsKey, 'pr diff 77 --repo o/r', relMeta],
+    'возврат на вкладку после push: к ним добавляются список коммитов и merge-base нового head'
+  );
+  eq(moved.history.body.commits.map((c) => c.sha), [REL_HEAD, REL_HEAD2], 'история после push — с новым коммитом');
+  eq(moved.diff.body.newText, 'created again\n', 'текст файла после push — с нового head');
 
   ghFixtures({ '*': { code: 1, stderr: 'dial tcp: lookup api.github.com: no such host\n' } }, home);
   const offline = await call('/api/state?source=pr&host=github.com&owner=o&repo=r&number=78');
@@ -3828,13 +3897,9 @@ async function main() {
   ghFixtures(
     Object.assign(
       {
-        [viewKeyFor(48)]: prView(48),
+        [viewKeyFor(48)]: prView(48, { base: 'bigBase', head: 'bigHead' }),
         'pr diff 48 --repo o/r': TOO_LARGE,
         'api repos/o/r/pulls/48': { code: 0, stdout: JSON.stringify({ changed_files: 301 }) },
-        'pr view 48 --repo o/r --json baseRefOid,headRefOid': {
-          code: 0,
-          stdout: JSON.stringify({ baseRefOid: 'bigBase', headRefOid: 'bigHead' }),
-        },
         'api repos/o/r/compare/bigBase...bigHead': {
           code: 0,
           stdout: JSON.stringify({ merge_base_commit: { sha: 'bigMergeBase' } }),
@@ -3847,6 +3912,8 @@ async function main() {
         [ghContentsKey('src/quiet.txt', 'bigHead')]: { code: 0, stdout: 'quiet new\n' },
         // What gh 2.96.0 really does for a binary file with the raw Accept header.
         [ghContentsKey('assets/pic.bin', 'bigMergeBase')]: { code: 1, stderr: 'transform: short source buffer\n' },
+        // Both sides: the two are read at once, and either may answer first.
+        [ghContentsKey('assets/pic.bin', 'bigHead')]: { code: 1, stderr: 'transform: short source buffer\n' },
         [viewKeyFor(25)]: prView(25),
         'pr diff 25 --repo o/r': { code: 0, stdout: PR_DIFF },
       },
