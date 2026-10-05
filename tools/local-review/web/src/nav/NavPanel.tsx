@@ -20,7 +20,7 @@ import {
   previewParts,
   type SymbolKind,
 } from './navList';
-import { EMPTY_TREE, expand, expandable, setChildren, setError, toggle, treeFromRoots, treeKey, visibleRows, type CallTree, type TreeNode } from './callTree';
+import { EMPTY_TREE, expand, expandable, focusableRow, setChildren, setError, toggle, treeFromRoots, treeKey, visibleRows, type CallTree, type TreeNode } from './callTree';
 import './nav-panel.css';
 
 // The navigation panel: references, implementations and the call hierarchy
@@ -257,7 +257,7 @@ function CallTreeView({
   const rows = visibleRows(tree);
   const [focused, setFocused] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
-  const focusId = focused && tree.nodes[focused] ? focused : (rows[0]?.id ?? null);
+  const focusId = focusableRow(rows, focused);
 
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = treeKey(tree, focusId, e.key);
@@ -321,6 +321,8 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
   const [width, setWidth] = usePaneWidth(COMMENTS_PANEL_WIDTH_KEY, COMMENTS_PANEL_WIDTH);
   const [tab, setTab] = useState<NavTab>(query.tab);
   const [direction, setDirection] = useState(query.direction);
+  // The direction as of now, for roots that arrive after a switch made while they loaded.
+  const directionNow = useRef(query.direction);
   const [kind, setKind] = useState<SymbolKind | null>(query.kind ?? null);
   const [refs, setRefs] = useState<Loaded<LspLocation[]>>();
   const [impls, setImpls] = useState<Loaded<LspLocation[]>>();
@@ -420,14 +422,15 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
         setRoots({ status: 'done', value: res.items });
         const k = kindFromLsp(res.items[0]?.kind);
         if (k) setKind(k);
-        plant(res.items, direction);
+        plant(res.items, directionNow.current);
       },
       (e) => live() && setRoots(thrown(e)),
     );
-  }, [tab, roots, session, req, plant, direction]);
+  }, [tab, roots, session, req, plant]);
 
   const switchDirection = (dir: typeof direction) => {
     if (dir === direction) return;
+    directionNow.current = dir;
     setDirection(dir);
     setCurrent(null);
     if (roots?.status === 'done') plant(roots.value, dir);
@@ -481,10 +484,13 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
     };
   }, []);
 
-  const counts: Partial<Record<NavTab, number>> = {
-    references: refs?.status === 'done' ? groupLocations(refs.value).total : undefined,
-    implementation: impls?.status === 'done' ? groupLocations(impls.value).total : undefined,
-  };
+  const counts = useMemo<Partial<Record<NavTab, number>>>(
+    () => ({
+      references: refs?.status === 'done' ? groupLocations(refs.value).total : undefined,
+      implementation: impls?.status === 'done' ? groupLocations(impls.value).total : undefined,
+    }),
+    [refs, impls],
+  );
 
   const onTabKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;

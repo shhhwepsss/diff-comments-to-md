@@ -125,6 +125,15 @@ export function visibleRows(tree: CallTree): TreeNode[] {
   return out;
 }
 
+/**
+ * The row that takes Tab into the tree (tabindex 0): the focused one while it
+ * is on screen, else the first. A row hidden by closing an ancestor would
+ * leave the tree with no way in from the keyboard.
+ */
+export function focusableRow(rows: readonly TreeNode[], focused: string | null): string | null {
+  return (focused && rows.some((r) => r.id === focused) ? focused : rows[0]?.id) ?? null;
+}
+
 /** What a key does in the tree. */
 export type TreeKeyAction = { focus?: string; toggle?: string; activate?: string };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -184,12 +184,19 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
   const [navPanel, setNavPanel] = useState<{ query: NavQuery; nonce: number } | null>(null);
   const openPanel = useCallback((query: NavQuery) => setNavPanel((p) => ({ query, nonce: (p?.nonce ?? 0) + 1 })), []);
   const closePanel = useCallback(() => setNavPanel(null), []);
-  // The comments panel asked for (its button, its shortcut) wins the place back.
+  // The comments panel asked for (its button, its shortcut) wins the place
+  // back. Hidden behind this panel it still reads as open, so the button's
+  // click turns it «off» — which here means «show me the comments» too.
   const commentsWas = useRef(commentsPanel);
-  useEffect(() => {
-    if (commentsWas.current !== commentsPanel) setNavPanel(null);
+  const navOpen = useRef(false);
+  navOpen.current = navPanel !== null;
+  useLayoutEffect(() => {
+    if (commentsWas.current === commentsPanel) return;
     commentsWas.current = commentsPanel;
-  }, [commentsPanel]);
+    if (!navOpen.current) return;
+    setNavPanel(null);
+    if (!commentsPanel) onCommentsPanel(true);
+  }, [commentsPanel, onCommentsPanel]);
   // Another repository or view: the answers were about other code.
   const viewKey = JSON.stringify(descriptor);
   useEffect(() => setNavPanel(null), [viewKey]);

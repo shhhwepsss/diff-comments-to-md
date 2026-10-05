@@ -133,51 +133,63 @@ const PREVIEW_CHARS = 240;
 const PREVIEW_LEAD = 60;
 
 /**
- * Line texts for previews within one answer. A document the server has open
- * is read from there — it may be the shown version (staged, a commit), which
- * is what the positions refer to; anything else from disk, through the same
+ * Line previews for one answer, filled in after the answer is built: places
+ * are collected first (`want`), then every file is read once and only the
+ * lines asked for are kept (`fill`) — one file's text in memory at a time,
+ * however the server orders its places. A document the server has open is
+ * read from there — it may be the shown version (staged, a commit), which is
+ * what the positions refer to; anything else from disk, through the same
  * checks as every path a browser names (inside the repository, not .git).
  */
 class Previews {
   constructor(root, server) {
     this.root = root;
     this.server = server;
-    this.files = new Map();
+    /** path -> the places in that file waiting for their preview. */
+    this.wanted = new Map();
   }
 
-  lines(rel) {
-    if (this.files.has(rel)) return this.files.get(rel);
-    let lines = null;
-    if (this.files.size < MAX_PREVIEW_FILES) {
-      try {
-        const abs = resolveInRepo(this.root, rel);
-        const open = this.server && this.server.docs.get(pathToFileURL(abs).href);
-        let text = open ? open.text : null;
-        if (text === null) {
-          const stat = fs.statSync(abs);
-          if (stat.isFile() && stat.size <= MAX_TEXT_BYTES) {
-            const buf = fs.readFileSync(abs);
-            if (!buf.subarray(0, 8000).includes(0)) text = buf.toString('utf8');
-          }
-        }
-        if (text !== null) lines = text.split(/\r?\n/);
-      } catch {
-        lines = null;
-      }
+  want(place) {
+    place.preview = null;
+    const list = this.wanted.get(place.path);
+    if (list) list.push(place);
+    else this.wanted.set(place.path, [place]);
+  }
+
+  text(rel) {
+    try {
+      const abs = resolveInRepo(this.root, rel);
+      const open = this.server && this.server.docs.get(pathToFileURL(abs).href);
+      if (open) return open.text;
+      const stat = fs.statSync(abs);
+      if (!stat.isFile() || stat.size > MAX_TEXT_BYTES) return null;
+      const buf = fs.readFileSync(abs);
+      return buf.subarray(0, 8000).includes(0) ? null : buf.toString('utf8');
+    } catch {
+      return null;
     }
-    this.files.set(rel, lines);
-    return lines;
   }
 
-  /** { text, start }: a piece of the line and where in the line it starts; null when unknown. */
-  of(rel, line, character) {
-    const lines = this.lines(rel);
-    const full = lines && lines[line];
-    if (typeof full !== 'string') return null;
-    let start = full.length - full.trimStart().length;
-    if (character - start > PREVIEW_CHARS - PREVIEW_LEAD) start = Math.max(0, character - PREVIEW_LEAD);
-    return { text: full.slice(start, start + PREVIEW_CHARS).trimEnd(), start };
+  fill() {
+    let files = 0;
+    for (const [rel, places] of this.wanted) {
+      if (files++ >= MAX_PREVIEW_FILES) break;
+      const text = this.text(rel);
+      if (text === null) continue;
+      // Line breaks as LSP counts them: \r\n, \n and a lone \r.
+      const lines = text.split(/\r\n|\r|\n/);
+      for (const place of places) place.preview = previewOf(lines[place.line], place.character);
+    }
+    this.wanted.clear();
   }
+}
+
+/** { text, start }: a piece of the line and where in the line it starts; null when unknown. */
+function previewOf(full, character) {
+  if (typeof full !== 'string') return null;
+  let start = full.length - full.trimStart().length;
+  if (character - start > PREVIEW_CHARS - PREVIEW_LEAD) start = Math.max(0, character - PREVIEW_LEAD);
+  return { text: full.slice(start, start + PREVIEW_CHARS).trimEnd(), start };
 }
 
 /** A file: URI -> repository-relative path, or { external } for anything outside. */
@@ -206,7 +218,7 @@ function locationAt(root, uri, range, previews) {
     endCharacter: range.end ? range.end.character : range.start.character,
   };
   const out = Object.assign(place, where);
-  if (previews && out.path) out.preview = previews.of(out.path, where.line, where.character);
+  if (previews && out.path) previews.want(out);
   return out;
 }
 
@@ -224,18 +236,20 @@ function locationsOf(root, result, previews) {
 // server will open, and a forged one could point it anywhere on disk.
 const ITEM_SECRET = crypto.randomBytes(32);
 
-function signItem(item) {
-  return crypto.createHmac('sha256', ITEM_SECRET).update(JSON.stringify(item)).digest('base64url');
+/** The signature binds the item to the repository it was handed out for. */
+function signItem(root, item) {
+  return crypto.createHmac('sha256', ITEM_SECRET).update(JSON.stringify([root, item])).digest('base64url');
 }
 
-function verifiedItem(body) {
+function verifiedItem(root, body) {
   const item = body.item;
   const token = typeof body.token === 'string' ? body.token : '';
   if (!item || typeof item !== 'object' || Array.isArray(item)) throw bad('Не передан элемент иерархии вызовов');
-  const expected = Buffer.from(signItem(item));
+  const expected = Buffer.from(signItem(root, item));
   const given = Buffer.from(token);
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
-    throw bad('Элемент иерархии вызовов не выдан этим сервером', 403);
+    // Most often honest: the review server was restarted, and the key with it.
+    throw bad('Узел иерархии вызовов устарел (сервер ревью перезапускался?) — откройте иерархию заново', 403);
   }
   return item;
 }
@@ -245,15 +259,14 @@ function callNodeOf(root, item, previews) {
   if (!item || typeof item.uri !== 'string' || !item.range) return null;
   const at = locationAt(root, item.uri, item.selectionRange || item.range, previews);
   if (!at) return null;
-  return Object.assign(
-    {
-      name: String(item.name || ''),
-      kind: Number.isInteger(item.kind) ? item.kind : null,
-      detail: item.detail ? String(item.detail) : '',
-    },
-    at,
-    { item, token: signItem(item) }
-  );
+  // Onto `at` itself: its preview is filled in later (Previews.fill).
+  return Object.assign(at, {
+    name: String(item.name || ''),
+    kind: Number.isInteger(item.kind) ? item.kind : null,
+    detail: item.detail ? String(item.detail) : '',
+    item,
+    token: signItem(root, item),
+  });
 }
 
 /**
@@ -296,8 +309,8 @@ function serverInfo(m, root, def) {
 }
 
 /** The parameters of the LSP request for `name`. */
-function paramsFor(name, uri, body) {
-  if (METHODS[name].item) return { item: verifiedItem(body) };
+function paramsFor(name, root, uri, body) {
+  if (METHODS[name].item) return { item: verifiedItem(root, body) };
   const params = { textDocument: { uri }, position: position(body) };
   // The declaration is a reference too: a list without it misses the one place everybody looks for.
   if (name === 'references') params.context = { includeDeclaration: true };
@@ -334,7 +347,7 @@ async function request(req, res, ctx, url) {
   const abs = resolveInRepo(root, body.path);
   const uri = pathToFileURL(abs).href;
   // Malformed requests are a 400 before any server is started for them.
-  const params = paramsFor(name, uri, body);
+  const params = paramsFor(name, root, uri, body);
   const def = serverFor(abs);
   if (!def) {
     sendJson(res, 200, { ok: false, reason: 'unsupported', message: 'Для этого типа файлов нет language server' });
@@ -362,7 +375,9 @@ async function request(req, res, ctx, url) {
     const first = server.sync(uri, languageIdFor(def, abs), doc.text, abs, doc.mtimeMs);
     await server.settled(first ? FIRST_OPEN_GRACE_MS : 0, REQUEST_TIMEOUT_MS);
     const result = await server.request(method.lsp, params, { timeoutMs: REQUEST_TIMEOUT_MS, signal: abort.signal });
-    const payload = payloadFor(name, root, result, new Previews(root, server), params);
+    const previews = new Previews(root, server);
+    const payload = payloadFor(name, root, result, previews, params);
+    previews.fill();
     sendJson(res, 200, Object.assign({ ok: true, server: serverInfo(m, root, def) }, payload));
   } catch (e) {
     if (!(e instanceof LspError)) throw e;

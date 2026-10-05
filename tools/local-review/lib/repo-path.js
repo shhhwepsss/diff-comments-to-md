@@ -22,10 +22,16 @@ function bad(message, status) {
  * a review shows — and a page that tricked the browser into asking must not
  * read them either.
  */
-function isGitInternal(rel) {
+function isGitInternal(rel, windows = process.platform === 'win32') {
   return String(rel)
     .split(/[\\/]+/)
-    .some((part) => part.toLowerCase() === '.git');
+    .some((part) => {
+      let name = part.toLowerCase();
+      // Windows drops trailing dots and spaces (`.git.` is `.git`), and
+      // `.git::$INDEX_ALLOCATION` is the folder by its stream name.
+      if (windows) name = name.split(':')[0].replace(/[. ]+$/, '');
+      return name === '.git';
+    });
 }
 
 function realOrSelf(p) {

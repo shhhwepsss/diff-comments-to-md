@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LspCall, LspCallNode } from '../api/types';
-import { EMPTY_TREE, expand, expandable, setChildren, setError, toggle, treeFromRoots, treeKey, visibleRows, type CallTree } from './callTree';
+import { EMPTY_TREE, expand, expandable, focusableRow, setChildren, setError, toggle, treeFromRoots, treeKey, visibleRows, type CallTree } from './callTree';
 
 const fn = (name: string, path = 'src/a.ts', line = 0): LspCallNode => ({
   name,
@@ -138,5 +138,14 @@ describe('call tree: keyboard', () => {
   it('leaves other keys and an empty tree alone', () => {
     expect(treeKey(grown(), 'r0', 'a')).toBeNull();
     expect(treeKey(EMPTY_TREE, null, 'ArrowDown')).toBeNull();
+  });
+
+  it('Tab lands on the focused row, or the first when it was hidden by closing its parent', () => {
+    const t = grown();
+    expect(focusableRow(visibleRows(t), 'r0/1')).toBe('r0/1');
+    const closed = toggle(t, 'r0').tree;
+    expect(focusableRow(visibleRows(closed), 'r0/1')).toBe('r0');
+    expect(focusableRow(visibleRows(t), null)).toBe('r0');
+    expect(focusableRow([], 'r0')).toBeNull();
   });
 });

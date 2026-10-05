@@ -248,8 +248,18 @@ async function lspNavigationChecks(lsp, lspRepo, lspRoutes, symlinked) {
   ], 'outgoingCalls: что вызывает top, места вызовов — в файле top');
 
   const forged = Object.assign({}, root.item, { uri: 'file:///etc/passwd' });
-  eq((await lsp({ method: 'incomingCalls', path: 'src/b.ts', item: forged, token: root.token })).status, 403,
-    'incomingCalls: подменённый item -> 403');
+  const forgedRes = await lsp({ method: 'incomingCalls', path: 'src/b.ts', item: forged, token: root.token });
+  ok(forgedRes.status === 403 && /заново/.test(forgedRes.body.error),
+    'incomingCalls: подменённый item -> 403 с подсказкой открыть иерархию заново', JSON.stringify(forgedRes.body));
+  {
+    // A token is for the repository it was handed out in: not for another one.
+    const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-other-')));
+    git(['init', '-q'], other);
+    const oq = `source=local&root=${encodeURIComponent(other)}&mode=working`;
+    eq((await lsp({ method: 'incomingCalls', path: 'src/b.ts', item: root.item, token: root.token }, oq)).status, 403,
+      'incomingCalls: подпись из другого репозитория -> 403');
+    fs.rmSync(other, { recursive: true, force: true });
+  }
   eq((await lsp({ method: 'outgoingCalls', path: 'src/b.ts', item: root.item })).status, 403, 'outgoingCalls: item без подписи -> 403');
   eq((await lsp({ method: 'incomingCalls', path: 'src/b.ts' })).status, 400, 'incomingCalls без item -> 400');
   eq((await lsp({ method: 'references', path: 'src/a.ts', line: 'x', character: 0 })).status, 400, 'references без позиции -> 400');
@@ -549,6 +559,16 @@ async function lspChecks(call, home) {
     eq((await call(`/api/file?${lq}&path=${encodeURIComponent(gitPath)}`)).status, 403, `GET /api/file: ${gitPath} -> 403`);
   }
   eq((await lsp({ method: 'hover', path: '.git/config', line: 0, character: 0 })).status, 403, 'POST /api/lsp: .git/config -> 403');
+  {
+    const { isGitInternal } = require('./lib/repo-path');
+    for (const p of ['.github/workflows/ci.yml', '.gitignore', '.gitattributes', 'foo.git/a.ts', 'src/.git-hooks/x', 'a.git']) {
+      eq(isGitInternal(p, false), false, `.git-блок не задевает ${p}`);
+    }
+    for (const p of ['.git.\\config', '.git \\config', 'src\\.GIT::$INDEX_ALLOCATION\\config']) {
+      eq(isGitInternal(p, true), true, `Windows: ${p} — это .git`);
+    }
+    eq(isGitInternal('.git./config', false), false, 'не Windows: .git. — другое имя');
+  }
   if (symlinked) {
     fs.symlinkSync(path.join(lspRepo, '.git', 'config'), path.join(lspRepo, 'src', 'gitlink.ts'));
     eq((await call(`/api/file?${lq}&path=src/gitlink.ts`)).status, 403, 'GET /api/file: симлинк внутрь .git -> 403');
@@ -1497,9 +1517,12 @@ async function main() {
   {
     const { checkHost, allowedHosts } = require('./lib/http');
     const req = (host) => ({ headers: { host } });
-    eq(checkHost(req('192.168.1.5:4321'), allowedHosts('192.168.1.5')), null, '--host 192.168.1.5: этот адрес в Host разрешён');
-    ok(checkHost(req('192.168.1.6:4321'), allowedHosts('192.168.1.5')) !== null, '--host 192.168.1.5: другой адрес -> отказ');
-    eq(checkHost(req('[fe80::1]:4321'), allowedHosts('fe80::1')), null, '--host с IPv6-адресом: он же в скобках в Host');
+    eq(checkHost(req('192.168.1.5:4321'), allowedHosts('0.0.0.0')), null, '--host 0.0.0.0: по адресу машины в сети — пускает (IP-адрес не перепривязать через DNS)');
+    eq(checkHost(req('[fe80::1]:4321'), allowedHosts('::')), null, 'IPv6-адрес в скобках в Host — пускает');
+    eq(checkHost(req('localhost.:4321'), allowedHosts(null)), null, 'localhost. (с точкой на конце) — пускает');
+    eq(checkHost(req('devbox:4321'), allowedHosts('devbox')), null, '--host devbox: это имя в Host разрешено');
+    ok(checkHost(req('devbox:4321'), allowedHosts('0.0.0.0')) !== null, 'имя машины без --host <имя> -> отказ');
+    ok(checkHost(req('1.2.3.4.nip.io'), allowedHosts('0.0.0.0')) !== null, 'имя, похожее на адрес (1.2.3.4.nip.io) -> отказ');
     eq(checkHost({ headers: {} }, allowedHosts('127.0.0.1')), null, 'без Host (HTTP/1.0, не браузер) — пропускается');
   }
 
