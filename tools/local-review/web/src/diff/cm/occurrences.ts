@@ -21,6 +21,7 @@ import {
   lineStarts,
   rulerTop,
   stepIndex,
+  thinMarks,
   wordAt,
   type OrderKey,
 } from './occurrenceMatch';
@@ -199,7 +200,7 @@ export class OccurrenceHub {
       // The editor scrolls to the line under the deleted block; the line
       // itself is in the widget, centred once it has been drawn.
       view.requestMeasure({
-        read: () => deletedLineElement(view, o),
+        read: () => deletedLineElement(deletedChunks(view), o),
         write: (el) => el?.scrollIntoView({ block: 'center' }),
       });
     }
@@ -209,18 +210,30 @@ export class OccurrenceHub {
 function onEscape(e: KeyboardEvent) {
   if (e.key !== 'Escape' || !activeHub || e.defaultPrevented) return;
   if (isTypingTarget(e.target) || portalOpen()) return;
+  // A drag over line numbers is in progress: this Esc cancels the drag
+  // (DiffEditor), the highlight stays.
+  if (document.body.classList.contains('rv-dragging-lines')) return;
   // Before Zen's own Escape (App.tsx), which skips a handled event.
   e.preventDefault();
   activeHub.clear();
 }
 
-/** The `.cm-deletedLine` element an occurrence is in, if it is drawn. */
-function deletedLineElement(view: EditorView, o: DeletedOccurrence): HTMLElement | null {
+/**
+ * The drawn deleted blocks by the document position they stand at. Built once
+ * per measure: looking each occurrence up in the DOM would cost
+ * occurrences × blocks `posAtDOM` calls on every scroll frame.
+ */
+function deletedChunks(view: EditorView): Map<number, HTMLElement> {
+  const chunks = new Map<number, HTMLElement>();
   for (const chunk of view.contentDOM.querySelectorAll<HTMLElement>('.cm-deletedChunk')) {
-    if (view.posAtDOM(chunk) !== o.at) continue;
-    return chunk.querySelectorAll<HTMLElement>(':scope > .cm-deletedLine')[o.line] ?? null;
+    chunks.set(view.posAtDOM(chunk), chunk);
   }
-  return null;
+  return chunks;
+}
+
+/** The `.cm-deletedLine` element an occurrence is in, if it is drawn. */
+function deletedLineElement(chunks: Map<number, HTMLElement>, o: DeletedOccurrence): HTMLElement | null {
+  return chunks.get(o.at)?.querySelectorAll<HTMLElement>(':scope > .cm-deletedLine')[o.line] ?? null;
 }
 
 /** A DOM range over `len` characters from `col` of a line element's text. */
@@ -320,6 +333,7 @@ function cssHighlights(): { registry: CssHighlights; Ctor: HighlightCtor } | nul
 type Mark = { top: number; current: boolean; index: number };
 type Measured = {
   word: string;
+  total: number;
   deleted: { range: globalThis.Range; current: boolean }[];
   marks: Mark[];
   ruler: { top: number; height: number };
@@ -343,6 +357,9 @@ function occurrencePlugin(hub: OccurrenceHub) {
         view.contentDOM.addEventListener('mouseup', this.onMouseUp);
         this.scroller = scrollParent(view.dom);
         this.scroller?.addEventListener('scroll', this.onScroll, { passive: true });
+        // The ruler spans the pane, which a window resize changes without
+        // the editor itself changing size.
+        window.addEventListener('resize', this.onScroll);
         this.schedule();
       }
 
@@ -368,24 +385,30 @@ function occurrencePlugin(hub: OccurrenceHub) {
         let marks: Mark[] = [];
         let ruler = { top: 0, height: 0 };
         if (h) {
+          const chunks = deletedChunks(view);
           h.list.forEach((o, i) => {
             if (o.kind !== 'del') return;
-            const el = deletedLineElement(view, o);
+            const el = deletedLineElement(chunks, o);
             const range = el && textRange(el, o.col, o.len);
             if (range) deleted.push({ range, current: i === h.index });
           });
           ruler = this.rulerBox();
           const total = view.contentHeight;
           const lh = view.defaultLineHeight;
-          marks = h.list.map((o, index) => {
-            const y =
+          const tops = h.list.map((o) =>
+            rulerTop(
               o.kind === 'doc'
                 ? textTop(view.lineBlockAt(o.from), o.from)
-                : deletionTop(view.lineBlockAt(o.at)) + o.line * lh;
-            return { top: rulerTop(y, total, ruler.height), current: index === h.index, index };
-          });
+                : deletionTop(view.lineBlockAt(o.at)) + o.line * lh,
+              total,
+              ruler.height,
+            ),
+          );
+          // A common word in a long file: thousands of marks on a few
+          // hundred pixels, one element per pixel row is enough.
+          marks = thinMarks(tops, h.index).map((index) => ({ top: tops[index], current: index === h.index, index }));
         }
-        return { word: h?.word ?? '', deleted, marks, ruler };
+        return { word: h?.word ?? '', total: h?.list.length ?? 0, deleted, marks, ruler };
       }
 
       /**
@@ -428,7 +451,7 @@ function occurrencePlugin(hub: OccurrenceHub) {
             i.className = mk.current ? 'rv-occ-ruler__mark is-current' : 'rv-occ-ruler__mark';
             i.style.top = `${mk.top}px`;
             i.dataset.index = String(mk.index);
-            i.title = `${m.word} — ${mk.index + 1} из ${m.marks.length}`;
+            i.title = `${m.word} — ${mk.index + 1} из ${m.total}`;
             return i;
           }),
         );
@@ -471,6 +494,7 @@ function occurrencePlugin(hub: OccurrenceHub) {
       destroy() {
         this.view.contentDOM.removeEventListener('mouseup', this.onMouseUp);
         this.scroller?.removeEventListener('scroll', this.onScroll);
+        window.removeEventListener('resize', this.onScroll);
         hub.ruler?.replaceChildren();
         const css = cssHighlights();
         if (css && painter === this) {

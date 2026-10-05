@@ -8,6 +8,7 @@ import {
   lineStarts,
   rulerTop,
   stepIndex,
+  thinMarks,
   wordAt,
   type OrderKey,
 } from './occurrenceMatch';
@@ -150,5 +151,21 @@ describe('rulerTop', () => {
   it('is 0 for an empty ruler or content', () => {
     expect(rulerTop(10, 0, 300)).toBe(0);
     expect(rulerTop(10, 1000, 0)).toBe(0);
+  });
+});
+
+describe('thinMarks', () => {
+  it('keeps the first mark of each pixel row', () => {
+    expect(thinMarks([0, 0, 5, 5, 5, 9], -1)).toEqual([0, 2, 5]);
+  });
+
+  it('always keeps the current mark, and only it on its row', () => {
+    expect(thinMarks([0, 0, 5, 5, 5, 9], 3)).toEqual([0, 3, 5]);
+    expect(thinMarks([7, 7], 1)).toEqual([1]);
+  });
+
+  it('keeps every mark when none share a row', () => {
+    expect(thinMarks([1, 2, 3], 0)).toEqual([0, 1, 2]);
+    expect(thinMarks([], -1)).toEqual([]);
   });
 });

@@ -41,6 +41,43 @@ import { previewToRender } from './previewFile';
 import { fileLayout } from './fileLayout';
 import { OccurrenceHub } from './cm/occurrences';
 
+/**
+ * «word N of M» with ↑/↓ in the file header. Its own component, subscribed to
+ * the hub itself: a click on another word then redraws this, not the file.
+ */
+function OccurrenceCounter({ hub }: { hub: OccurrenceHub }) {
+  const occ = useSyncExternalStore(hub.subscribe, hub.getSnapshot);
+  if (!occ) return null;
+  const single = occ.total < 2 && occ.index >= 0;
+  return (
+    <span className="rv-occ-counter" title="Вхождения слова в файле — Esc сбрасывает">
+      {/* Only the text is announced, not the buttons beside it. */}
+      <span className="rv-occ-counter__status" role="status">
+        <code className="rv-occ-counter__word">{occ.word}</code>
+        <span className="rv-occ-counter__pos">
+          {occ.index >= 0 ? `${occ.index + 1} из ${occ.total}` : `${occ.total}`}
+        </span>
+      </span>
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowUpIcon}
+        aria-label="Предыдущее вхождение"
+        disabled={single}
+        onClick={() => hub.step(-1)}
+      />
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowDownIcon}
+        aria-label="Следующее вхождение"
+        disabled={single}
+        onClick={() => hub.step(1)}
+      />
+    </span>
+  );
+}
+
 // marked + DOMPurify + markdown styles load only when a file is first rendered.
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 const HtmlPreview = lazy(() => import('./HtmlPreview'));
@@ -311,7 +348,6 @@ export const FileDiff = memo(function FileDiff({
 
   // The clicked word's occurrences: the editor finds them, the header counts.
   const occurrences = useMemo(() => new OccurrenceHub(), []);
-  const occ = useSyncExternalStore(occurrences.subscribe, occurrences.getSnapshot);
 
   const onSelectLines = useCallback(
     (r: LineRange) => actions.openEditor({ file: path, start: r.from, end: r.to }),
@@ -374,30 +410,7 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         <div className="rv-file-header__spacer" />
-        {occ && !collapsed && !rendered && (
-          <span className="rv-occ-counter" role="status" title="Вхождения слова в файле — Esc сбрасывает">
-            <code className="rv-occ-counter__word">{occ.word}</code>
-            <span className="rv-occ-counter__pos">
-              {occ.index >= 0 ? `${occ.index + 1} из ${occ.total}` : `${occ.total}`}
-            </span>
-            <IconButton
-              size="small"
-              variant="invisible"
-              icon={ArrowUpIcon}
-              aria-label="Предыдущее вхождение"
-              disabled={occ.total < 2 && occ.index >= 0}
-              onClick={() => occurrences.step(-1)}
-            />
-            <IconButton
-              size="small"
-              variant="invisible"
-              icon={ArrowDownIcon}
-              aria-label="Следующее вхождение"
-              disabled={occ.total < 2 && occ.index >= 0}
-              onClick={() => occurrences.step(1)}
-            />
-          </span>
-        )}
+        {!collapsed && !rendered && <OccurrenceCounter hub={occurrences} />}
         {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.IconButton icon={CodeIcon} aria-label="Код" selected={!rendered} />

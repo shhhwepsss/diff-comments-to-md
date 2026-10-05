@@ -438,6 +438,10 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
   white-space: nowrap;
 }
+.rv-occ-counter__status {
+  display: inline-flex;
+  align-items: center;
+}
 .rv-occ-counter__word {
   max-width: 24ch;
   overflow: hidden;

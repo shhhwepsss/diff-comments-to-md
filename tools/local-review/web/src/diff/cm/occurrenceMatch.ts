@@ -85,6 +85,25 @@ export function rulerTop(y: number, total: number, height: number, mark = 3): nu
   return Math.max(0, Math.min(height - mark, Math.round(top)));
 }
 
+/**
+ * Which marks to draw (indexes into `tops`), one per pixel row: marks that
+ * land on the same row hide each other anyway. The current one is always
+ * kept, the others in order, the first at each row.
+ */
+export function thinMarks(tops: readonly number[], current: number): number[] {
+  const taken = new Set<number>();
+  if (current >= 0 && current < tops.length) taken.add(tops[current]);
+  const out: number[] = [];
+  tops.forEach((top, i) => {
+    if (i === current) out.push(i);
+    else if (!taken.has(top)) {
+      taken.add(top);
+      out.push(i);
+    }
+  });
+  return out;
+}
+
 function charBefore(text: string, at: number): string {
   if (at <= 0) return '';
   const code = text.charCodeAt(at - 1);
