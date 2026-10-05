@@ -17,6 +17,7 @@ import { foldUnchanged } from './cm/collapse';
 import { diffGutters, lineAtY } from './cm/gutters';
 import { githubHighlight, githubTheme } from './cm/theme';
 import { languageFor } from './cm/language';
+import { occurrences as occurrenceHighlight, type OccurrenceHub } from './cm/occurrences';
 
 type Props = {
   path: string;
@@ -38,6 +39,8 @@ type Props = {
   reveal?: { from: number; to: number; nonce: number } | null;
   /** The reveal with this nonce is done — the caller stops passing it. */
   onRevealed?: (nonce: number) => void;
+  /** Where the highlight of a clicked word's occurrences is reported (the file header). */
+  occurrences: OccurrenceHub;
 };
 
 const FLASH_MS = 1600;
@@ -62,6 +65,7 @@ export function DiffEditor({
   onSelectLines,
   reveal = null,
   onRevealed,
+  occurrences,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -200,6 +204,7 @@ export function DiffEditor({
           pinBlocks,
           selectedLines,
           foldUnchanged,
+          occurrenceHighlight(occurrences),
           diffGutters({ onLineMouseDown }),
           githubTheme,
           githubHighlight,
@@ -211,6 +216,7 @@ export function DiffEditor({
       const v = new EditorView({ state, parent });
       view.current = v;
       registry.view = v;
+      occurrences.attach(v);
       v.dispatch({
         effects: [setBlocks.of(latest.current.blocks), setSelectedLines.of(latest.current.selected)],
       });
@@ -236,12 +242,13 @@ export function DiffEditor({
       alive = false;
       stopDrag();
       drag.current = null;
+      if (view.current) occurrences.detach(view.current);
       view.current?.destroy();
       view.current = null;
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences]);
 
   useEffect(() => {
     if (reveal) applyReveal();
@@ -263,8 +270,30 @@ export function DiffEditor({
 
   useSyncExternalStore(registry.subscribe, registry.getSnapshot);
 
+  const rulerRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      occurrences.ruler = el;
+    },
+    [occurrences],
+  );
+
   return (
     <>
+      {/* The occurrence marks: sticky, so they stay beside the part of the
+          file on screen (cm/occurrences.ts sizes and fills them). */}
+      <div className="rv-occ-ruler-wrap">
+        <div
+          className="rv-occ-ruler"
+          hidden
+          ref={rulerRef}
+          onMouseDown={(e) => {
+            const index = (e.target as HTMLElement).dataset.index;
+            if (index === undefined) return;
+            e.preventDefault();
+            occurrences.goTo(Number(index));
+          }}
+        />
+      </div>
       <div ref={host} className="rv-diff-editor" />
       {registry.entries().map(([key, el]) => createPortal(renderBlock(key), el, key))}
     </>

@@ -1,8 +1,21 @@
-import { Component, lazy, memo, Suspense, useCallback, useEffect, useMemo, type ReactNode, type RefObject } from 'react';
+import {
+  Component,
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { ActionList, ActionMenu, Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import {
   AlertIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CodeIcon,
@@ -26,6 +39,7 @@ import { CommentCard, CommentForm } from './CommentCard';
 import { stripFinalNewline, type LineRange } from './lineMap';
 import { previewToRender } from './previewFile';
 import { fileLayout } from './fileLayout';
+import { OccurrenceHub } from './cm/occurrences';
 
 // marked + DOMPurify + markdown styles load only when a file is first rendered.
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
@@ -295,6 +309,10 @@ export const FileDiff = memo(function FileDiff({
     [revealAnchored, rendered],
   );
 
+  // The clicked word's occurrences: the editor finds them, the header counts.
+  const occurrences = useMemo(() => new OccurrenceHub(), []);
+  const occ = useSyncExternalStore(occurrences.subscribe, occurrences.getSnapshot);
+
   const onSelectLines = useCallback(
     (r: LineRange) => actions.openEditor({ file: path, start: r.from, end: r.to }),
     [path, actions],
@@ -356,6 +374,30 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         <div className="rv-file-header__spacer" />
+        {occ && !collapsed && !rendered && (
+          <span className="rv-occ-counter" role="status" title="Вхождения слова в файле — Esc сбрасывает">
+            <code className="rv-occ-counter__word">{occ.word}</code>
+            <span className="rv-occ-counter__pos">
+              {occ.index >= 0 ? `${occ.index + 1} из ${occ.total}` : `${occ.total}`}
+            </span>
+            <IconButton
+              size="small"
+              variant="invisible"
+              icon={ArrowUpIcon}
+              aria-label="Предыдущее вхождение"
+              disabled={occ.total < 2 && occ.index >= 0}
+              onClick={() => occurrences.step(-1)}
+            />
+            <IconButton
+              size="small"
+              variant="invisible"
+              icon={ArrowDownIcon}
+              aria-label="Следующее вхождение"
+              disabled={occ.total < 2 && occ.index >= 0}
+              onClick={() => occurrences.step(1)}
+            />
+          </span>
+        )}
         {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.IconButton icon={CodeIcon} aria-label="Код" selected={!rendered} />
@@ -522,6 +564,7 @@ export const FileDiff = memo(function FileDiff({
             onSelectLines={onSelectLines}
             reveal={editorReveal}
             onRevealed={onRevealed}
+            occurrences={occurrences}
           />
         </div>
       )}

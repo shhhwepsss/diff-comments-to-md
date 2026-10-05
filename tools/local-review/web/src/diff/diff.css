@@ -392,7 +392,100 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-top: none;
   border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
+  /* clip, not hidden: hidden would make the frame a scroll container and the
+     occurrence ruler inside could not stick to the pane. */
+  overflow: clip;
+}
+
+/* ---------------------------------------------------------------------------
+   Occurrences of the clicked word (cm/occurrences.ts): marks in the code, the
+   counter in the file header, the ruler on the right edge. Built on Primer's
+   attention tokens, so the light and the dark (slate) themes both get them.
+   --------------------------------------------------------------------------- */
+
+.rv-file {
+  --rv-occ-bgColor: var(--bgColor-attention-muted);
+  --rv-occ-borderColor: var(--borderColor-attention-emphasis);
+  --rv-occ-current-bgColor: color-mix(in srgb, var(--bgColor-attention-emphasis) 45%, transparent);
+}
+
+.rv-occ {
+  background: var(--rv-occ-bgColor);
+  box-shadow: inset 0 0 0 1px var(--rv-occ-borderColor);
+  border-radius: 2px;
+}
+.rv-occ--current {
+  background: var(--rv-occ-current-bgColor);
+}
+
+/* Deleted lines are the merge view's own DOM: painted as CSS highlights,
+   which take colors and text decoration only — the underline stands in for
+   the border, which the pale fill alone would lack on the red background. */
+::highlight(rv-occ) {
+  background-color: var(--rv-occ-bgColor);
+  text-decoration: underline 2px var(--rv-occ-borderColor);
+}
+::highlight(rv-occ-current) {
+  background-color: var(--rv-occ-current-bgColor);
+  text-decoration: underline 2px var(--rv-occ-borderColor);
+}
+
+.rv-occ-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+.rv-occ-counter__word {
+  max-width: 24ch;
   overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-default);
+  background: var(--rv-occ-bgColor);
+  border: var(--borderWidth-thin) solid var(--rv-occ-borderColor);
+  border-radius: 3px;
+}
+.rv-occ-counter__pos {
+  margin: 0 2px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Zero height and sticky: the ruler hangs from it over the editor's right
+   edge, spanning the part of the file that is on screen. */
+.rv-occ-ruler-wrap {
+  position: sticky;
+  z-index: 4;
+  height: 0;
+}
+.rv-occ-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  background: color-mix(in srgb, var(--bgColor-neutral-muted) 60%, transparent);
+}
+.rv-occ-ruler[hidden] {
+  display: none;
+}
+.rv-occ-ruler__mark {
+  position: absolute;
+  right: 1px;
+  width: 8px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--rv-occ-borderColor);
+  cursor: pointer;
+}
+.rv-occ-ruler__mark.is-current {
+  height: 4px;
+  right: 0;
+  width: 10px;
+  background: var(--fgColor-attention);
+  box-shadow: 0 0 0 1px var(--bgColor-default);
 }
 
 .rv-diff-loading {
