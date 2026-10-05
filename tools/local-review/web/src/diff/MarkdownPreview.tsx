@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Button, useTheme } from '@primer/react';
 import { ImageIcon } from '@primer/octicons-react';
 import { renderMarkdown } from './renderMarkdown';
-import { renderMermaidBlocks } from './mermaidBlocks';
+import { diagramAt, diagramIndexOf, renderMermaidBlocks } from './mermaidBlocks';
+import { MermaidViewer } from './MermaidViewer';
 import './markdown.css';
 
 // Read-only rendered view of a markdown file. Loaded with React.lazy, so the
@@ -23,6 +24,8 @@ export default function MarkdownPreview({ text, loadExternalImages, onLoadExtern
   const body = useRef<HTMLDivElement>(null);
   const { resolvedColorMode } = useTheme();
   const dark = resolvedColorMode === 'night' || resolvedColorMode === 'dark';
+  // The diagram shown in the full-window viewer: its block and its picture.
+  const [expanded, setExpanded] = useState<{ index: number; src: string } | null>(null);
 
   // Diagrams are drawn into the HTML React has already put in place. React
   // only resets that HTML when `html` changes, and then this runs again; a
@@ -36,11 +39,28 @@ export default function MarkdownPreview({ text, loadExternalImages, onLoadExtern
       root,
       async (source) => (await import('./mermaidDiagram')).drawMermaid(source, dark),
       () => stale,
-    );
+    ).then(() => {
+      if (stale) return;
+      // An open viewer follows the redraw: same block, its new picture.
+      setExpanded((open) => {
+        if (!open) return open;
+        const src = diagramAt(root, open.index);
+        if (!src) return null;
+        return src === open.src ? open : { index: open.index, src };
+      });
+    });
     return () => {
       stale = true;
     };
   }, [html, mermaidBlocks, dark]);
+
+  const expand = (e: MouseEvent<HTMLDivElement>) => {
+    const root = body.current;
+    if (!root) return;
+    const index = diagramIndexOf(root, e.target as Element);
+    const src = index < 0 ? null : diagramAt(root, index);
+    if (src) setExpanded({ index, src });
+  };
 
   if (!text.trim()) {
     return <div className="rv-markdown rv-markdown--empty">Файл пуст.</div>;
@@ -55,7 +75,8 @@ export default function MarkdownPreview({ text, loadExternalImages, onLoadExtern
           <span className="rv-hint">Внешние картинки не загружаются сами: их сервер увидел бы твой IP.</span>
         </div>
       )}
-      <div ref={body} className="rv-markdown" dangerouslySetInnerHTML={{ __html: html }} />
+      <div ref={body} className="rv-markdown" onClick={expand} dangerouslySetInnerHTML={{ __html: html }} />
+      {expanded && <MermaidViewer src={expanded.src} onClose={() => setExpanded(null)} />}
     </>
   );
 }

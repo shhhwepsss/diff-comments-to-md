@@ -218,9 +218,81 @@
 .rv-markdown .rv-mermaid--rendered > pre {
   display: none;
 }
+/* The figure hugs the picture, so the expand button sits on its corner. */
+.rv-markdown .rv-mermaid__figure {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
 .rv-markdown .rv-mermaid__diagram {
   display: block;
   height: auto;
+  cursor: zoom-in;
+}
+.rv-markdown .rv-mermaid__expand {
+  position: absolute;
+  top: var(--base-size-4);
+  right: var(--base-size-4);
+  padding: 0 var(--base-size-8);
+  font: inherit;
+  font-size: var(--text-body-size-small);
+  line-height: 1.8;
+  color: var(--fgColor-default);
+  background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  cursor: pointer;
+  opacity: 0;
+}
+.rv-markdown .rv-mermaid__figure:hover > .rv-mermaid__expand,
+.rv-markdown .rv-mermaid__expand:focus-visible {
+  opacity: 1;
+}
+
+/* Full-window viewer (MermaidViewer.tsx). The dialog body is the toolbar plus
+   a stage the diagram is positioned on. Primer wraps the body in a scrollable
+   region and lets it be as tall as its content; here it takes the whole region. */
+.rv-mermaid-viewer [data-component='Dialog.Body'] {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+.rv-mermaid-viewer__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: var(--base-size-8) var(--base-size-16);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+.rv-mermaid-viewer__scale {
+  min-width: 4ch;
+  font-size: var(--text-body-size-small);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.rv-mermaid-viewer__stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bgColor-default);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.rv-mermaid-viewer__stage--dragging {
+  cursor: grabbing;
+}
+.rv-mermaid-viewer__image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  pointer-events: none;
 }
 .rv-markdown .rv-mermaid > pre {
   margin-bottom: 0;

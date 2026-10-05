@@ -8,7 +8,9 @@
 
 export const MERMAID_BLOCK = 'rv-mermaid';
 const RENDERED = 'rv-mermaid--rendered';
+const FIGURE = 'rv-mermaid__figure';
 const DIAGRAM = 'rv-mermaid__diagram';
+const EXPAND = 'rv-mermaid__expand';
 const ERROR = 'rv-mermaid__error';
 
 const SVG_IMAGE = /^data:image\/svg\+xml[;,]/;
@@ -75,8 +77,24 @@ export function svgImageUrl(svgMarkup: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
 }
 
+/**
+ * Index of the mermaid block whose drawn diagram (or expand button) contains
+ * `target`, among all the blocks under `root`; -1 when `target` is not there.
+ */
+export function diagramIndexOf(root: HTMLElement, target: Element): number {
+  const figure = target.closest(`.${FIGURE}`);
+  if (!figure?.parentElement) return -1;
+  return [...root.querySelectorAll(`.${MERMAID_BLOCK}`)].indexOf(figure.parentElement);
+}
+
+/** Image URL of the diagram drawn in block `index`, or null when it has none. */
+export function diagramAt(root: HTMLElement, index: number): string | null {
+  const box = root.querySelectorAll(`.${MERMAID_BLOCK}`)[index];
+  return box?.querySelector(`:scope > .${FIGURE} > .${DIAGRAM}`)?.getAttribute('src') ?? null;
+}
+
 function show(box: Element, result: HTMLElement, rendered: boolean) {
-  for (const old of [...box.querySelectorAll(`:scope > .${DIAGRAM}, :scope > .${ERROR}`)]) old.remove();
+  for (const old of [...box.querySelectorAll(`:scope > .${FIGURE}, :scope > .${ERROR}`)]) old.remove();
   box.classList.toggle(RENDERED, rendered);
   box.append(result);
 }
@@ -112,7 +130,15 @@ export async function renderMermaidBlocks(root: HTMLElement, draw: DrawMermaid, 
       img.className = DIAGRAM;
       img.alt = 'Диаграмма mermaid';
       img.src = url;
-      show(box, img, true);
+      // MarkdownPreview opens the full-window viewer on a click inside the figure.
+      const expand = doc.createElement('button');
+      expand.type = 'button';
+      expand.className = EXPAND;
+      expand.textContent = 'Развернуть';
+      const figure = doc.createElement('div');
+      figure.className = FIGURE;
+      figure.append(img, expand);
+      show(box, figure, true);
     } else {
       const error = doc.createElement('p');
       error.className = ERROR;
