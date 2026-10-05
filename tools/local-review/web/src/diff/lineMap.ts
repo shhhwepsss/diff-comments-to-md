@@ -36,6 +36,8 @@ export function oldLineNumbers(newLineCount: number, chunks: readonly LineChunk[
  * Lines within `margin` of a change stay visible, and so do `keep` lines
  * (lines that carry a comment or the open editor) — a comment must never end
  * up inside a folded block. Runs shorter than `minSize` are not worth folding.
+ * `expanded` are the runs the reviewer unfolded: their lines stay visible
+ * whatever `keep` does around them later, until they are folded back.
  */
 export function collapsedRanges(
   lineCount: number,
@@ -43,7 +45,7 @@ export function collapsedRanges(
   keep: Iterable<number>,
   margin: number,
   minSize: number,
-  expanded: ReadonlySet<string> = new Set(),
+  expanded: readonly LineRange[] = [],
 ): LineRange[] {
   if (lineCount <= 0) return [];
   const visible = new Uint8Array(lineCount + 2);
@@ -52,6 +54,7 @@ export function collapsedRanges(
   };
   for (const c of chunks) show(c.newFrom - margin, c.newFrom + c.newCount - 1 + margin);
   for (const n of keep) show(n, n);
+  for (const r of expanded) show(r.from, r.to);
 
   const out: LineRange[] = [];
   let runStart = 0;
@@ -60,15 +63,11 @@ export function collapsedRanges(
     if (hidden && !runStart) runStart = n;
     if (!hidden && runStart) {
       const range = { from: runStart, to: n - 1 };
-      if (range.to - range.from + 1 >= minSize && !expanded.has(rangeKey(range))) out.push(range);
+      if (range.to - range.from + 1 >= minSize) out.push(range);
       runStart = 0;
     }
   }
   return out;
-}
-
-export function rangeKey(r: LineRange): string {
-  return `${r.from}-${r.to}`;
 }
 
 /** Normalizes a drag in either direction. */

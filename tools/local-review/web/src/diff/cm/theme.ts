@@ -147,6 +147,9 @@ export const githubTheme = EditorView.theme({
     cursor: 'pointer',
   },
   '.rv-fold__label': { fontSize: '12px' },
+  // The bar above lines the reviewer unfolded: thinner, it is not in place of anything.
+  '.rv-fold.rv-fold--open': { height: '24px' },
+  '.rv-fold--open .rv-fold__button': { height: '20px' },
 
   // Comment cards inside the document.
   '.rv-block': {
