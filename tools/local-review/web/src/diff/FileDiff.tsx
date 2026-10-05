@@ -1,8 +1,24 @@
-import { Component, lazy, memo, Suspense, useCallback, useEffect, useMemo, type ReactNode, type RefObject } from 'react';
+import {
+  Component,
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { ActionList, ActionMenu, Button, Checkbox, CounterLabel, IconButton, SegmentedControl, Spinner } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import {
   AlertIcon,
+  ArrowDownIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CodeIcon,
@@ -16,7 +32,7 @@ import {
   ScreenFullIcon,
   ScreenNormalIcon,
 } from '@primer/octicons-react';
-import type { EditorAnchor } from '../review/ReviewContext';
+import type { EditorAnchor, NavTarget } from '../review/ReviewContext';
 import type { ActiveDiff } from '../review/diffStore';
 import { failureMessage } from '../api/client';
 import { useToast } from '../lib/toast';
@@ -26,6 +42,92 @@ import { CommentCard, CommentForm } from './CommentCard';
 import { stripFinalNewline, type LineRange } from './lineMap';
 import { previewToRender } from './previewFile';
 import { fileLayout } from './fileLayout';
+import { OccurrenceHub } from './cm/occurrences';
+import { LspHub } from './cm/lsp';
+import { CodeNavContext, type CodeNav } from '../nav/codeNav';
+import { indicatorFor } from '../lsp/session';
+import { displayBinding } from '../lib/keybindings';
+
+/**
+ * «word N of M» with ↑/↓ in the file header. Its own component, subscribed to
+ * the hub itself: a click on another word then redraws this, not the file.
+ */
+function OccurrenceCounter({ hub }: { hub: OccurrenceHub }) {
+  const occ = useSyncExternalStore(hub.subscribe, hub.getSnapshot);
+  if (!occ) return null;
+  const single = occ.total < 2 && occ.index >= 0;
+  return (
+    <span className="rv-occ-counter" title="Вхождения слова в файле — Esc сбрасывает">
+      {/* Only the text is announced, not the buttons beside it. */}
+      <span className="rv-occ-counter__status" role="status">
+        <code className="rv-occ-counter__word">{occ.word}</code>
+        <span className="rv-occ-counter__pos">
+          {occ.index >= 0 ? `${occ.index + 1} из ${occ.total}` : `${occ.total}`}
+        </span>
+      </span>
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowUpIcon}
+        aria-label="Предыдущее вхождение"
+        disabled={single}
+        onClick={() => hub.step(-1)}
+      />
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowDownIcon}
+        aria-label="Следующее вхождение"
+        disabled={single}
+        onClick={() => hub.step(1)}
+      />
+    </span>
+  );
+}
+
+/** ← → in the file header: Back / Forward through jumps (nav/history.ts). */
+function NavButtons({ nav }: { nav: CodeNav }) {
+  const { canBack, canForward } = useSyncExternalStore(nav.history.subscribe, nav.history.getSnapshot);
+  const back = displayBinding(nav.keys.navBack);
+  const forward = displayBinding(nav.keys.navForward);
+  return (
+    <span className="rv-nav-buttons">
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowLeftIcon}
+        aria-label="Назад"
+        tooltipDirection="s"
+        description={back ? `Назад (${back})` : 'Назад'}
+        disabled={!canBack}
+        onClick={() => nav.history.back()}
+      />
+      <IconButton
+        size="small"
+        variant="invisible"
+        icon={ArrowRightIcon}
+        aria-label="Вперёд"
+        tooltipDirection="s"
+        description={forward ? `Вперёд (${forward})` : 'Вперёд'}
+        disabled={!canForward}
+        onClick={() => nav.history.forward()}
+      />
+    </span>
+  );
+}
+
+/** «LSP · tsserver» / «индексация…» / «LSP не найден» for this file's language; nothing for a file no server handles. */
+function LspIndicator({ nav, path }: { nav: CodeNav; path: string }) {
+  const status = useSyncExternalStore(nav.session.subscribe, nav.session.getSnapshot);
+  const indicator = indicatorFor(status, path);
+  if (!indicator) return null;
+  return (
+    <span className={`rv-lsp-indicator is-${indicator.tone}`} title={indicator.title}>
+      <i className="rv-lsp-indicator__dot" aria-hidden="true" />
+      {indicator.text}
+    </span>
+  );
+}
 
 // marked + DOMPurify + markdown styles load only when a file is first rendered.
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
@@ -82,6 +184,14 @@ export function Empty({ icon: Icon, title, children }: { icon: typeof FileIcon; 
 
 /** Why a ready diff can't be shown line by line, or null when it can. */
 function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: string; text: string } | null {
+  if (diff.fullFile) {
+    if (diff.missing) {
+      return { icon: QuestionIcon, title: 'Файла нет в текущем диффе', text: 'И на диске его нет. Комментарии к нему сохранены и попадут в экспорт.' };
+    }
+    if (diff.binary) return { icon: FileBinaryIcon, title: 'Бинарный файл', text: 'Файл вне диффа, показать его текст нельзя.' };
+    if (diff.newText == null) return { icon: AlertIcon, title: 'Текст файла недоступен', text: diff.textUnavailable || 'Сервер не вернул текст файла.' };
+    return null;
+  }
   if (diff.binary) {
     return { icon: FileBinaryIcon, title: 'Бинарный файл', text: 'Построчный дифф недоступен — оставь комментарий к файлу.' };
   }
@@ -121,6 +231,8 @@ export type FileDiffActions = {
   deleteComment: (id: string) => Promise<void>;
   setCurrentComment: (id: string | null) => void;
   setFileViewed: (path: string, viewed: boolean) => Promise<void>;
+  /** Go to definition landed somewhere: open it (ReviewContext.navigateTo). */
+  navigateTo: (target: NavTarget, from: { path: string; line: number | null }) => void;
 };
 
 export type FileDiffProps = {
@@ -169,6 +281,15 @@ export type FileDiffProps = {
   placeholderHeight?: number;
   /** Given in the feed, where a failed diff is not reloaded by reopening the file. */
   onRetry?: (path: string) => void;
+  /**
+   * A file outside the diff: opened by code navigation, or left with comments.
+   * When its text can be read (a folder, a PR's clone) it is shown whole, and
+   * commented on like any other.
+   */
+  navFile?: boolean;
+  /** A pending «scroll to this line» for this file (a jump, Back/Forward). */
+  lineReveal?: { line: number; ch?: number; nonce: number } | null;
+  onLineRevealed?: (nonce: number) => void;
 };
 
 /**
@@ -206,8 +327,12 @@ export const FileDiff = memo(function FileDiff({
   onCollapse,
   placeholderHeight,
   onRetry,
+  navFile = false,
+  lineReveal = null,
+  onLineRevealed,
 }: FileDiffProps) {
   const toast = useToast();
+  const nav = useContext(CodeNavContext);
 
   const diff = activeDiff?.kind === 'ready' ? activeDiff.diff : null;
   const reason = diff ? unavailableReason(diff) : null;
@@ -283,17 +408,47 @@ export const FileDiff = memo(function FileDiff({
     document.getElementById(`rv-comment-${revealAbove.comment.id}`)?.scrollIntoView({ block: 'center' });
     onRevealed(revealAbove.nonce);
   }, [revealAbove, diffSettled, onRevealed]);
+  // A jump to a line leaves the rendered view too: the line is in the code.
+  useEffect(() => {
+    if (lineReveal) onFileRendered(path, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineReveal?.nonce, path]);
+  // One reveal prop for the editor: a line jump (negative nonce, so the two
+  // kinds never collide) or a comment.
   const editorReveal = useMemo(
     () =>
-      revealAnchored && !rendered
-        ? {
-            from: revealAnchored.comment.startLine ?? (revealAnchored.comment.endLine as number),
-            to: revealAnchored.comment.endLine as number,
-            nonce: revealAnchored.nonce,
-          }
-        : null,
-    [revealAnchored, rendered],
+      lineReveal && !rendered
+        ? { from: lineReveal.line, to: lineReveal.line, nonce: -lineReveal.nonce, ch: lineReveal.ch }
+        : revealAnchored && !rendered
+          ? {
+              from: revealAnchored.comment.startLine ?? (revealAnchored.comment.endLine as number),
+              to: revealAnchored.comment.endLine as number,
+              nonce: revealAnchored.nonce,
+            }
+          : null,
+    [lineReveal, revealAnchored, rendered],
   );
+  const onEditorRevealed = useCallback(
+    (nonce: number) => (nonce < 0 ? onLineRevealed?.(-nonce) : onRevealed(nonce)),
+    [onLineRevealed, onRevealed],
+  );
+
+  // The clicked word's occurrences: the editor finds them, the header counts.
+  const occurrences = useMemo(() => new OccurrenceHub(), []);
+
+  // Code navigation for this file. The hub outlives editor rebuilds; what it
+  // needs from the review is refreshed here on every render.
+  const lsp = useMemo(() => new LspHub(), []);
+  lsp.path = path;
+  lsp.session = nav?.session ?? null;
+  lsp.sendText = Boolean(nav?.sendText) && !navFile;
+  lsp.keys = nav?.keys ?? null;
+  lsp.text = nav?.text ?? null;
+  lsp.toast = toast;
+  lsp.onNavigate = (loc, fromLine) => {
+    if (loc.path) actions.navigateTo({ path: loc.path, line: loc.line, character: loc.character }, { path, line: fromLine });
+  };
+  lsp.onPanel = (query) => nav?.openPanel(query);
 
   const onSelectLines = useCallback(
     (r: LineRange) => actions.openEditor({ file: path, start: r.from, end: r.to }),
@@ -318,6 +473,7 @@ export const FileDiff = memo(function FileDiff({
   return (
     <section className={collapsed ? 'rv-file is-collapsed' : 'rv-file'} data-path={path}>
       <div className="rv-file-header">
+        {nav && !collapsed && <NavButtons nav={nav} />}
         {onCollapse && (
           <IconButton
             size="small"
@@ -335,12 +491,17 @@ export const FileDiff = memo(function FileDiff({
               <span className="rv-file-header__arrow">→</span>
             </>
           ) : null}
-          <span>
+          <span className="rv-file-header__name">
             {dir && <span className="rv-file-header__dir">{dir}</span>}
-            {base}
+            <span className="rv-file-header__base">{base}</span>
           </span>
         </div>
-        {stat && (
+        {navFile && diff?.fullFile && (
+          <span className="rv-nav-badge" title="Файл не входит в дифф: открыт переходом по коду или в нём есть комментарии">
+            вне диффа
+          </span>
+        )}
+        {stat && !navFile && (
           <span className="rv-diffstat">
             <span className="rv-diffstat__add">+{stat.additions}</span>
             <span className="rv-diffstat__del">−{stat.deletions}</span>
@@ -356,6 +517,8 @@ export const FileDiff = memo(function FileDiff({
           </span>
         )}
         <div className="rv-file-header__spacer" />
+        {!collapsed && !rendered && <OccurrenceCounter hub={occurrences} />}
+        {nav && !collapsed && <LspIndicator nav={nav} path={path} />}
         {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.IconButton icon={CodeIcon} aria-label="Код" selected={!rendered} />
@@ -432,6 +595,11 @@ export const FileDiff = memo(function FileDiff({
   function body() {
     return (
       <>
+      {navFile && diff?.fullFile && !diff.missing && (
+        <div className="rv-nav-banner" role="note">
+          Файл не входит в дифф и показан целиком. Комментарии к его строкам — как обычно: клик по номеру строки; они попадут в экспорт.
+        </div>
+      )}
       {activeDiff === null && placeholderHeight !== undefined && (
         <div className="rv-file-placeholder" style={{ height: placeholderHeight }} aria-hidden="true" />
       )}
@@ -521,7 +689,10 @@ export const FileDiff = memo(function FileDiff({
             renderBlock={renderBlock}
             onSelectLines={onSelectLines}
             reveal={editorReveal}
-            onRevealed={onRevealed}
+            onRevealed={onEditorRevealed}
+            occurrences={occurrences}
+            lsp={lsp}
+            full={Boolean(diff.fullFile)}
           />
         </div>
       )}

@@ -11,7 +11,18 @@ const GITIGNORE_TARGETS = ['project', 'global'];
  * Actions a keyboard shortcut can be bound to, with the shortcut each ships
  * with; '' means unbound. Mirrors KEYBINDING_DEFAULTS in web/src/lib/keybindings.ts.
  */
-const KEYBINDING_DEFAULTS = { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' };
+const KEYBINDING_DEFAULTS = {
+  zen: '',
+  commentsPanel: '',
+  viewedFile: 'Alt+V',
+  viewMode: 'Alt+A',
+  definition: 'F12',
+  references: 'Shift+F12',
+  implementation: 'Ctrl+F12',
+  callHierarchy: 'Alt+Shift+H',
+  navBack: 'Alt+Left',
+  navForward: 'Alt+Right',
+};
 /** How the diff screen lays files out: one at a time, or all of them in a feed. */
 const VIEW_MODES = ['single', 'all'];
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_DEFAULTS);

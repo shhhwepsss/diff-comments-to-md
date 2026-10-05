@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -14,6 +14,11 @@ import { CommentsPanel } from '../comments/CommentsPanel';
 import { selHi, selLo } from '../review/commitSelection';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
+import { CodeNavContext, type CodeNav, type CodeNavKeys, type NavQuery, type TextNav } from '../nav/codeNav';
+import { diffTexts } from '../nav/textSources';
+import { CloneBar } from '../pr/CloneBar';
+import { NavPanel } from '../nav/NavPanel';
+import { closeLspMenu, definitionAtCaret, navKeysBlocked, panelAtCaret } from '../diff/cm/lsp';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -144,15 +149,33 @@ type Props = {
   /** Long lines wrap in every file. */
   wrap: boolean;
   onWrap: (on: boolean) => void;
+  /** Go to definition, Back, Forward. */
+  navKeys: CodeNavKeys;
+  /** The navigation panel opened or closed: the header's «Комментарии» is not «on» behind it. */
+  onNavPanel?: (open: boolean) => void;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap }: Props) {
-  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
-    useReview();
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap, navKeys, onNavPanel }: Props) {
+  const {
+    state,
+    activeFile,
+    loading,
+    loadError,
+    reload,
+    commitsEmpty,
+    commitsMode,
+    commitsLoading,
+    toggleActiveViewed,
+    descriptor,
+    lsp,
+    navHistory,
+    clone,
+    diffs,
+  } = useReview();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
   const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
 
@@ -166,6 +189,88 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [viewedKey, toggleActiveViewed]);
+
+  // The shown text goes to the language server when it is not the working
+  // tree: the index (staged) or a commit range. Base compares against the
+  // working tree, so its new side is on disk. A PR's clone counts as the
+  // working tree only while it is at the commit the diff shows.
+  const sendText =
+    descriptor.source === 'local' ? descriptor.mode === 'staged' || descriptor.mode === 'commits' : clone?.onHead !== true;
+  // A PR with no clone has no server: navigation searches the text of the
+  // diff's files. Its file list is read at search time, not captured here.
+  const noClone = descriptor.source === 'pr' && !(clone?.bound && clone.valid);
+  const filesRef = useRef(state?.files);
+  filesRef.current = state?.files;
+  const textNav = useMemo<TextNav | null>(
+    () => (noClone ? { files: () => diffTexts(diffs, filesRef.current ?? []) } : null),
+    [noClone, diffs],
+  );
+
+  // The navigation panel (references, implementations, calls). It takes the
+  // comments panel's place on the right while open — the diff keeps its
+  // width — and the comments panel comes back when it closes. Each opening
+  // is a new query: `nonce` remounts the panel with fresh answers.
+  const [navPanel, setNavPanel] = useState<{ query: NavQuery; nonce: number } | null>(null);
+  const openPanel = useCallback((query: NavQuery) => setNavPanel((p) => ({ query, nonce: (p?.nonce ?? 0) + 1 })), []);
+  const closePanel = useCallback(() => setNavPanel(null), []);
+  // The comments panel asked for (its button, its shortcut) wins the place
+  // back. Hidden behind this panel it still reads as open, so the button's
+  // click turns it «off» — which here means «show me the comments» too.
+  const commentsWas = useRef(commentsPanel);
+  const navOpen = useRef(false);
+  navOpen.current = navPanel !== null;
+  useLayoutEffect(() => {
+    if (commentsWas.current === commentsPanel) return;
+    commentsWas.current = commentsPanel;
+    if (!navOpen.current) return;
+    setNavPanel(null);
+    if (!commentsPanel) onCommentsPanel(true);
+  }, [commentsPanel, onCommentsPanel]);
+  // Another repository or view: the answers were about other code.
+  // A clone made or dropped meanwhile: the answers were by text, or by a server.
+  const viewKey = JSON.stringify(descriptor);
+  useEffect(() => setNavPanel(null), [viewKey, noClone]);
+  const navPanelOpen = navPanel !== null;
+  useEffect(() => onNavPanel?.(navPanelOpen), [navPanelOpen, onNavPanel]);
+  useEffect(() => () => onNavPanel?.(false), [onNavPanel]);
+
+  const codeNav = useMemo<CodeNav>(
+    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText, openPanel, text: textNav }),
+    [lsp, navHistory, navKeys, sendText, openPanel, textNav],
+  );
+
+  // F12 (or its replacement) and Alt+←/→. F12 may open DevTools first: the
+  // browser decides that, not the page — Ctrl+click and the menu always work.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (navKeysBlocked(e)) return;
+      if (matchesEvent(navKeys.definition, e)) {
+        if (definitionAtCaret()) e.preventDefault();
+        return;
+      }
+      for (const [key, tab] of [
+        [navKeys.references, 'references'],
+        [navKeys.implementation, 'implementation'],
+        [navKeys.callHierarchy, 'calls'],
+      ] as const) {
+        if (matchesEvent(key, e)) {
+          if (panelAtCaret(tab)) e.preventDefault();
+          return;
+        }
+      }
+      // With nothing to go back to inside the review, the key stays the browser's.
+      if (matchesEvent(navKeys.navBack, e)) {
+        if (navHistory.back()) e.preventDefault();
+        return;
+      }
+      if (matchesEvent(navKeys.navForward, e) && navHistory.forward()) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      closeLspMenu();
+    };
+  }, [navKeys, navHistory]);
 
   if (!state && loading) {
     return (
@@ -224,6 +329,7 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
           <CommitRail />
           <DirtyBanner />
           {state.pr && <PrHeader pr={state.pr} />}
+          <CloneBar />
         </>
       )}
       <OldCommitBanner />
@@ -233,18 +339,24 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar filter={filter} />
         <main className="rv-content">
-          <DiffPane
-            zen={zen}
-            onZen={onZen}
-            panelOpen={commentsPanel}
-            viewMode={viewMode}
-            renderAllFiles={renderAllFiles}
-            wrap={wrap}
-            onWrap={onWrap}
-            filter={filter}
-          />
+          <CodeNavContext.Provider value={codeNav}>
+            <DiffPane
+              zen={zen}
+              onZen={onZen}
+              panelOpen={commentsPanel && !navPanel}
+              viewMode={viewMode}
+              renderAllFiles={renderAllFiles}
+              wrap={wrap}
+              onWrap={onWrap}
+              filter={filter}
+            />
+          </CodeNavContext.Provider>
         </main>
-        {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
+        {navPanel ? (
+          <NavPanel key={navPanel.nonce} query={navPanel.query} onClose={closePanel} />
+        ) : (
+          commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />
+        )}
         {loading && (
           <div className="rv-reload" role="status">
             <div className="rv-reload__bar" />

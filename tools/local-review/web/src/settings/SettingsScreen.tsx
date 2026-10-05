@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Button, Heading, Spinner } from '@primer/react';
 import { ArrowLeftIcon } from '@primer/octicons-react';
 import { api } from '../api/client';
@@ -8,6 +8,8 @@ import { useToast } from '../lib/toast';
 import { CopyPromptSection } from './CopyPromptSection';
 import { GitignoreSection } from './GitignoreSection';
 import { KeybindingsSection } from './KeybindingsSection';
+import { LspStatusSection } from './LspStatusSection';
+import { descriptorFromHash } from '../lib/hash';
 import { RenderModeSection } from './RenderModeSection';
 import { ViewModeSection } from './ViewModeSection';
 import './settings.css';
@@ -73,6 +75,9 @@ export function SettingsScreen({ back }: { back: string }) {
   const [saved, setSaved] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false);
+  // The review the page was opened from: its repository is the one whose
+  // language servers are shown.
+  const backDescriptor = useMemo(() => descriptorFromHash(back), [back]);
 
   useEffect(() => {
     let alive = true;
@@ -169,6 +174,7 @@ export function SettingsScreen({ back }: { back: string }) {
             onChange={(renderModeForAllFiles) => setDraft({ ...draft, renderModeForAllFiles })}
           />
           <KeybindingsSection value={draft.keybindings} onChange={(keybindings) => setDraft({ ...draft, keybindings })} />
+          <LspStatusSection descriptor={backDescriptor} />
           {/* Следующая настройка — ещё одна управляемая секция здесь. */}
 
           <div className="rv-settings__actions rv-settings__actions--page">

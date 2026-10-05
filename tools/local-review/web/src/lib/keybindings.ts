@@ -7,8 +7,10 @@
 // The key half comes from `KeyboardEvent.code`, never from `.key`: `code` is
 // the physical key, so a binding made on a Latin layout still fires on a
 // Cyrillic one. That also means only keys with a stable `code` can be bound —
-// letters, digits and F1–F12 — which conveniently rules out Escape, Enter,
-// Tab and Space, none of which should be stealable from the rest of the UI.
+// letters, digits, F1–F12 and the left/right arrows — which conveniently
+// rules out Escape, Enter, Tab and Space, none of which should be stealable
+// from the rest of the UI. An arrow needs Ctrl, Alt or Meta with it: alone
+// (or with Shift) it scrolls and selects, and that stays the browser's.
 //
 // Pure module: no DOM access, no storage. Components do the listening.
 
@@ -17,7 +19,7 @@ export type Binding = {
   alt: boolean;
   shift: boolean;
   meta: boolean;
-  /** 'A'–'Z', '0'–'9' or 'F1'–'F12'. */
+  /** 'A'–'Z', '0'–'9', 'F1'–'F12', 'Left' or 'Right'. */
   key: string;
 };
 
@@ -36,13 +38,32 @@ export const KEYBINDING_ACTIONS = [
   { id: 'commentsPanel', label: 'Панель всех комментариев' },
   { id: 'viewedFile', label: 'Отметить файл просмотренным и открыть следующий' },
   { id: 'viewMode', label: 'Переключить режим: один файл / все файлы' },
+  { id: 'definition', label: 'Перейти к определению (слово под курсором)' },
+  { id: 'references', label: 'Найти ссылки (слово под курсором)' },
+  { id: 'implementation', label: 'Реализации (слово под курсором)' },
+  { id: 'callHierarchy', label: 'Иерархия вызовов (слово под курсором)' },
+  { id: 'navBack', label: 'Назад по переходам' },
+  { id: 'navForward', label: 'Вперёд по переходам' },
 ] as const;
 
 export type KeybindingAction = (typeof KEYBINDING_ACTIONS)[number]['id'];
 
 export type Keybindings = Record<KeybindingAction, string>;
 
-export const KEYBINDING_DEFAULTS: Keybindings = { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' };
+export const KEYBINDING_DEFAULTS: Keybindings = {
+  zen: '',
+  commentsPanel: '',
+  viewedFile: 'Alt+V',
+  viewMode: 'Alt+A',
+  // F12 is also DevTools in every browser; Ctrl+click and the context menu
+  // are the ways that always work, this is for those who rebind DevTools.
+  definition: 'F12',
+  references: 'Shift+F12',
+  implementation: 'Ctrl+F12',
+  callHierarchy: 'Alt+Shift+H',
+  navBack: 'Alt+Left',
+  navForward: 'Alt+Right',
+};
 
 const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {
   CTRL: 'ctrl',
@@ -56,11 +77,22 @@ const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {
   WIN: 'meta',
 };
 
+const ARROWS: Record<string, string> = { LEFT: 'Left', RIGHT: 'Right', ARROWLEFT: 'Left', ARROWRIGHT: 'Right', '←': 'Left', '→': 'Right' };
+
 function normalizeKey(raw: string): string | null {
   const key = raw.trim().toUpperCase();
   if (/^[A-Z0-9]$/.test(key)) return key;
   if (/^F([1-9]|1[0-2])$/.test(key)) return key;
-  return null;
+  return ARROWS[key] ?? null;
+}
+
+function isArrow(key: string): boolean {
+  return key === 'Left' || key === 'Right';
+}
+
+/** An arrow alone, or with Shift only, is the page's own key. */
+function arrowAllowed(binding: Binding): boolean {
+  return !isArrow(binding.key) || binding.ctrl || binding.alt || binding.meta;
 }
 
 /** Stored string -> binding; '' and anything malformed give null. */
@@ -81,7 +113,7 @@ export function parseBinding(raw: string): Binding | null {
     if (!key) return null;
     binding.key = key;
   }
-  return binding.key ? binding : null;
+  return binding.key && arrowAllowed(binding) ? binding : null;
 }
 
 export function formatBinding(binding: Binding): string {
@@ -106,6 +138,8 @@ function keyFromEvent(event: KeyEventLike): string | null {
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);
   if (/^Digit[0-9]$/.test(code)) return code.slice(5);
   if (/^F([1-9]|1[0-2])$/.test(code)) return code;
+  if (code === 'ArrowLeft') return 'Left';
+  if (code === 'ArrowRight') return 'Right';
   return null;
 }
 
@@ -113,7 +147,13 @@ function keyFromEvent(event: KeyEventLike): string | null {
 export function bindingFromEvent(event: KeyEventLike): Binding | null {
   const key = keyFromEvent(event);
   if (!key) return null;
-  return { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey, key };
+  const binding = { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey, key };
+  return arrowAllowed(binding) ? binding : null;
+}
+
+/** A stored binding as people read it: `Alt+Left` -> `Alt+←`; '' stays ''. */
+export function displayBinding(raw: string): string {
+  return raw.replace(/\bLeft$/, '←').replace(/\bRight$/, '→');
 }
 
 /** Does this keypress trigger the stored binding? An empty binding never does. */

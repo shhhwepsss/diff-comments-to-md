@@ -1,12 +1,24 @@
 import type {
+  CloneJob,
+  PrCloneStatus,
   BrowseResponse,
   Comment,
   CommitContext,
   CommitsResponse,
   Descriptor,
   DiffResponse,
+  FileResponse,
   GhStatus,
   Gitignore,
+  LspCallDirection,
+  LspCallItemsResponse,
+  LspCallsRequest,
+  LspCallsResponse,
+  LspDefinitionResponse,
+  LspHoverResponse,
+  LspLocationsMethod,
+  LspRequest,
+  LspStatusResponse,
   PickFolderResponse,
   PrSearchResponse,
   RepoListResponse,
@@ -204,6 +216,34 @@ export const api = {
   settings: () => request<Settings>('/api/settings').then(normalizeSettings),
   saveSettings: (patch: Partial<Settings>) =>
     request<Settings>('/api/settings', jsonBody('PUT', patch)).then(normalizeSettings),
+
+  // Code navigation. The descriptor rides in the query, like everywhere else.
+  lspDefinition: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspDefinitionResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'definition', ...body }), signal }),
+  /** definition, references or implementation: all answer with places. */
+  lspLocations: (d: Descriptor, method: LspLocationsMethod, body: LspRequest, signal?: AbortSignal) =>
+    request<LspDefinitionResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method, ...body }), signal }),
+  lspPrepareCalls: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspCallItemsResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'prepareCallHierarchy', ...body }), signal }),
+  lspCalls: (d: Descriptor, direction: LspCallDirection, body: LspCallsRequest, signal?: AbortSignal) =>
+    request<LspCallsResponse>(`/api/lsp?${descriptorQuery(d)}`, {
+      ...jsonBody('POST', { method: direction === 'incoming' ? 'incomingCalls' : 'outgoingCalls', ...body }),
+      signal,
+    }),
+  lspHover: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspHoverResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'hover', ...body }), signal }),
+  /** No descriptor: what is installed on PATH and what runs anywhere (the settings page). */
+  lspStatus: (d: Descriptor | null) => request<LspStatusResponse>(`/api/lsp/status${d ? `?${descriptorQuery(d)}` : ''}`),
+  file: (d: Descriptor, path: string) => request<FileResponse>(`/api/file?${descriptorQuery(d, { path })}`),
+
+  // A PR's local clone (lib/pr-clone.js).
+  prClone: (d: Descriptor) => request<PrCloneStatus>(`/api/pr/clone?${descriptorQuery(d)}`),
+  /** clone and checkout start a job; link, trust and unlink answer with the new status. */
+  prCloneStart: (d: Descriptor, body: { action: 'clone'; dir: string } | { action: 'checkout' }) =>
+    request<{ job: CloneJob }>(`/api/pr/clone?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  prCloneSet: (d: Descriptor, body: { action: 'link'; dir: string } | { action: 'trust'; trusted: boolean } | { action: 'unlink' }) =>
+    request<PrCloneStatus>(`/api/pr/clone?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  prCloneJob: (id: string) => request<{ job: CloneJob }>(`/api/pr/clone/job?id=${encodeURIComponent(id)}`),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   repos: () => request<RepoListResponse>('/api/gh/repos'),

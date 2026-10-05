@@ -14,6 +14,11 @@
 //   - carry "delayMs": the answer is held back that long, which is what lets
 //     a test see requests overlap (LOCAL_REVIEW_GH_SPAN_LOG gets a
 //     "start <ms> <key>" / "end <ms> <key>" pair per run).
+//   - carry "exec": [[command, ...args], ...] — run one after another in the
+//     fixture's working directory before answering, for the commands that
+//     act on disk (`gh repo clone` makes a clone with `git clone`, `gh pr
+//     checkout` switches it with `git checkout`). A failing one ends the
+//     fixture with its exit code and stderr.
 
 const fs = require('node:fs');
 
@@ -66,6 +71,13 @@ function span(edge) {
 }
 
 span('start');
+for (const [command, ...args] of hit.exec || []) {
+  const run = require('node:child_process').spawnSync(command, args, { cwd: process.cwd(), encoding: 'utf8' });
+  if (run.status !== 0) {
+    process.stderr.write(run.stderr || `gh-fixture: ${command} failed\n`);
+    process.exit(run.status || 1);
+  }
+}
 setTimeout(() => {
   if (hit.stdout) process.stdout.write(hit.stdout);
   if (hit.stderr) process.stderr.write(hit.stderr);

@@ -3,6 +3,22 @@
 const { sendJson, readJsonBody } = require('../http');
 const { parseDescriptor } = require('../descriptor');
 const { storeFor } = require('../stores/factory');
+const { isGitInternal } = require('../repo-path');
+
+/**
+ * Why `file` cannot be a comment's file, or null. A comment may sit on a file
+ * outside the diff now (one code navigation opened), so the browser names any
+ * path: it must still be a plain repository-relative one — no absolute path,
+ * no `..`/`.` step, nothing inside .git — since it is shown, exported and
+ * read back from the clone or the folder by it.
+ */
+function badFilePath(file) {
+  if (file.length > 4096 || file.includes('\0')) return 'Некорректный путь файла';
+  if (file.startsWith('/') || file.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(file)) return 'Путь файла должен быть относительным к корню репозитория';
+  if (file.split(/[\\/]/).some((part) => part === '..' || part === '.' || part === '')) return 'Путь файла не должен содержать «..», «.» и пустых частей';
+  if (isGitInternal(file, true)) return 'Служебные файлы .git не комментируются';
+  return null;
+}
 
 /** Every handler resolves its own store: the descriptor is the only input. */
 function storeOf(ctx, url) {
@@ -25,6 +41,11 @@ async function create(req, res, ctx, url) {
   }
   if (!general && (!body.file || typeof body.file !== 'string')) {
     sendJson(res, 400, { error: 'file обязателен' });
+    return;
+  }
+  const badPath = general ? null : badFilePath(body.file);
+  if (badPath) {
+    sendJson(res, 400, { error: badPath });
     return;
   }
   if (!body.text || !String(body.text).trim()) {

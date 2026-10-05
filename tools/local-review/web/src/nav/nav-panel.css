@@ -1,0 +1,402 @@
+/* Navigation panel (NavPanel.tsx): docked right of the diff in the comments
+   panel's place, with its width and its drag handle. */
+.rv-npanel {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: var(--borderWidth-thin) solid var(--borderColor-default);
+  background: var(--bgColor-default);
+  outline: none;
+}
+
+.rv-npanel__resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rv-npanel__resize:hover,
+body.rv-dragging-sidebar .rv-npanel__resize:active {
+  background: var(--bgColor-accent-emphasis);
+}
+
+.rv-npanel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-height: 44px;
+  padding: 0 var(--base-size-8) 0 var(--base-size-16);
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+  min-width: 0;
+}
+
+.rv-npanel__word {
+  font-family: var(--fontStack-monospace);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.rv-npanel__kindhead {
+  flex: none;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__origin {
+  margin-left: auto;
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.rv-npanel__tabs {
+  display: flex;
+  gap: var(--base-size-4);
+  padding: 0 var(--base-size-8);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+.rv-npanel__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  padding: var(--base-size-8) var(--base-size-8) 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--fgColor-muted);
+  font: inherit;
+  font-size: var(--text-body-size-medium);
+  cursor: pointer;
+}
+
+.rv-npanel__tab:hover {
+  color: var(--fgColor-default);
+}
+
+.rv-npanel__tab[aria-selected='true'] {
+  color: var(--fgColor-default);
+  border-bottom-color: var(--underlineNav-borderColor-active, var(--borderColor-severe-emphasis));
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-npanel__tab.is-disabled {
+  color: var(--fgColor-disabled, var(--fgColor-muted));
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.rv-npanel__tab:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--fgColor-accent));
+  outline-offset: -2px;
+  border-radius: var(--borderRadius-small);
+}
+
+.rv-npanel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: var(--base-size-16);
+}
+
+.rv-npanel__status {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: var(--base-size-16);
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__note {
+  margin: var(--base-size-8) var(--base-size-12);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__note.is-error {
+  padding: var(--base-size-8) 10px;
+  color: var(--fgColor-default);
+  background: var(--bgColor-danger-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-danger-muted);
+  border-radius: var(--borderRadius-medium);
+}
+
+/* A file and its places. */
+.rv-npanel__file {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--base-size-4) var(--base-size-12);
+  background: var(--bgColor-muted);
+  border-block: var(--borderWidth-thin) solid var(--borderColor-muted);
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.rv-npanel__group:first-child .rv-npanel__file {
+  border-top: 0;
+}
+
+.rv-npanel__dir {
+  color: var(--fgColor-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.rv-npanel__file b {
+  flex: none;
+  font-weight: var(--base-text-weight-semibold, 600);
+  margin-right: auto;
+}
+
+.rv-npanel__file .CounterLabel,
+.rv-npanel__file [data-component='CounterLabel'] {
+  flex: none;
+  margin-left: var(--base-size-8);
+}
+
+.rv-npanel__file.is-external {
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__ext {
+  flex: none;
+  margin-left: var(--base-size-8);
+  font-family: var(--fontStack-sansSerif);
+  font-size: 11px;
+}
+
+.rv-npanel__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rv-npanel__textnote {
+  display: block;
+  padding: var(--base-size-6) var(--base-size-8);
+  color: var(--fgColor-default);
+  background: var(--bgColor-attention-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-attention-muted);
+  border-radius: var(--borderRadius-medium);
+}
+
+.rv-npanel__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--base-size-8);
+  width: 100%;
+  min-width: 0;
+  padding: 3px var(--base-size-12) 3px var(--base-size-16);
+  border: 0;
+  background: none;
+  color: var(--fgColor-default);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rv-npanel__item:hover:not(:disabled) {
+  background: var(--bgColor-muted);
+}
+
+.rv-npanel__item:focus-visible,
+.rv-npanel__node:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--fgColor-accent));
+  outline-offset: -2px;
+}
+
+.rv-npanel__item.is-current,
+.rv-npanel__node.is-current {
+  background: var(--bgColor-accent-muted);
+  box-shadow: inset 3px 0 0 var(--borderColor-accent-emphasis);
+}
+
+.rv-npanel__item:disabled {
+  cursor: default;
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__lno {
+  flex: none;
+  min-width: 28px;
+  text-align: right;
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-npanel__pv {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.rv-npanel__pv.is-missing {
+  font-family: var(--fontStack-sansSerif);
+  color: var(--fgColor-muted);
+  font-style: italic;
+}
+
+/* The symbol in a preview: the same marks as the occurrences in the diff. */
+.rv-npanel__hit {
+  color: inherit;
+  background: var(--bgColor-attention-muted);
+  box-shadow: inset 0 0 0 1px var(--borderColor-attention-emphasis);
+  border-radius: 2px;
+}
+
+/* Call hierarchy. */
+.rv-npanel__dir-switch {
+  padding: var(--base-size-8) var(--base-size-12);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+.rv-npanel__tree {
+  padding-top: var(--base-size-4);
+}
+
+.rv-npanel__node {
+  display: flex;
+  align-items: flex-start;
+  padding: 2px var(--base-size-8) 2px calc(var(--rv-depth, 0) * 16px + 4px);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.rv-npanel__node:hover {
+  background: var(--bgColor-muted);
+}
+
+.rv-npanel__twisty {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--borderRadius-small);
+  background: none;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.rv-npanel__twisty:hover {
+  background: var(--bgColor-neutral-muted);
+}
+
+.rv-npanel__node[aria-expanded='true'] > .rv-npanel__twisty {
+  transform: rotate(90deg);
+}
+
+.rv-npanel__twisty.is-leaf {
+  visibility: hidden;
+}
+
+.rv-npanel__call {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1px 0 2px 2px;
+}
+
+.rv-npanel__callhead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--base-size-6);
+  min-width: 0;
+}
+
+.rv-npanel__name {
+  font-family: var(--fontStack-monospace);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-npanel__node.is-root .rv-npanel__name {
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-npanel__kind,
+.rv-npanel__detail {
+  flex: none;
+  font-size: 11px;
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__detail {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--fontStack-monospace);
+}
+
+.rv-npanel__loc {
+  font-size: 11px;
+  color: var(--fgColor-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-npanel__callpv {
+  display: flex;
+  min-width: 0;
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__callpv .rv-npanel__pv {
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+.rv-npanel__treenote {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  padding: 2px var(--base-size-8) 4px calc(var(--rv-depth, 0) * 16px + 26px);
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+
+.rv-npanel__treenote.is-error {
+  color: var(--fgColor-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-npanel__twisty {
+    transition: none;
+  }
+}

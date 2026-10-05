@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
 import { api, failureMessage, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
-import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
+import { DEFAULT_HASH, hashFor, routeFromHash, viewHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
@@ -43,6 +43,9 @@ export function App({ theme, onTheme }: Props) {
     writeZen(on);
   }, []);
   const [commentsPanel, setCommentsPanelState] = useState(readCommentsPanel);
+  // The navigation panel takes the comments panel's place while open: the
+  // header's button must not read «on» for a panel nobody can see.
+  const [navPanelOpen, setNavPanelOpen] = useState(false);
   const setCommentsPanel = useCallback((open: boolean) => {
     setCommentsPanelState(open);
     writeCommentsPanel(open);
@@ -66,6 +69,19 @@ export function App({ theme, onTheme }: Props) {
   }, []);
   // «Код» / «Просмотр» as one switch for every file, or one per file.
   const [renderAllFiles, setRenderAllFiles] = useState(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
+
+  // A new object only when one of these changes: every file of the feed reads it.
+  const navKeys = useMemo(
+    () => ({
+      definition: keys.definition,
+      references: keys.references,
+      implementation: keys.implementation,
+      callHierarchy: keys.callHierarchy,
+      navBack: keys.navBack,
+      navForward: keys.navForward,
+    }),
+    [keys.definition, keys.references, keys.implementation, keys.callHierarchy, keys.navBack, keys.navForward],
+  );
 
   const route = routeFromHash(hash);
   const onSettings = route.screen === 'settings';
@@ -141,7 +157,9 @@ export function App({ theme, onTheme }: Props) {
       .session()
       .then((s) => {
         if (alive && !window.location.hash) {
-          window.location.hash = hashFor(s.defaults) || hashFor(s.last) || DEFAULT_HASH;
+          // The launch flags are part of that choice: `--base`, `--staged`
+          // open their view, not the working copy.
+          window.location.hash = viewHash(s.defaults, null) || hashFor(s.last) || DEFAULT_HASH;
         }
       })
       .catch((e) => {
@@ -175,6 +193,7 @@ export function App({ theme, onTheme }: Props) {
           theme={theme}
           onTheme={onTheme}
           commentsPanel={commentsPanel}
+          commentsShown={commentsPanel && !(route.screen === 'diff' && navPanelOpen)}
           onCommentsPanel={setCommentsPanel}
           viewMode={viewMode}
           onViewMode={setViewMode}
@@ -196,6 +215,8 @@ export function App({ theme, onTheme }: Props) {
             renderAllFiles={renderAllFiles}
             wrap={wrap}
             onWrap={setWrap}
+            navKeys={navKeys}
+            onNavPanel={setNavPanelOpen}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />

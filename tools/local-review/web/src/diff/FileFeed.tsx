@@ -8,8 +8,11 @@ import { useFileDiff } from '../review/useFileDiff';
 import { Empty, FileDiff, type FileDiffActions, type FileDiffProps } from './FileDiff';
 import { currentIndexAt, isCollapsed, placeholderHeight, type CollapseChoice } from './feedMath';
 
-/** One section of the feed: a file of the diff, or (at the end) a file that only has comments left. */
-export type FeedFile = { path: string; entry: FileEntry | undefined; orphan: boolean };
+/**
+ * One section of the feed: a file of the diff, or (at the end) a file that
+ * only has comments left, or one code navigation opened (`nav`, shown whole).
+ */
+export type FeedFile = { path: string; entry: FileEntry | undefined; orphan: boolean; nav?: boolean };
 
 /** What the feed decides for a file itself; the rest comes from the pane. */
 type OwnProps = 'diff' | 'collapsed' | 'onCollapse' | 'placeholderHeight' | 'onRetry' | 'actions';
@@ -26,6 +29,9 @@ type Props = {
   /** A pending «scroll to this comment»: its file has to be open and loaded. */
   reveal: { comment: Comment; nonce: number } | null;
   onRevealed: (nonce: number) => void;
+  /** A pending «scroll to this line» (code navigation): the same, for a line. */
+  lineReveal: { path: string; nonce: number } | null;
+  onLineRevealed: (nonce: number) => void;
   /** The open new-comment form: its file cannot be collapsed, the form is in the body. */
   editor: EditorAnchor | null;
   actions: FileDiffActions;
@@ -68,7 +74,10 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
     if (file.orphan) {
       // Whatever was loaded for it belongs to a diff it is no longer in.
       if (diff?.kind !== 'orphan') diffs.setOrphan(file.path);
-    } else if (needsLoad(diff)) void diffs.ensure(file.path);
+    } else if (needsLoad(diff) || diff?.kind === 'orphan') {
+      // An «orphan» entry here was only listed before (a PR's clone arrived since): now it is read.
+      void diffs.ensure(file.path, { force: diff?.kind === 'orphan' });
+    }
   }, [near, collapsed, diff, diffs, file.orphan, file.path]);
 
   return (
@@ -92,7 +101,20 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
  * to its header and never loads. The file at the top is reported back as the
  * current one, and a request to open a file scrolls to it.
  */
-export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, reveal, onRevealed, editor, actions, fileProps }: Props) {
+export function FileFeed({
+  files,
+  diffs,
+  activeFile,
+  fileFocus,
+  onCurrentFile,
+  reveal,
+  onRevealed,
+  lineReveal,
+  onLineRevealed,
+  editor,
+  actions,
+  fileProps,
+}: Props) {
   const toast = useToast();
   const editorFile = editor?.file ?? null;
   const root = useRef<HTMLDivElement>(null);
@@ -100,6 +122,11 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
   const [choices, setChoices] = useState<Record<string, CollapseChoice>>({});
   const quietUntil = useRef(0);
   const pin = useRef<{ path: string; until: number; giveUp: number } | null>(null);
+  // The file a jump to a line landed in. The line is centred, so near the top
+  // of its file the file above is what the reading line falls in — and the
+  // current file (and with it the address) must stay the one jumped to. Held
+  // until the reviewer scrolls.
+  const landed = useRef<string | null>(null);
   // Asks the scroll-spy to look again; set by its effect below.
   const remeasure = useRef<() => void>(() => undefined);
   const activeRef = useRef(activeFile);
@@ -145,6 +172,7 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     }
     if (!fileFocus || fileFocus.nonce === focusedNonce.current) return;
     focusedNonce.current = fileFocus.nonce;
+    landed.current = null;
     focus(fileFocus.path);
     // A file the feed does not show (hidden by the search or a rule) cannot be
     // the current one: hand that back to whatever is at the top.
@@ -206,6 +234,11 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
       // While a requested file is being held at the top, that file is the current one.
       if (pin.current && performance.now() > pin.current.until) pin.current = null;
       if (pin.current || performance.now() < quietUntil.current) return;
+      if (landed.current !== null && !filesRef.current.some((f) => f.path === landed.current)) landed.current = null;
+      if (landed.current !== null) {
+        if (landed.current !== activeRef.current) onCurrentFile(landed.current);
+        return;
+      }
       const nodes = items();
       const top = box.getBoundingClientRect().top;
       const index = currentIndexAt(
@@ -254,6 +287,7 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     resized.observe(el);
     const release = () => {
       pin.current = null;
+      landed.current = null;
     };
     box.addEventListener('wheel', release, { passive: true });
     box.addEventListener('touchstart', release, { passive: true });
@@ -288,27 +322,47 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     });
   }, [files]);
 
-  // A comment can only be scrolled to in an open, loaded file. The line itself
-  // is the editor's to scroll to once it exists (FileDiff); until then the
-  // file's header is the nearest thing to show.
+  // A comment (or a line a jump leads to) can only be scrolled to in an open,
+  // loaded file. The line itself is the editor's to scroll to once it exists
+  // (FileDiff); until then the file's header is the nearest thing to show.
+  // False when the file is not in the feed.
+  const prepare = useCallback(
+    (path: string) => {
+      const file = filesRef.current.find((f) => f.path === path);
+      if (!file) return false;
+      open(path);
+      pin.current = null;
+      landed.current = null;
+      if (diffs.get(path)?.kind === 'ready') return true;
+      if (file.orphan) diffs.setOrphan(path);
+      else void diffs.ensure(path);
+      aim(path);
+      return true;
+    },
+    [open, diffs, aim],
+  );
+
   useEffect(() => {
     const path = reveal?.comment.file;
     if (!path) return;
-    const file = filesRef.current.find((f) => f.path === path);
-    if (!file) {
+    if (!prepare(path)) {
       // Not in the feed: the request must not wait for the day the file is.
       onRevealed(reveal.nonce);
       toast('Файл комментария скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
-      return;
     }
-    open(path);
-    pin.current = null;
-    if (diffs.get(path)?.kind === 'ready') return;
-    if (file.orphan) diffs.setOrphan(path);
-    else void diffs.ensure(path);
-    aim(path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.nonce]);
+
+  useEffect(() => {
+    if (!lineReveal) return;
+    if (prepare(lineReveal.path)) {
+      landed.current = lineReveal.path;
+    } else {
+      onLineRevealed(lineReveal.nonce);
+      toast('Файл скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineReveal?.nonce]);
 
   // A file collapsed while its header was pinned would leave the reviewer
   // somewhere in the files below; bring its header back instead.

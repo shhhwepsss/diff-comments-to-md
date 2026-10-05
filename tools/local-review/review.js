@@ -268,7 +268,7 @@ async function start(options) {
     ? { source: 'local', root: repoRoot, mode: options.mode, base: options.base }
     : null;
   const store = repoRoot ? new CommentStore(path.join(repoRoot, STORE_DIR, STORE_FILE)) : null;
-  const handler = createApp({ defaults, homeDir });
+  const handler = createApp({ defaults, homeDir, host: options.host });
 
   const server = http.createServer((req, res) => {
     Promise.resolve(handler(req, res)).catch((err) => {
@@ -328,6 +328,13 @@ async function main() {
   console.log('\n  Ctrl+C — выход\n');
 
   if (options.open) openBrowser(url);
+
+  // Language servers run in process groups of their own (lib/lsp/manager.js),
+  // so Ctrl+C in the terminal does not reach them. Leaving through
+  // process.exit runs the 'exit' hook that stops them.
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+    process.once(signal, () => process.exit(code));
+  }
 }
 
 if (require.main === module) {

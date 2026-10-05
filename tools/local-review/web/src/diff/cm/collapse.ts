@@ -117,3 +117,16 @@ export const foldUnchanged = StateField.define<Value>({
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
+
+/** The effect that unfolds the folded lines hiding `pos`, or null when none do. */
+export function unfoldAt(state: EditorState, pos: number): StateEffect<string> | null {
+  let found: StateEffect<string> | null = null;
+  state.field(foldUnchanged, false)?.deco.between(pos, pos, (from, to, deco) => {
+    const widget = deco.spec.widget;
+    if (widget instanceof FoldWidget && from <= pos && pos <= to) {
+      found = expandRange.of(rangeKey(widget.range));
+      return false;
+    }
+  });
+  return found;
+}

@@ -1,6 +1,6 @@
 'use strict';
 
-const { sendJson, sendText, serveStatic, checkOrigin } = require('../http');
+const { sendJson, sendText, serveStatic, checkOrigin, checkHost, allowedHosts } = require('../http');
 const state = require('./state');
 const comments = require('./comments');
 const exportRoutes = require('./export');
@@ -10,6 +10,9 @@ const settings = require('./settings');
 const ghRoutes = require('./gh');
 const commitsRoutes = require('./commits');
 const viewedRoutes = require('./viewed');
+const lspRoutes = require('./lsp');
+const fileRoutes = require('./file');
+const cloneRoutes = require('./pr-clone');
 
 const ROUTES = [
   { method: 'GET', path: '/api/state', handle: state.getState },
@@ -33,11 +36,19 @@ const ROUTES = [
   { method: 'GET', path: '/api/gh/repos', handle: ghRoutes.repos },
   { method: 'GET', path: '/api/pr/search', handle: ghRoutes.search },
   { method: 'GET', path: '/api/pr/resolve', handle: ghRoutes.resolve },
+  { method: 'POST', path: '/api/lsp', handle: lspRoutes.request },
+  { method: 'GET', path: '/api/lsp/status', handle: lspRoutes.status },
+  { method: 'GET', path: '/api/file', handle: fileRoutes.read },
+  { method: 'GET', path: '/api/pr/clone', handle: cloneRoutes.get },
+  { method: 'POST', path: '/api/pr/clone', handle: cloneRoutes.post },
+  { method: 'GET', path: '/api/pr/clone/job', handle: cloneRoutes.job },
 ];
 
 const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;
 
 function createApp(ctx) {
+  // ctx.host: the address given with --host, which the Host header may then name too.
+  const hosts = allowedHosts(ctx.host);
   return async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
@@ -51,6 +62,12 @@ function createApp(ctx) {
         return;
       }
       serveStatic(req, res, pathname);
+      return;
+    }
+
+    const hostProblem = checkHost(req, hosts);
+    if (hostProblem) {
+      sendJson(res, 403, { error: hostProblem });
       return;
     }
 

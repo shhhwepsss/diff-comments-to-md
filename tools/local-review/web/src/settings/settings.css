@@ -60,24 +60,41 @@
 }
 
 /* Горячие клавиши: одна строка на действие. */
+/* One grid for all the rows, so the shortcuts stand in a column whatever the
+   length of the labels. */
 .rv-keybindings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--base-size-8);
+  display: grid;
+  grid-template-columns: minmax(0, max-content) max-content max-content;
+  align-items: center;
+  gap: var(--base-size-8) var(--base-size-12);
 }
 
 .rv-keybinding {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--base-size-12);
-}
-
-.rv-keybinding__label {
-  min-width: 240px;
+  display: contents;
 }
 
 .rv-keybinding__value {
   min-width: 180px;
   font-family: var(--fontStack-monospace);
+}
+
+/* Навигация по коду: какие language server найдены. */
+.rv-lsp-status {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size-small);
+}
+.rv-lsp-status th,
+.rv-lsp-status td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-status th {
+  font-weight: 600;
+  color: var(--fgColor-muted);
+}
+.rv-lsp-status__missing {
+  color: var(--fgColor-default);
 }

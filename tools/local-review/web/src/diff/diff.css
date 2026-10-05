@@ -112,6 +112,12 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
 }
 
+.rv-tree-dir {
+  margin-left: var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
 .rv-tree-trailing {
   display: inline-flex;
   align-items: center;
@@ -291,18 +297,37 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
 }
 
+/* The path gives way first: with a side panel open and a word's occurrences
+   counted, the header would otherwise wrap and push the code down on every
+   click. Its basis is small so the row wraps only when the name alone no
+   longer fits; it grows back to its own width and no further (the spacer
+   takes the rest). The folder is what gets cut — the name always shows. */
 .rv-file-header__path {
   display: flex;
   align-items: baseline;
   gap: var(--base-size-8);
+  flex: 1 1 8rem;
+  max-width: max-content;
   min-width: 0;
   font-family: var(--fontStack-monospace);
   font-size: var(--text-body-size-small);
   font-weight: var(--base-text-weight-semibold, 600);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+
+.rv-file-header__name {
+  display: flex;
+  min-width: 0;
+}
+
+.rv-file-header__base {
+  flex: none;
 }
 
 .rv-file-header__old {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--fgColor-muted);
   font-weight: normal;
 }
@@ -323,6 +348,9 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
 }
 
 .rv-file-header__dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--fgColor-muted);
   font-weight: normal;
 }
@@ -392,7 +420,104 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-top: none;
   border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
+  /* clip, not hidden: hidden would make the frame a scroll container and the
+     occurrence ruler inside could not stick to the pane. */
+  overflow: clip;
+}
+
+/* ---------------------------------------------------------------------------
+   Occurrences of the clicked word (cm/occurrences.ts): marks in the code, the
+   counter in the file header, the ruler on the right edge. Built on Primer's
+   attention tokens, so the light and the dark (slate) themes both get them.
+   --------------------------------------------------------------------------- */
+
+.rv-file {
+  --rv-occ-bgColor: var(--bgColor-attention-muted);
+  --rv-occ-borderColor: var(--borderColor-attention-emphasis);
+  --rv-occ-current-bgColor: color-mix(in srgb, var(--bgColor-attention-emphasis) 45%, transparent);
+}
+
+.rv-occ {
+  background: var(--rv-occ-bgColor);
+  box-shadow: inset 0 0 0 1px var(--rv-occ-borderColor);
+  border-radius: 2px;
+}
+.rv-occ--current {
+  background: var(--rv-occ-current-bgColor);
+}
+
+/* Deleted lines are the merge view's own DOM: painted as CSS highlights,
+   which take colors and text decoration only — the underline stands in for
+   the border, which the pale fill alone would lack on the red background. */
+::highlight(rv-occ) {
+  background-color: var(--rv-occ-bgColor);
+  text-decoration: underline 2px var(--rv-occ-borderColor);
+}
+::highlight(rv-occ-current) {
+  background-color: var(--rv-occ-current-bgColor);
+  text-decoration: underline 2px var(--rv-occ-borderColor);
+}
+
+.rv-occ-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+.rv-occ-counter__status {
+  display: inline-flex;
+  align-items: center;
+}
+.rv-occ-counter__word {
+  max-width: 24ch;
   overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-default);
+  background: var(--rv-occ-bgColor);
+  border: var(--borderWidth-thin) solid var(--rv-occ-borderColor);
+  border-radius: 3px;
+}
+.rv-occ-counter__pos {
+  margin: 0 2px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Zero height and sticky: the ruler hangs from it over the editor's right
+   edge, spanning the part of the file that is on screen. */
+.rv-occ-ruler-wrap {
+  position: sticky;
+  z-index: 4;
+  height: 0;
+}
+.rv-occ-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  background: color-mix(in srgb, var(--bgColor-neutral-muted) 60%, transparent);
+}
+.rv-occ-ruler[hidden] {
+  display: none;
+}
+.rv-occ-ruler__mark {
+  position: absolute;
+  right: 1px;
+  width: 8px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--rv-occ-borderColor);
+  cursor: pointer;
+}
+.rv-occ-ruler__mark.is-current {
+  height: 4px;
+  right: 0;
+  width: 10px;
+  background: var(--fgColor-attention);
+  box-shadow: 0 0 0 1px var(--bgColor-default);
 }
 
 .rv-diff-loading {
@@ -594,4 +719,221 @@ body.rv-dragging-lines * {
   color: var(--fgColor-muted);
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-radius: var(--borderRadius-small, 3px);
+}
+
+/* ---------------------------------------------------------------------------
+   Code navigation (diff/cm/lsp.ts): ← → in the header, the LSP indicator,
+   Ctrl+hover links, the hover tooltip, the context menu, files opened by a
+   jump.
+   --------------------------------------------------------------------------- */
+
+.rv-nav-buttons {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: calc(-1 * var(--base-size-8));
+}
+
+.rv-lsp-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 999px;
+  background: var(--bgColor-default);
+  cursor: default;
+}
+.rv-lsp-indicator__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fgColor-success);
+}
+.rv-lsp-indicator.is-busy .rv-lsp-indicator__dot {
+  background: var(--fgColor-attention);
+  animation: rv-lsp-pulse 1s ease-in-out infinite;
+}
+.rv-lsp-indicator.is-idle .rv-lsp-indicator__dot {
+  background: var(--fgColor-muted);
+}
+.rv-lsp-indicator.is-off .rv-lsp-indicator__dot {
+  background: transparent;
+  border: 1.5px solid var(--fgColor-muted);
+}
+.rv-lsp-indicator.is-error .rv-lsp-indicator__dot {
+  background: var(--fgColor-danger);
+}
+@keyframes rv-lsp-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv-lsp-indicator.is-busy .rv-lsp-indicator__dot {
+    animation: none;
+  }
+}
+
+.rv-nav-badge {
+  padding: 0 6px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-small);
+  background: var(--bgColor-default);
+}
+
+.rv-nav-banner {
+  padding: var(--base-size-8) var(--base-size-16);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-default);
+  background: var(--bgColor-accent-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-top: none;
+}
+
+/* Ctrl/Cmd held over a symbol: it reads as a link. */
+.rv-lsp-link {
+  color: var(--fgColor-accent) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rv-lsp-link * {
+  color: inherit !important;
+}
+.rv-lsp-mod .cm-content {
+  cursor: pointer;
+}
+.rv-lsp-pending .cm-content {
+  cursor: progress;
+}
+
+/* The hover tooltip. CodeMirror draws the box; we only restyle it. */
+.rv-diff-editor .cm-tooltip.cm-tooltip-hover {
+  max-width: min(560px, calc(100vw - 16px));
+  color: var(--fgColor-default);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  box-shadow: var(--shadow-floating-small);
+}
+.rv-lsp-tip {
+  font-family: var(--fontStack-system);
+  font-size: var(--text-body-size-small);
+}
+.rv-lsp-tip__code {
+  margin: 0;
+  padding: var(--base-size-8) var(--base-size-12);
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-tip__doc {
+  margin: 0;
+  padding: var(--base-size-8) var(--base-size-12) 0;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.rv-lsp-tip__doc:last-of-type {
+  padding-bottom: var(--base-size-8);
+}
+.rv-lsp-tip__doc code {
+  padding: 0 3px;
+  font-family: var(--fontStack-monospace);
+  font-size: 90%;
+  background: var(--bgColor-neutral-muted);
+  border-radius: 3px;
+}
+.rv-lsp-tip__acts {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: 4px 6px;
+  background: var(--bgColor-muted);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+  border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
+}
+.rv-lsp-tip__acts button {
+  padding: 2px 6px;
+  font: inherit;
+  color: var(--fgColor-accent);
+  background: none;
+  border: 0;
+  border-radius: var(--borderRadius-small);
+  cursor: pointer;
+}
+.rv-lsp-tip__acts button:hover {
+  background: var(--bgColor-accent-muted);
+}
+.rv-lsp-tip__hint {
+  margin-left: auto;
+  color: var(--fgColor-muted);
+}
+
+/* The context menu on a symbol: fixed at the pointer, outside the editor. */
+.rv-lsp-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 260px;
+  padding: 4px;
+  font-family: var(--fontStack-system);
+  font-size: var(--text-body-size-medium);
+  color: var(--fgColor-default);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-large);
+  box-shadow: var(--shadow-floating-large);
+}
+.rv-lsp-menu hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-menu__item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--base-size-16);
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--borderRadius-medium);
+  cursor: pointer;
+}
+.rv-lsp-menu__item:hover:not(:disabled),
+.rv-lsp-menu__item:focus-visible {
+  background: var(--control-transparent-bgColor-hover, var(--bgColor-neutral-muted));
+  outline: none;
+}
+.rv-lsp-menu__item:disabled {
+  color: var(--fgColor-disabled);
+  cursor: default;
+}
+.rv-lsp-menu__item kbd {
+  padding: 0 5px;
+  font: 11px var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-bottom-width: 2px;
+  border-radius: var(--borderRadius-small);
+}
+.rv-lsp-menu__note {
+  max-width: 320px;
+  padding: 4px 8px 2px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
 }

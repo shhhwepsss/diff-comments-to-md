@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 
 const DEFAULT_PUBLIC_DIR = path.join(__dirname, '..', 'dist');
@@ -125,6 +126,54 @@ function checkOrigin(req) {
   return null;
 }
 
+/** The name every local server answers to (addresses pass anyway, see checkHost). */
+const LOCAL_HOSTS = ['localhost'];
+
+/** The host part of a Host header, lower-cased, without the port; IPv6 keeps its brackets. */
+function hostName(header) {
+  const value = String(header || '').trim().toLowerCase();
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    return end === -1 ? value : value.slice(0, end + 1);
+  }
+  const colon = value.indexOf(':');
+  return colon === -1 ? value : value.slice(0, colon);
+}
+
+/** The names the Host header may carry: the local ones and the address given with --host. */
+function allowedHosts(listenHost) {
+  const names = new Set(LOCAL_HOSTS);
+  if (listenHost) {
+    const h = String(listenHost).trim().toLowerCase().replace(/\.$/, '');
+    names.add(h.includes(':') && !h.startsWith('[') ? `[${h}]` : h);
+  }
+  return names;
+}
+
+/** An IP address as a Host header names it: dotted IPv4, or IPv6 in brackets. */
+function isIpLiteral(name) {
+  if (name.startsWith('[') && name.endsWith(']')) return net.isIPv6(name.slice(1, -1));
+  return net.isIPv4(name);
+}
+
+/**
+ * Against DNS rebinding: a page on evil.example whose name was re-pointed
+ * to 127.0.0.1 is same-origin with itself, so Origin and Sec-Fetch-Site say
+ * nothing — but its requests carry `Host: evil.example`. Only the names this
+ * server is really reached by pass, and any IP address: rebinding needs a
+ * name to re-point, and a browser sends `Host: 192.168.1.5` only to that
+ * address (so --host 0.0.0.0 works by the machine's address). No Host at all
+ * is a non-browser client (HTTP/1.0), which a rebinding page cannot be.
+ */
+function checkHost(req, allowed) {
+  const header = req.headers.host;
+  if (header === undefined) return null;
+  // `localhost.` is the same name, fully qualified.
+  const name = hostName(header).replace(/\.$/, '');
+  if (allowed.has(name) || isIpLiteral(name)) return null;
+  return `Запрос к неизвестному адресу отклонён (Host: ${String(header).slice(0, 100)})`;
+}
+
 module.exports = {
   sendJson,
   sendText,
@@ -132,6 +181,9 @@ module.exports = {
   readJsonBody,
   serveStatic,
   checkOrigin,
+  checkHost,
+  allowedHosts,
+  hostName,
   getPublicDir,
   MIME,
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bindingFromEvent,
+  displayBinding,
   formatBinding,
   isTypingTarget,
   keybindingsFrom,
@@ -137,6 +138,12 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -146,6 +153,12 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -156,6 +169,12 @@ describe('keybindingsFrom', () => {
       commentsPanel: 'Alt+C',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      references: 'Shift+F12',
+      implementation: 'Ctrl+F12',
+      callHierarchy: 'Alt+Shift+H',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -174,5 +193,56 @@ describe('keybindingsFrom', () => {
     expect(KEYBINDING_DEFAULTS.viewedFile).toBe('Alt+V');
     expect(keybindingsFrom({}).viewedFile).toBe('Alt+V');
     expect(keybindingsFrom({ viewedFile: '' }).viewedFile).toBe('');
+  });
+
+  it('ships code navigation on F12 and Alt+←/→', () => {
+    expect(KEYBINDING_DEFAULTS.definition).toBe('F12');
+    expect(KEYBINDING_DEFAULTS.navBack).toBe('Alt+Left');
+    expect(KEYBINDING_DEFAULTS.navForward).toBe('Alt+Right');
+  });
+});
+
+describe('arrow keys', () => {
+  it('bind only with Ctrl, Alt or Meta', () => {
+    expect(parseBinding('Alt+Left')).toEqual({ ctrl: false, alt: true, shift: false, meta: false, key: 'Left' });
+    expect(normalizeBinding('alt+arrowright')).toBe('Alt+Right');
+    expect(normalizeBinding('Ctrl+→')).toBe('Ctrl+Right');
+    expect(parseBinding('Left')).toBeNull();
+    expect(parseBinding('Shift+Right')).toBeNull();
+  });
+
+  it('are read from events with a modifier', () => {
+    expect(bindingFromEvent(press('ArrowLeft', { altKey: true }))?.key).toBe('Left');
+    expect(bindingFromEvent(press('ArrowRight', { shiftKey: true }))).toBeNull();
+    expect(matchesEvent('Alt+Left', press('ArrowLeft', { altKey: true }))).toBe(true);
+    expect(matchesEvent('Alt+Left', press('ArrowRight', { altKey: true }))).toBe(false);
+  });
+
+  it('show as arrows', () => {
+    expect(displayBinding('Alt+Left')).toBe('Alt+←');
+    expect(displayBinding('Ctrl+Right')).toBe('Ctrl+→');
+    expect(displayBinding('F12')).toBe('F12');
+    expect(displayBinding('')).toBe('');
+  });
+});
+
+describe('code navigation panel shortcuts', () => {
+  it('ship as Shift+F12, Ctrl+F12 and Shift+Alt+H, stored canonically', () => {
+    expect([KEYBINDING_DEFAULTS.references, KEYBINDING_DEFAULTS.implementation, KEYBINDING_DEFAULTS.callHierarchy]).toEqual([
+      'Shift+F12',
+      'Ctrl+F12',
+      'Alt+Shift+H',
+    ]);
+    expect(normalizeBinding('Shift+Alt+H')).toBe('Alt+Shift+H');
+  });
+
+  it('tell F12 from Shift+F12 and Ctrl+F12', () => {
+    const f12 = press('F12');
+    const shiftF12 = press('F12', { shiftKey: true });
+    const ctrlF12 = press('F12', { ctrlKey: true });
+    expect([matchesEvent('F12', f12), matchesEvent('F12', shiftF12), matchesEvent('F12', ctrlF12)]).toEqual([true, false, false]);
+    expect([matchesEvent('Shift+F12', shiftF12), matchesEvent('Ctrl+F12', ctrlF12)]).toEqual([true, true]);
+    // By physical key: Alt+Shift+H on a Cyrillic layout is still KeyH.
+    expect(matchesEvent('Alt+Shift+H', press('KeyH', { altKey: true, shiftKey: true }))).toBe(true);
   });
 });

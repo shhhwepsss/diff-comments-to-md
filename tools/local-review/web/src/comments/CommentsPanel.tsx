@@ -93,7 +93,8 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
     const c = item.comment;
     setEditing(null);
     if (item.kind === 'general') review.setCurrentComment(c.id);
-    else if (item.kind === 'orphan' && c.file) {
+    // Out of the diff and not readable (a PR with no clone): the file shows its comments only.
+    else if (item.kind === 'orphan' && c.file && !review.filesReadable) {
       review.setCurrentComment(c.id);
       review.selectFile(c.file);
     } else review.revealComment(c.id);

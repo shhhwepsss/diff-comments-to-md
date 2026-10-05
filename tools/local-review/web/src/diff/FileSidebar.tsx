@@ -8,6 +8,7 @@ import {
   FileDiffIcon,
   FileMovedIcon,
   FileRemovedIcon,
+  FileCodeIcon,
   FilterIcon,
   KebabHorizontalIcon,
   QuestionIcon,
@@ -67,7 +68,7 @@ function RuleField({ id, label, placeholder, value, error, onChange }: RuleField
 
 export function FileSidebar({ filter }: { filter: FileFilter }) {
   const review = useReview();
-  const { state, comments, activeFile } = review;
+  const { state, comments, activeFile, navFiles } = review;
   const { search, setSearch, include, setInclude, exclude, setExclude, includeRule, excludeRule, rulesActive } = filter;
   const { shown, hidden, shownOrphans, hiddenOrphans } = filter;
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -75,7 +76,9 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
   // in sight here. 'nearest' moves nothing when the row is already visible.
   useEffect(() => {
     if (!activeFile) return;
-    const row = ['file', 'orphan', 'hidden', 'hidden-orphan'].map((prefix) => document.getElementById(`${prefix}:${activeFile}`)).find(Boolean);
+    const row = ['file', 'orphan', 'hidden', 'hidden-orphan', 'nav']
+      .map((prefix) => document.getElementById(`${prefix}:${activeFile}`))
+      .find(Boolean);
     row?.scrollIntoView({ block: 'nearest' });
   }, [activeFile]);
   const [hiddenOpen, setHiddenOpen] = useState(true);
@@ -180,6 +183,18 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       </TreeView.Item>
     );
 
+  // A file listed outside the tree: the name first, its folder after it, so
+  // the row's truncation cuts the folder and never the name.
+  const flatName = (path: string) => {
+    const cut = path.lastIndexOf('/') + 1;
+    return (
+      <>
+        {path.slice(cut)}
+        {cut > 0 && <span className="rv-tree-dir">{path.slice(0, cut - 1)}</span>}
+      </>
+    );
+  };
+
   const renderOrphan = (f: OrphanFile, idPrefix = 'orphan') => (
     <TreeView.Item
       as="a"
@@ -194,8 +209,38 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       <TreeView.LeadingVisual>
         <QuestionIcon className="rv-status" />
       </TreeView.LeadingVisual>
-      {f.path}
+      {flatName(f.path)}
       {trailing(f.path)}
+    </TreeView.Item>
+  );
+
+  // Files code navigation opened that are not (or no longer) in the diff. One
+  // with comments is listed once, under «Вне диффа», where it stays after a reload.
+  const outside = useMemo(
+    () =>
+      navFiles.filter(
+        (p) => !files.some((f) => f.path === p) && !shownOrphans.some((f) => f.path === p) && !hiddenOrphans.some((f) => f.path === p),
+      ),
+    [navFiles, files, shownOrphans, hiddenOrphans],
+  );
+
+  const renderNav = (path: string) => (
+    <TreeView.Item
+      as="a"
+      href={viewHash(review.descriptor, path)}
+      className="rv-tree-link"
+      id={`nav:${path}`}
+      key={`nav:${path}`}
+      current={path === activeFile}
+      onSelect={open(path)}
+      title={`${path} — вне диффа, открыт переходом по коду`}
+      secondaryActions={[{ label: `Убрать ${path} из списка`, icon: XIcon, onClick: () => review.closeNavFile(path) }]}
+    >
+      <TreeView.LeadingVisual>
+        <FileCodeIcon className="rv-status" />
+      </TreeView.LeadingVisual>
+      {flatName(path)}
+      {trailing(path)}
     </TreeView.Item>
   );
 
@@ -290,6 +335,14 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
             <div className="rv-sidebar__section">Вне диффа</div>
             <TreeView aria-label="Файлы вне диффа" truncate>
               {shownOrphans.map((f) => renderOrphan(f))}
+            </TreeView>
+          </>
+        )}
+        {outside.length > 0 && (
+          <>
+            <div className="rv-sidebar__section">Открыто через навигацию</div>
+            <TreeView aria-label="Файлы, открытые через навигацию" truncate>
+              {outside.map(renderNav)}
             </TreeView>
           </>
         )}

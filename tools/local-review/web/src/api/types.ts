@@ -98,6 +98,167 @@ export type DiffResponse = {
   oldText?: string | null;
   newText?: string | null;
   textUnavailable?: string;
+  /**
+   * Client-side only: not a diff but a whole file outside it, opened by code
+   * navigation (GET /api/file). Both texts are the file; it is read-only.
+   */
+  fullFile?: boolean;
+};
+
+/** GET /api/file: a whole file of the working tree, inside the repository. */
+export type FileResponse = {
+  path: string;
+  /** null for a binary file or one too big to show. */
+  text: string | null;
+  binary: boolean;
+  textUnavailable?: string;
+};
+
+/** What a language server is doing for one repository (GET /api/lsp/status). */
+export type LspState = 'stopped' | 'starting' | 'indexing' | 'ready' | 'failed' | 'stopping';
+
+export type LspServerStatus = {
+  /** typescript | java | go | python | rust */
+  id: string;
+  name: string;
+  /** The program: tsserver, tsgo, jdtls, … */
+  label: string;
+  /** File extensions it serves, with the dot. */
+  extensions: string[];
+  /** Where it was found; null = not installed. */
+  found: { command: string; source: 'node_modules' | 'PATH' } | null;
+  /** A PR's clone that is not trusted has this server in its node_modules/.bin, unused. */
+  untrusted?: { command: string } | null;
+  /** A server on PATH not started for an untrusted clone: it is inside the clone, or would load the clone's TypeScript. */
+  refused?: { command: string; why: 'in-clone' | 'no-typescript' } | null;
+  /** What to install when it is not found. */
+  hint: string;
+  state: LspState;
+  message: string | null;
+};
+
+export type LspRunning = { root: string; id: string; label: string; state: LspState; pid: number; startedAt: string; lastUsed: string };
+
+export type LspStatusResponse = {
+  /** False for a PR (no clone) or when no repository was named. */
+  available: boolean;
+  reason?: 'no-clone';
+  message?: string;
+  root: string | null;
+  /** false: a PR's clone not trusted to run its node_modules/.bin. */
+  repoBin?: boolean;
+  servers: LspServerStatus[];
+  running: LspRunning[];
+};
+
+/** A place a language server pointed at. Positions are zero-based (LSP). */
+export type LspLocation = {
+  /** Repository-relative; null when it is outside the repository. */
+  path: string | null;
+  /** The file or URI outside the repository. */
+  external?: string;
+  /** Inside the repository's .git: listed, never opened (`external` is its path there). */
+  gitInternal?: boolean;
+  line: number;
+  character: number;
+  endLine: number;
+  endCharacter: number;
+  /**
+   * References, implementations, calls: a piece of the line (no indent) and
+   * the column it starts at; null when the file could not be read. Absent for
+   * a definition and outside the repository.
+   */
+  preview?: LspPreview | null;
+};
+
+export type LspPreview = { text: string; start: number };
+
+/** A function or method in a call hierarchy: where it is declared, and the server's item to expand it by. */
+export type LspCallNode = LspLocation & {
+  name: string;
+  /** LSP SymbolKind (12 function, 6 method, 2 module, …); null when the server did not say. */
+  kind: number | null;
+  /** The class or file it belongs to, as the server words it. */
+  detail: string;
+  /** Opaque: sent back as it came for the next level. */
+  item: unknown;
+  token: string;
+};
+
+/** One edge of the tree: the function at the other end and the places of the calls. */
+export type LspCall = { node: LspCallNode; sites: LspLocation[] };
+
+export type LspHover = { kind: 'markdown' | 'plaintext'; value: string };
+
+type LspServerInfo = { id: string; label: string; state: LspState };
+
+export type LspFailure = {
+  ok: false;
+  /** not-supported: the server runs but does not do this (no such capability). */
+  reason: 'no-clone' | 'unsupported' | 'not-supported' | 'no-server' | 'failed' | 'timeout';
+  message: string;
+  hint?: string | null;
+  server?: LspServerInfo;
+};
+
+export type LspDefinitionResponse = ({ ok: true; server: LspServerInfo; locations: LspLocation[] }) | LspFailure;
+export type LspHoverResponse = ({ ok: true; server: LspServerInfo; hover: LspHover | null }) | LspFailure;
+export type LspCallItemsResponse = ({ ok: true; server: LspServerInfo; items: LspCallNode[] }) | LspFailure;
+export type LspCallsResponse = ({ ok: true; server: LspServerInfo; calls: LspCall[] }) | LspFailure;
+
+/** Asked about a symbol at a position: the answer is a list of places. */
+export type LspLocationsMethod = 'definition' | 'references' | 'implementation';
+export type LspCallDirection = 'incoming' | 'outgoing';
+
+export type LspRequest = {
+  path: string;
+  /** Zero-based line and UTF-16 column, as LSP counts them. */
+  line: number;
+  character: number;
+  /** The text on screen when it is not the working tree (staged, commits). */
+  text?: string;
+};
+
+/** Expanding a node of a call hierarchy: the node's item and token as they came, and the file the hierarchy began in. */
+export type LspCallsRequest = { path: string; text?: string; item: unknown; token: string };
+
+/** A clone or checkout running on the server for a PR (GET /api/pr/clone/job). */
+export type CloneJob = {
+  id: string;
+  kind: 'clone' | 'checkout';
+  status: 'running' | 'done' | 'failed';
+  /** The commands, as they are run. */
+  steps: string[];
+  /** The step running now; steps.length once done. */
+  step: number;
+  error: string | null;
+  /** The tail of what the commands printed. */
+  log: string;
+};
+
+/** GET /api/pr/clone: the PR repository's local clone, if any. */
+export type PrCloneStatus = {
+  bound: boolean;
+  /** The folder the clone dialog suggests: ~/projects/<repo>. */
+  suggested: string;
+  job: CloneJob | null;
+  path?: string;
+  /** The reviewer lets servers come from the clone's node_modules/.bin. */
+  trusted?: boolean;
+  /** Still a clone of the PR's repository; `problem` says what is wrong otherwise. */
+  valid?: boolean;
+  problem?: string | null;
+  head?: string | null;
+  branch?: string | null;
+  /** Uncommitted changes to tracked files. */
+  dirty?: boolean;
+  /** The commit the diff shows the new side of: the PR's head, or the range's end. */
+  prHead?: string | null;
+  prBranch?: string | null;
+  /** null: unknown (the PR's head could not be read). */
+  onHead?: boolean | null;
+  /** The clone has a node_modules/.bin, so trust matters. */
+  repoBin?: boolean;
 };
 
 /** Commit range a comment was written against; omitted for the latest-commit-only selection. */
