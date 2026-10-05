@@ -7,10 +7,10 @@ const { resolvePr } = require('../pr-search');
 const { rangeLabel } = require('../commits');
 const { fingerprintOf } = require('../viewed');
 
-const CACHE = new Map(); // descriptorKey -> { at, files }
+// descriptorKey -> { at, files, truncated } and, for a whole PR, `ends`: the
+// two commits its patch was made between.
+const CACHE = new Map();
 const TTL_MS = 120000;
-
-const SHA_CACHE = new Map(); // descriptorKey -> { at, mergeBaseSha, headRefOid }
 
 // The well-known empty-tree object id: every git object database has it,
 // including GitHub's — used as the left side of a commit range that starts
@@ -87,37 +87,21 @@ async function fetchContent(descriptor, sha, filePath) {
 }
 
 /**
- * The PR's two endpoints, resolved once and cached like `loadFiles` below
- * (same 120 s TTL, same `fresh` bypass): `gh pr view` for the branch tips,
- * then GitHub's compare API for the merge-base between them. Diffing against
- * baseRefOid directly would show every commit already on the base branch
- * since the PR was opened as a "change" — the merge-base is what `git diff
- * <mb> HEAD` / GitHub's own PR view actually compare against.
+ * The two commits a PR's texts are read at: the branch tips its patch came
+ * with (`ends`, see loadFiles), the base one replaced by GitHub's compare API
+ * answer for the merge-base between them. Diffing against baseRefOid directly
+ * would show every commit already on the base branch since the PR was opened
+ * as a "change" — the merge-base is what `git diff <mb> HEAD` / GitHub's own
+ * PR view actually compare against.
  */
-async function loadShas(descriptor, fresh) {
-  const key = descriptorKey(descriptor);
-  const hit = SHA_CACHE.get(key);
-  if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
-
-  const view = await ghJson([
-    'pr',
-    'view',
-    String(descriptor.number),
-    '--repo',
-    `${descriptor.owner}/${descriptor.repo}`,
-    '--json',
-    'baseRefOid,headRefOid',
-  ]);
+async function loadShas(descriptor, ends) {
   // The merge-base of two given commits never changes.
   const compare = await ghJson(
-    ['api', `repos/${descriptor.owner}/${descriptor.repo}/compare/${view.baseRefOid}...${view.headRefOid}`],
+    ['api', `repos/${descriptor.owner}/${descriptor.repo}/compare/${ends.baseSha}...${ends.headSha}`],
     { immutable: true }
   );
-  const mergeBaseSha = (compare.merge_base_commit && compare.merge_base_commit.sha) || view.baseRefOid;
-
-  const result = { at: Date.now(), mergeBaseSha, headRefOid: view.headRefOid };
-  SHA_CACHE.set(key, result);
-  return result;
+  const mergeBaseSha = (compare.merge_base_commit && compare.merge_base_commit.sha) || ends.baseSha;
+  return { mergeBaseSha, headRefOid: ends.headSha };
 }
 
 /**
@@ -274,24 +258,27 @@ function splitPrDiff(text) {
 // switches to that API; any other 406 stays the error it is.
 const DIFF_TOO_LARGE = /HTTP 406.*exceeded the maximum number of/;
 
-/** One `gh pr diff` per descriptor: /api/diff must not hit the network per file. */
+/**
+ * One `gh pr diff` per descriptor: /api/diff must not hit the network per file.
+ * The PR's two ends are asked for beside the patch and kept with it, so a
+ * file's hunks are never paired with the texts of another head: one entry,
+ * one moment.
+ */
 async function loadFiles(descriptor, fresh) {
   const key = descriptorKey(descriptor);
   const hit = CACHE.get(key);
   if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
 
-  const text = await gh([
-    'pr',
-    'diff',
-    String(descriptor.number),
-    '--repo',
-    `${descriptor.owner}/${descriptor.repo}`,
-  ]).catch((e) => {
-    if (!DIFF_TOO_LARGE.test(e.message)) throw e;
-    return null;
-  });
+  const [text, pr] = await Promise.all([
+    gh(['pr', 'diff', String(descriptor.number), '--repo', `${descriptor.owner}/${descriptor.repo}`]).catch((e) => {
+      if (!DIFF_TOO_LARGE.test(e.message)) throw e;
+      return null;
+    }),
+    resolvePr(descriptor, { fresh: true }),
+  ]);
+  const ends = { baseSha: pr.baseSha, headSha: pr.headSha };
   if (text === null) {
-    const result = Object.assign({ at: Date.now() }, await loadPrFilesPaged(descriptor));
+    const result = Object.assign({ at: Date.now(), ends }, await loadPrFilesPaged(descriptor));
     CACHE.set(key, result);
     return result;
   }
@@ -312,7 +299,7 @@ async function loadFiles(descriptor, fresh) {
     })
     .sort((a, b) => a.path.localeCompare(b.path));
 
-  const result = { at: Date.now(), files, truncated: null };
+  const result = { at: Date.now(), files, truncated: null, ends };
   CACHE.set(key, result);
   return result;
 }
@@ -480,12 +467,6 @@ function createPrSource(descriptor) {
         };
       }
       const { files, truncated } = await loadFiles(descriptor, fresh);
-      // A re-read forgets the endpoints together with the patch. The feed of
-      // all files then asks for each file's diff without `fresh`; with only
-      // the patch renewed, those would pair new hunks with the old head's
-      // texts. Forgotten, not fetched: the list must not fail on a request it
-      // does not need itself, and the first file's diff resolves them again.
-      if (fresh) SHA_CACHE.delete(descriptorKey(descriptor));
       return {
         files: files.map(listEntry),
         range: { label: `${descriptor.owner}/${descriptor.repo}#${descriptor.number}` },
@@ -509,7 +490,7 @@ function createPrSource(descriptor) {
         const texts = await loadPrTexts(descriptor, { mergeBaseSha: left, headRefOid: descriptor.to }, entry);
         return Object.assign({}, entry, texts);
       }
-      const { files } = await loadFiles(descriptor, fresh);
+      const { files, ends } = await loadFiles(descriptor, fresh);
       const entry = files.find((f) => f.path === filePath);
       if (!entry) {
         const err = new Error(`Файл "${filePath}" отсутствует в диффе этого PR-а.`);
@@ -519,7 +500,7 @@ function createPrSource(descriptor) {
       }
       // `context` is ignored on purpose: the local source can vary -U<n>
       // (lib/diff.js:218), GitHub cannot — it always hands back a fixed -U3.
-      const shas = await loadShas(descriptor, fresh);
+      const shas = await loadShas(descriptor, ends);
       const texts = await loadPrTexts(descriptor, shas, entry);
       return Object.assign({}, entry, texts);
     },

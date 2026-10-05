@@ -16,13 +16,11 @@ export type ActiveDiff =
   /** `stale`: loaded before the diff was re-read; shown until its replacement arrives. */
   | { kind: 'ready'; diff: DiffResponse; stale?: boolean };
 
-export type DiffFetcher = (path: string, fresh: boolean) => Promise<DiffResponse>;
+export type DiffFetcher = (path: string) => Promise<DiffResponse>;
 
 export type EnsureOptions = {
   /** Fetch even if the file is known or loading, and skip the queue: the reviewer asked for this file. */
   force?: boolean;
-  /** Passed to the fetcher: bypass the server's cache. */
-  fresh?: boolean;
 };
 
 export type DiffStore = {
@@ -74,11 +72,11 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
     while (running < limit && queue.length) queue.shift()?.();
   };
 
-  const run = async (path: string, fresh: boolean, isCurrent: () => boolean): Promise<ActiveDiff | null> => {
+  const run = async (path: string, isCurrent: () => boolean): Promise<ActiveDiff | null> => {
     running += 1;
     let entry: ActiveDiff;
     try {
-      const diff = await fetcher(path, fresh);
+      const diff = await fetcher(path);
       // A re-read that brought nothing new keeps the diff it replaces, so the
       // editor showing it is not rebuilt under the reviewer.
       const shown = entries.get(path);
@@ -107,7 +105,7 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
       };
     },
 
-    ensure: (path, { force = false, fresh = false } = {}) => {
+    ensure: (path, { force = false } = {}) => {
       const known = entries.get(path);
       // A stale diff with a request already out is waiting for that one.
       const settled = known && !(needsLoad(known) && !pending.has(path));
@@ -123,9 +121,9 @@ export function createDiffStore(fetcher: DiffFetcher, limit: number = DEFAULT_LI
 
       const request =
         force || running < limit
-          ? run(path, fresh, isCurrent)
+          ? run(path, isCurrent)
           : new Promise<ActiveDiff | null>((resolve) => {
-              queue.push(() => resolve(isCurrent() ? run(path, fresh, isCurrent) : null));
+              queue.push(() => resolve(isCurrent() ? run(path, isCurrent) : null));
             });
       pending.set(path, request);
       return request;

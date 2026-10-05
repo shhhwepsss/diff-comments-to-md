@@ -5,6 +5,7 @@ const { parseDescriptor } = require('../descriptor');
 const { defaultBase } = require('../git');
 const { listCommits, uncommittedSummary } = require('../commits');
 const { ghJson } = require('../gh');
+const { resolvePr } = require('../pr-search');
 
 // Keyed by "host/owner/repo#number" — the PR's commit list does not depend on
 // any from/to selection, so it is cached independently of descriptorKey
@@ -71,25 +72,27 @@ async function fetchAllPrCommits(descriptor) {
   return { commits: all.map(mapGhCommit), truncated };
 }
 
+/**
+ * A re-read asks the PR where its two ends are before it lists the commits
+ * again: between the same two commits the list is the same, and the PR is
+ * asked that anyway (the header, the diff — one run for all of them, see
+ * resolvePr). Only a list that reaches the head it was read at is trusted
+ * this way: GitHub may still be catching up right after a push.
+ */
 async function loadPrCommits(descriptor, fresh) {
   const key = prCacheKey(descriptor);
   const hit = PR_COMMITS_CACHE.get(key);
   if (!fresh && hit && Date.now() - hit.at < TTL_MS) return hit;
 
-  const [view, { commits, truncated }] = await Promise.all([
-    ghJson([
-      'pr',
-      'view',
-      String(descriptor.number),
-      '--repo',
-      `${descriptor.owner}/${descriptor.repo}`,
-      '--json',
-      'baseRefName',
-    ]),
-    fetchAllPrCommits(descriptor),
-  ]);
+  // With nothing to compare against, the list is asked for beside the PR, not after it.
+  const listing = hit && hit.ends ? null : fetchAllPrCommits(descriptor);
+  const [pr, listed] = await Promise.all([resolvePr(descriptor, { fresh: true }), listing]);
+  const ends = { baseSha: pr.baseSha, headSha: pr.headSha };
+  const unmoved = Boolean(hit && hit.ends) && hit.ends.baseSha === ends.baseSha && hit.ends.headSha === ends.headSha;
+  const { commits, truncated } = listed || (unmoved ? hit : await fetchAllPrCommits(descriptor));
 
-  const result = { at: Date.now(), commits, truncated, base: view.baseRefName || null };
+  const reachesHead = Boolean(ends.headSha) && commits.some((c) => c.sha === ends.headSha);
+  const result = { at: Date.now(), commits, truncated, base: pr.baseRefName || null, ends: reachesHead ? ends : null };
   PR_COMMITS_CACHE.set(key, result);
   return result;
 }

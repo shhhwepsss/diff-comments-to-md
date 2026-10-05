@@ -126,7 +126,13 @@ async function searchPrs({ repo, q, state, limit, author }) {
 const PR_CACHE = new Map();
 const PR_TTL_MS = 120000;
 
-/** The screen header, and the place a globally-found PR gets its branch name. */
+/**
+ * The screen header, and the place a globally-found PR gets its branch name.
+ * Also the one `gh pr view` of a PR: the diff takes the PR's two ends from it
+ * and the commit list its base branch, so a re-read of the screen (the list,
+ * the history and a file at once) runs it once — the same arguments in flight
+ * are one run (lib/gh.js).
+ */
 async function resolvePr({ host, owner, repo, number }, options) {
   const key = `${host || 'github.com'}/${owner}/${repo}#${number}`;
   const hit = PR_CACHE.get(key);
@@ -145,7 +151,7 @@ async function fetchPr({ host, owner, repo, number }) {
     '--repo',
     `${owner}/${repo}`,
     '--json',
-    'number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url',
+    'number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url',
   ]);
   return {
     host: host || 'github.com',
@@ -159,6 +165,7 @@ async function fetchPr({ host, owner, repo, number }) {
     headRefName: row.headRefName || null,
     baseRefName: row.baseRefName || null,
     headSha: row.headRefOid || null,
+    baseSha: row.baseRefOid || null,
     url: row.url,
   };
 }

@@ -169,8 +169,7 @@ export function commitsListDescriptor(d: Descriptor): Descriptor {
 export const api = {
   state: (d: Descriptor, fresh = false) =>
     request<StateResponse>(`/api/state?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
-  diff: (d: Descriptor, file: string, fresh = false) =>
-    request<DiffResponse>(`/api/diff?${descriptorQuery(d, fresh ? { file, fresh: '1' } : { file })}`),
+  diff: (d: Descriptor, file: string) => request<DiffResponse>(`/api/diff?${descriptorQuery(d, { file })}`),
   commits: (d: Descriptor, fresh = false) =>
     request<CommitsResponse>(`/api/commits?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
 

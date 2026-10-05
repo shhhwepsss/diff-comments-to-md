@@ -8,10 +8,10 @@ function diffOf(path: string): DiffResponse {
 
 /** A fetcher whose every request is settled by hand. */
 function manualFetcher() {
-  const calls: { path: string; fresh: boolean; resolve: (d: DiffResponse) => void; reject: (e: unknown) => void }[] = [];
-  const fetcher = (path: string, fresh: boolean) =>
+  const calls: { path: string; resolve: (d: DiffResponse) => void; reject: (e: unknown) => void }[] = [];
+  const fetcher = (path: string) =>
     new Promise<DiffResponse>((resolve, reject) => {
-      calls.push({ path, fresh, resolve, reject });
+      calls.push({ path, resolve, reject });
     });
   return { calls, fetcher };
 }
@@ -61,9 +61,8 @@ describe('createDiffStore', () => {
     await store.ensure('a.ts');
     expect(calls).toHaveLength(1);
 
-    void store.ensure('a.ts', { force: true, fresh: true });
+    void store.ensure('a.ts', { force: true });
     expect(calls).toHaveLength(2);
-    expect(calls[1].fresh).toBe(true);
     expect(store.get('a.ts')).toEqual({ kind: 'loading' });
   });
 

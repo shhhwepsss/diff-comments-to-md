@@ -271,14 +271,16 @@ export function ReviewProvider({
   // under one provider, and every change resets the store.
   // A file outside the diff (code navigation led there, or it has comments)
   // is read whole instead — asked for only when files can be read at all.
+  // Never past the server's cache: a re-read renews it with the file list
+  // (`api.state(d, true)`), and every diff asked for after that is of it.
   const [diffs] = useState(() =>
-    createDiffStore((path, fresh) =>
+    createDiffStore((path) =>
       stateRef.current && !stateRef.current.files.some((f) => f.path === path)
         ? api.file(descriptorRef.current, path).then(fullFileDiff, (e: unknown) => {
             if (e instanceof ApiError && e.status === 404) return missingFile(path);
             throw e;
           })
-        : api.diff(descriptorRef.current, path, fresh),
+        : api.diff(descriptorRef.current, path),
     ),
   );
   // A PR's clone: what makes its files outside the diff readable, and the
@@ -393,7 +395,7 @@ export function ReviewProvider({
         // has open (maybe in another file) stays, and a diff already on screen
         // is not fetched again. A failure shows in the file's own section.
         if (listedOnly) diffs.setOrphan(path);
-        else void diffs.ensure(path, { fresh });
+        else void diffs.ensure(path);
         return;
       }
       setEditor(null);
@@ -403,7 +405,7 @@ export function ReviewProvider({
         return;
       }
       // Forced: opening a file always re-reads it, the working copy may have moved on.
-      const entry = await diffs.ensure(path, { force: true, fresh });
+      const entry = await diffs.ensure(path, { force: true });
       // A failure of a file the reviewer already left is not worth a toast.
       if (entry?.kind === 'error' && activeFileRef.current === path) fail(entry.cause);
     },
@@ -650,11 +652,11 @@ export function ReviewProvider({
       const file = activeFileRef.current;
       if (file && next.files.some((f) => f.path === file)) {
         // Not forced: the diff on screen stays there until its replacement comes.
-        void diffs.ensure(file, { fresh: true });
+        void diffs.ensure(file);
       } else if (file && navFilesRef.current.includes(file)) {
-        void diffs.ensure(file, { fresh: true });
+        void diffs.ensure(file);
       } else if (file && next.orphanFiles.some((f) => f.path === file)) {
-        if (filesReadableRef.current) void diffs.ensure(file, { fresh: true });
+        if (filesReadableRef.current) void diffs.ensure(file);
         else diffs.setOrphan(file);
       } else if (next.files.length) {
         const first = feedRef.current ? filesOf(buildTree(next.files, (f) => f.path))[0] : next.files[0];
