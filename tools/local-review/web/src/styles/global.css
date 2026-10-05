@@ -11,6 +11,17 @@ body,
   height: 100%;
 }
 
+/* Native scrollbars and form controls follow the theme as well. */
+[data-color-mode='dark'][data-dark-theme='dark'],
+[data-color-mode='auto'][data-light-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  [data-color-mode='auto'][data-dark-theme='dark'] {
+    color-scheme: dark;
+  }
+}
+
 .rv-root {
   height: 100%;
   color: var(--fgColor-default);
