@@ -317,16 +317,23 @@ export function ReviewProvider({
   }, [lsp]);
 
   const cloneSeq = useRef(0);
+  const cloneRef = useRef<PrCloneStatus | null>(null);
   const setCloneStatus = useCallback(
     (next: PrCloneStatus) => {
       cloneSeq.current += 1;
+      const prev = cloneRef.current;
+      // The same answer again (the bar re-reads it while a job runs): the whole
+      // review reads `clone` from the context, so nothing re-renders for it.
+      if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;
+      cloneRef.current = next;
       setClone(next);
       filesReadableRef.current = Boolean(next.bound && next.valid);
       // The file on screen was only listed (out of the diff, no clone): now it can be shown.
       const open = activeFileRef.current;
       if (filesReadableRef.current && open && diffs.get(open)?.kind === 'orphan') void diffs.ensure(open, { force: true });
-      // The servers follow the clone: another root, another trust, or none.
-      void lsp.refresh();
+      // The servers follow the clone: another root, another trust, or none — not a job's progress.
+      const where = (c: PrCloneStatus | null) => JSON.stringify(c && [c.bound, c.valid, c.path, c.trusted, c.onHead]);
+      if (where(prev) !== where(next)) void lsp.refresh();
     },
     [lsp, diffs],
   );

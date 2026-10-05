@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActionList, ActionMenu, Button, Checkbox, Dialog, FormControl, IconButton, Spinner, TextInput } from '@primer/react';
+import { ActionList, ActionMenu, Button, Checkbox, Dialog, FormControl, IconButton, Spinner, TextInput, VisuallyHidden } from '@primer/react';
 import { AlertIcon, CheckIcon, CircleIcon, KebabHorizontalIcon, RepoCloneIcon, XCircleIcon } from '@primer/octicons-react';
 import { api, errorMessage, failureMessage } from '../api/client';
 import type { CloneJob, PrDescriptor } from '../api/types';
 import { useReview } from '../review/ReviewContext';
 import { useToast } from '../lib/toast';
-import { cloneCommands, headWarning, linkCommands, repoArg } from './cloneText';
+import { checkoutCommand, cloneCommands, headWarning, linkCommands, repoArg } from './cloneText';
 import './clone.css';
 
 // The bar above a PR's diff about its local clone (lib/pr-clone.js), and the
@@ -15,6 +15,8 @@ import './clone.css';
 // only code navigation moves from the search by text to the language server.
 
 const POLL_MS = 700;
+/** How often the bar re-reads the status while a job runs with its dialog hidden. */
+const BAR_POLL_MS = 2000;
 
 /** Follows a clone/checkout job until it ends; `onEnd` gets its last state. */
 function useJob(onEnd: (job: CloneJob) => void) {
@@ -162,7 +164,19 @@ function CloneDialog({ kind, pr, initialDir, onClose }: { kind: DialogKind; pr: 
         <pre className="rv-clone-dialog__cmd" id="rv-clone-cmd">
           {clone ? cloneCommands(pr, dir) : linkCommands(pr, dir)}
         </pre>
-        {job && <JobSteps job={job} />}
+        {/* Read out as the steps advance: the spinner alone says nothing to a screen reader. */}
+        <div aria-live="polite">
+          {job && <JobSteps job={job} />}
+          {job && (
+            <VisuallyHidden>
+              {job.status === 'running'
+                ? `Шаг ${Math.min(job.step + 1, job.steps.length)} из ${job.steps.length}: ${job.steps[job.step] ?? ''}`
+                : job.status === 'done'
+                  ? 'Готово'
+                  : 'Ошибка'}
+            </VisuallyHidden>
+          )}
+        </div>
         {busy && job?.status === 'running' && <div className="rv-clone-progress" role="progressbar" aria-label="Клонирование" />}
         {error && (
           <div className="rv-clone-dialog__error" role="alert">
@@ -187,6 +201,16 @@ export function CloneBar() {
     if (last.status === 'done') toast('Клон переключён на PR');
     else toast(`gh pr checkout не выполнен: ${last.error ?? ''}`, true);
   });
+
+  // A job whose dialog was hidden is followed by nobody else: until it ends,
+  // the status is re-read, so «Клонирую…» turns into the clone (or the failure).
+  const jobRunning = clone?.job?.status === 'running' && !dialog && !checkout.job;
+  const { refreshClone } = review;
+  useEffect(() => {
+    if (!jobRunning) return undefined;
+    const t = window.setInterval(() => void refreshClone(), BAR_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [jobRunning, refreshClone]);
 
   if (descriptor.source !== 'pr' || !clone) return null;
   const pr = descriptor;
@@ -267,28 +291,31 @@ export function CloneBar() {
             size="small"
             disabled={switching || clone.dirty}
             leadingVisual={switching ? Spinner : undefined}
-            title={clone.dirty ? 'В клоне есть незакоммиченные изменения — переключение отменится' : `Выполнить в ${clone.path}`}
+            title={clone.dirty ? 'В клоне есть незакоммиченные изменения — переключение отменится' : `Выполнить в ${clone.path}: ${checkoutCommand(pr)}`}
             onClick={() => void startCheckout()}
           >
             {switching ? 'Переключаю…' : `gh pr checkout ${pr.number}`}
           </Button>
         )}
-        {clone.repoBin && (
-          <label
-            className="rv-clonebar__trust"
-            title="Это чужой код: language server из node_modules/.bin клона запускается, только если вы доверяете репозиторию. Иначе — только из PATH."
-          >
-            <Checkbox
-              checked={Boolean(clone.trusted)}
-              disabled={trustBusy}
-              onChange={(e) => {
-                setTrustBusy(true);
-                void set({ action: 'trust', trusted: e.target.checked }, 'Не удалось сохранить доверие').finally(() => setTrustBusy(false));
-              }}
-            />
-            Доверять этому репозиторию (запускать серверы из node_modules/.bin)
-          </label>
-        )}
+        {/* Always offered: trust also lets jdtls import Gradle/Maven and rust-analyzer run build scripts. */}
+        <label
+          className="rv-clonebar__trust"
+          title={
+            'Это чужой код. Без доверия language server берётся только из PATH и с настройками, которые не запускают сборку проекта ' +
+            '(импорт Gradle/Maven, build.rs, proc-макросы, node_modules/typescript клона). Это не песочница — подробнее в README.' +
+            (clone.repoBin ? ' С доверием сервер берётся и из node_modules/.bin клона.' : '')
+          }
+        >
+          <Checkbox
+            checked={Boolean(clone.trusted)}
+            disabled={trustBusy}
+            onChange={(e) => {
+              setTrustBusy(true);
+              void set({ action: 'trust', trusted: e.target.checked }, 'Не удалось сохранить доверие').finally(() => setTrustBusy(false));
+            }}
+          />
+          Доверять этому репозиторию{clone.repoBin ? ' (запускать серверы из node_modules/.bin)' : ''}
+        </label>
         <ActionMenu>
           <ActionMenu.Anchor>
             <IconButton icon={KebabHorizontalIcon} aria-label="Клон: действия" size="small" variant="invisible" />

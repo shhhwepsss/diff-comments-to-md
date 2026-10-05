@@ -25,7 +25,8 @@ function prDescriptor(url, ctx) {
     err.status = 400;
     throw err;
   }
-  return d;
+  // host/owner/repo go to gh as arguments: plain names only.
+  return prClone.checkedRepo(d);
 }
 
 async function get(req, res, ctx, url) {

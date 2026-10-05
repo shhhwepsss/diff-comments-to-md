@@ -43,28 +43,77 @@ function repoKey(d) {
   return `${d.host || 'github.com'}/${d.owner}/${d.repo}`.toLowerCase();
 }
 
+// What a PR descriptor may name, before any of it reaches gh as an argument:
+// a value starting with `-` would be read as a flag, a `/`, `:` or `..` would
+// make `owner/repo` another repository or a URL (gh repo clone takes those).
+const HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?$/;
+const OWNER_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const REPO_RE = /^[A-Za-z0-9_.-]+$/;
+
+/** The descriptor, its host/owner/repo checked to be plain names; a 400 otherwise. */
+function checkedRepo(d) {
+  const host = d.host || 'github.com';
+  const repo = String(d.repo || '');
+  if (!HOST_RE.test(host) || host.includes('..')) throw bad(`Некорректный хост: ${host}`);
+  if (!OWNER_RE.test(String(d.owner || '')) || d.owner.length > 100) throw bad(`Некорректный владелец репозитория: ${d.owner}`);
+  if (!REPO_RE.test(repo) || repo === '.' || repo === '..' || repo.length > 100) throw bad(`Некорректное имя репозитория: ${repo}`);
+  if (!Number.isInteger(d.number) || d.number <= 0) throw bad('Некорректный номер PR');
+  return d;
+}
+
 /** `owner/repo`, or `host/owner/repo` off github.com — what `gh repo clone` takes. */
 function repoArg(d) {
   const host = d.host || 'github.com';
   return host === 'github.com' ? `${d.owner}/${d.repo}` : `${host}/${d.owner}/${d.repo}`;
 }
 
-function readClones() {
+/** The bindings, and whether the file is there but unreadable as such (hand-edited, cut short). */
+function loadClones() {
+  let raw;
   try {
-    const parsed = JSON.parse(fs.readFileSync(clonesPath(), 'utf8'));
-    return parsed && parsed.clones && typeof parsed.clones === 'object' && !Array.isArray(parsed.clones) ? parsed.clones : {};
+    raw = fs.readFileSync(clonesPath(), 'utf8');
   } catch {
-    // Missing or corrupt: no clone is known, the PR works by text.
-    return {};
+    return { clones: {}, corrupt: false };
   }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.clones && typeof parsed.clones === 'object' && !Array.isArray(parsed.clones)) return { clones: parsed.clones, corrupt: false };
+  } catch {
+    /* corrupt, below */
+  }
+  return { clones: {}, corrupt: true };
 }
 
-function writeClones(clones) {
+function readClones() {
+  // Missing or corrupt: no clone is known, the PR works by text.
+  return loadClones().clones;
+}
+
+/**
+ * Read, change, write back — synchronously, so two requests of this server
+ * never interleave; the rename makes the write atomic for a reader. A corrupt
+ * file is not silently replaced: it is kept beside as `.corrupt`.
+ */
+function updateClones(change) {
+  const { clones, corrupt } = loadClones();
+  change(clones);
   config.ensureHome();
   const file = clonesPath();
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, clones }, null, 2), 'utf8');
-  fs.renameSync(tmp, file);
+  if (corrupt) {
+    try {
+      fs.copyFileSync(file, `${file}.corrupt`);
+    } catch {
+      /* gone meanwhile: nothing to keep */
+    }
+  }
+  const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, clones }, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 /** { path, trusted } of the PR's repository, or null. The file is hand-editable, so it is checked. */
@@ -74,28 +123,34 @@ function bindingOf(d) {
   return { path: record.path, trusted: record.trusted === true, linkedAt: record.linkedAt || null };
 }
 
+/**
+ * Remembers the folder by its real path: git reports the top of a repository
+ * that way, the language servers are keyed by it, and trust must not differ
+ * between two spellings (a symlink, `..`) of one folder.
+ */
 function bind(d, dir) {
-  const clones = readClones();
-  const key = repoKey(d);
-  const previous = clones[key];
-  // Trust is about a folder: naming the same one again keeps it, another one starts untrusted.
-  const trusted = Boolean(previous && previous.path === dir && previous.trusted === true);
-  clones[key] = { path: dir, trusted, linkedAt: new Date().toISOString() };
-  writeClones(clones);
+  const real = realOrSelf(dir);
+  updateClones((clones) => {
+    const key = repoKey(d);
+    const previous = clones[key];
+    // Trust is about a folder: naming the same one again keeps it, another one starts untrusted.
+    const trusted = Boolean(previous && typeof previous.path === 'string' && realOrSelf(previous.path) === real && previous.trusted === true);
+    clones[key] = { path: real, trusted, linkedAt: new Date().toISOString() };
+  });
 }
 
 function setTrusted(d, trusted) {
-  const clones = readClones();
-  const key = repoKey(d);
-  if (!clones[key]) throw bad('Для этого PR не указан клон', 409);
-  clones[key] = Object.assign({}, clones[key], { trusted: Boolean(trusted) });
-  writeClones(clones);
+  updateClones((clones) => {
+    const key = repoKey(d);
+    if (!clones[key]) throw bad('Для этого PR не указан клон', 409);
+    clones[key] = Object.assign({}, clones[key], { trusted: Boolean(trusted) });
+  });
 }
 
 function unbind(d) {
-  const clones = readClones();
-  delete clones[repoKey(d)];
-  writeClones(clones);
+  updateClones((clones) => {
+    delete clones[repoKey(d)];
+  });
 }
 
 /** `~` and `~/x` are the user's home: the dialog suggests `~/projects/<repo>`. */
@@ -126,7 +181,8 @@ function parseRemote(url) {
   const s = String(url || '').trim();
   let host;
   let rest;
-  const scp = /^[\w.-]+@([^:/]+):(.+)$/.exec(s);
+  // scp-like `[user@]host:path` — not `C:\\…` (one letter) and not `scheme://`.
+  const scp = /^(?:[\w.-]+@)?([^:/\\@]{2,}):(?!\/\/)(.+)$/.exec(s);
   if (scp) {
     host = scp[1];
     rest = scp[2];
@@ -144,15 +200,18 @@ function parseRemote(url) {
     .replace(/\.git$/i, '')
     .split('/')
     .filter(Boolean);
-  if (parts.length < 2) return null;
-  return { host: host.toLowerCase(), owner: parts[parts.length - 2], repo: parts[parts.length - 1] };
+  // Exactly owner/repo: `github.com/evil/acme/web` is not acme/web.
+  if (parts.length !== 2) return null;
+  return { host: host.toLowerCase(), owner: parts[0], repo: parts[1] };
 }
 
 function remoteMatches(url, d) {
   const r = parseRemote(url);
   if (!r) return false;
+  // A remote names the host without the port an https address of the PR may carry.
+  const host = String(d.host || 'github.com').toLowerCase().replace(/:\d+$/, '');
   return (
-    r.host === String(d.host || 'github.com').toLowerCase() &&
+    r.host === host &&
     r.owner.toLowerCase() === String(d.owner).toLowerCase() &&
     r.repo.toLowerCase() === String(d.repo).toLowerCase()
   );
@@ -275,12 +334,13 @@ function startJob(d, kind, steps) {
     for (let i = 0; i < steps.length; i += 1) {
       job.step = i;
       const step = steps[i];
-      const res = await ghRaw(step.args, { cwd: step.cwd, timeoutMs: step.timeoutMs });
+      // git must not ask for a password on the terminal the server runs in: it would wait there unseen.
+      const res = await ghRaw(step.args, { cwd: step.cwd, timeoutMs: step.timeoutMs, env: { GIT_TERMINAL_PROMPT: '0' } });
       const out = `${res.stdout ? res.stdout.toString('utf8') : ''}${res.stderr ? res.stderr.toString('utf8') : ''}`;
       job.log = (job.log + out).slice(-LOG_TAIL);
       if (res.spawnError || res.timedOut || res.code !== 0) {
         job.status = 'failed';
-        job.error = classifyGhError(res, step.args).message;
+        job.error = jobError(res, step.args);
         job.endedAt = Date.now();
         return;
       }
@@ -295,6 +355,19 @@ function startJob(d, kind, steps) {
     job.endedAt = Date.now();
   });
   return job;
+}
+
+/**
+ * What went wrong with a step, for the dialog. gh's own failures (network,
+ * auth, rate limit) keep their wording; otherwise git's last `fatal:`/`error:`
+ * line says more than the first line, which is «Cloning into …».
+ */
+function jobError(res, args) {
+  const failure = classifyGhError(res, args);
+  if (failure.ghReason && failure.ghReason !== 'unknown') return failure.message;
+  const lines = (res.stderr ? res.stderr.toString('utf8') : '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const fatal = [...lines].reverse().find((l) => /^(fatal|error|failed)\b/i.test(l));
+  return (fatal || lines[lines.length - 1] || failure.message).slice(0, 300);
 }
 
 function jobById(id) {
@@ -337,6 +410,7 @@ async function cloneStatus(d) {
 
 /** `gh repo clone <repo> <dir>`, then `gh pr checkout <n>` in it. The folder must be new or empty. */
 function startClone(d, rawDir) {
+  checkedRepo(d);
   const dir = folderOf(rawDir);
   let stat = null;
   try {
@@ -354,12 +428,23 @@ function startClone(d, rawDir) {
       // Bound as soon as it exists: a failed checkout leaves a clone the bar can switch later.
       after: async () => bind(d, dir),
     },
-    { label: `gh pr checkout ${d.number}`, args: ['pr', 'checkout', String(d.number)], cwd: dir, timeoutMs: CHECKOUT_TIMEOUT_MS },
+    checkoutStep(d, dir),
   ]);
+}
+
+/**
+ * `gh pr checkout <n> --repo <repo>`: the PR is the descriptor's, whatever
+ * gh would pick as the default repository of the folder (a clone of a fork
+ * with an `upstream` remote would otherwise check out the fork's PR <n>).
+ */
+function checkoutStep(d, cwd) {
+  const args = ['pr', 'checkout', String(d.number), '--repo', repoArg(d)];
+  return { label: `gh ${args.join(' ')}`, args, cwd, timeoutMs: CHECKOUT_TIMEOUT_MS };
 }
 
 /** An existing clone: checked to be the PR's repository, then remembered. Never switched silently. */
 async function link(d, rawDir) {
+  checkedRepo(d);
   const dir = folderOf(rawDir);
   const info = await inspect(dir, d);
   if (!info.ok) throw bad(info.problem, 400);
@@ -369,17 +454,17 @@ async function link(d, rawDir) {
 
 /** `gh pr checkout <n>` in the bound clone, asked for by the reviewer; refused over uncommitted changes. */
 async function startCheckout(d) {
+  checkedRepo(d);
   const binding = bindingOf(d);
   if (!binding) throw bad('Для этого PR не указан клон', 409);
   const info = await inspect(binding.path, d);
   if (!info.ok) throw bad(info.problem, 409);
   if (info.dirty) throw bad('В клоне есть незакоммиченные изменения — переключение на PR отменено. Сохраните или уберите их и повторите.', 409);
-  return startJob(d, 'checkout', [
-    { label: `gh pr checkout ${d.number}`, args: ['pr', 'checkout', String(d.number)], cwd: binding.path, timeoutMs: CHECKOUT_TIMEOUT_MS },
-  ]);
+  return startJob(d, 'checkout', [checkoutStep(d, binding.path)]);
 }
 
 module.exports = {
+  checkedRepo,
   bindingOf,
   bind,
   unbind,

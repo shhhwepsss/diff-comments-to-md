@@ -16,15 +16,23 @@ export const MAX_HITS = 2000;
 const PREVIEW_CHARS = 240;
 const PREVIEW_LEAD = 60;
 
-const ID = '[A-Za-z_$][\\w$]*';
+/** A letter of a name: Unicode letters and digits, `_` and `$` — as the editor's word under the caret (cm/occurrenceMatch.ts). */
+const WORD_CHAR = '[\\p{L}\\p{N}_$]';
+const ID = '[\\p{L}_$][\\p{L}\\p{N}_$]*';
+/**
+ * Longer lines are not searched for declarations: a minified bundle declares
+ * nothing anyone navigates to, and the patterns, linear on code, may backtrack
+ * quadratically on a pathological line.
+ */
+export const MAX_DECLARATION_LINE = 1000;
 
 function escape(word: string): string {
   return word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** The word, whole: `$` and `_` count as letters (JavaScript names). */
+/** The word, whole: `$` and `_` count as letters (JavaScript names), and so does any Unicode letter. */
 function whole(word: string): string {
-  return `(?<![\\w$])${escape(word)}(?![\\w$])`;
+  return `(?<!${WORD_CHAR})${escape(word)}(?!${WORD_CHAR})`;
 }
 
 function extensionOf(path: string): string {
@@ -64,8 +72,9 @@ export function declarationPattern(word: string, path: string): RegExp {
     case 'js':
       parts = [
         `\\b(?:function\\*?|class|interface|type|enum|namespace|module|const|let|var)\\s+${w}`,
-        // `const { a, b } = …` and `const [a, b] = …`
-        `\\b(?:const|let|var)\\s+[{[][^=]*${w}[^=]*[}\\]]\\s*=`,
+        // `const { a, b } = …` and `const [a, b] = …` — the word checked by a lookahead, so the
+        // two `[^=]*` around it do not backtrack against each other on a long line.
+        `\\b(?:const|let|var)\\s+[{[](?=[^=]*${w})[^=]*[}\\]]\\s*=`,
         // A method or a class field: `  async name(…) {`, `  get name(): T {`, `  name = …` / `name: T;` in a class.
         // A call is never followed by `{` on its line; a method with its body is.
         `^\\s*${modifiers('public|private|protected|static|async|readonly|abstract|override|get|set')}\\*?${w}\\s*(?:<[^>]*>)?\\s*\\([^)]*\\)\\s*(?::\\s*[^={;]+)?\\{`,
@@ -82,11 +91,11 @@ export function declarationPattern(word: string, path: string): RegExp {
       parts = [
         `\\b(?:class|interface|enum|record|struct|@interface)\\s+${w}`,
         // `public static int name(…)` — a type before the name; a call has `return`/`new`/`=` or nothing there.
-        `^\\s*${modifiers('public|private|protected|internal|static|final|abstract|synchronized|native|default|override|virtual|async|sealed|partial')}(?!return\\b|new\\b|throw\\b|else\\b)[\\w<>\\[\\],.?]+(?:\\s*<[^>]*>)?\\s+${w}\\s*\\([^;]*$`,
+        `^\\s*${modifiers('public|private|protected|internal|static|final|abstract|synchronized|native|default|override|virtual|async|sealed|partial')}(?!return\\b|new\\b|throw\\b|else\\b)[\\p{L}\\p{N}_<>\\[\\],.?]+(?:\\s*<[^>]*>)?\\s+${w}\\s*\\([^;]*$`,
       ];
       break;
     case 'kotlin':
-      parts = [`\\bfun\\s+(?:<[^>]*>\\s*)?(?:[\\w.<>?, ]+\\.)?${w}`, `\\b(?:class|interface|object|typealias|val|var)\\s+${w}`];
+      parts = [`\\bfun\\s+(?:<[^>]*>\\s*)?(?:[\\p{L}\\p{N}_.<>?, ]+\\.)?${w}`, `\\b(?:class|interface|object|typealias|val|var)\\s+${w}`];
       break;
     case 'rust':
       parts = [`\\b(?:fn|struct|enum|trait|type|mod|const|static|union)\\s+${w}`, `\\bmacro_rules!\\s*${w}`, `\\blet\\s+(?:mut\\s+)?${w}`];
@@ -102,13 +111,13 @@ export function declarationPattern(word: string, path: string): RegExp {
         `\\b(?:struct|class|enum|union|typedef|namespace|protocol|func|let|var)\\s+${w}`,
         `#\\s*define\\s+${w}`,
         // `int name(…) {` or a prototype: a type (and maybe `*`) right before the name.
-        `^[\\w\\s*&:<>,]*[\\w*&>]\\s+\\**${w}\\s*\\([^;]*$`,
+        `^[\\p{L}\\p{N}_\\s*&:<>,]*[\\p{L}\\p{N}_*&>]\\s+\\**${w}\\s*\\([^;]*$`,
       ];
       break;
     default:
       parts = [`\\b(?:function|def|fn|func|fun|class|interface|struct|enum|trait|type|const|let|var|val)\\s+${w}`];
   }
-  return new RegExp(parts.map((p) => `(?:${p})`).join('|'));
+  return new RegExp(parts.map((p) => `(?:${p})`).join('|'), 'u');
 }
 
 /** Line breaks as LSP counts them, so positions match the editor's. */
@@ -134,13 +143,13 @@ function place(path: string, line: number, character: number, length: number, te
 export function findDeclarations(files: readonly TextFile[], word: string): LspLocation[] {
   if (!word) return [];
   const out: LspLocation[] = [];
-  const find = new RegExp(whole(word), 'g');
+  const find = new RegExp(whole(word), 'gu');
   for (const f of files) {
     const re = declarationPattern(word, f.path);
     const lines = linesOf(f.text);
     for (let i = 0; i < lines.length && out.length < MAX_HITS; i++) {
       const line = lines[i];
-      if (!line.includes(word)) continue;
+      if (line.length > MAX_DECLARATION_LINE || !line.includes(word)) continue;
       const m = re.exec(line);
       if (!m) continue;
       find.lastIndex = m.index;
@@ -155,7 +164,7 @@ export function findDeclarations(files: readonly TextFile[], word: string): LspL
 export function findWord(files: readonly TextFile[], word: string): LspLocation[] {
   if (!word) return [];
   const out: LspLocation[] = [];
-  const re = new RegExp(whole(word), 'g');
+  const re = new RegExp(whole(word), 'gu');
   for (const f of files) {
     const lines = linesOf(f.text);
     for (let i = 0; i < lines.length; i++) {

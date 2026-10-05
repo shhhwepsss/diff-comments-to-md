@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { declarationPattern, findDeclarations, findWord, languageOf, MAX_HITS, type TextFile } from './textSearch';
+import { declarationPattern, findDeclarations, findWord, languageOf, MAX_DECLARATION_LINE, MAX_HITS, type TextFile } from './textSearch';
 
 const at = (list: { path: string | null; line: number; character: number }[]) => list.map((l) => `${l.path}:${l.line}:${l.character}`);
 
@@ -144,5 +144,62 @@ describe('findWord', () => {
   it('stops at MAX_HITS', () => {
     const text = 'a '.repeat(MAX_HITS + 50);
     expect(findWord([{ path: 'x.ts', text }], 'a')).toHaveLength(MAX_HITS);
+  });
+});
+
+describe('Unicode names', () => {
+  it('a Cyrillic name is whole only between non-letters', () => {
+    expect(at(findWord([{ path: 'x.ts', text: 'моеимя имя имя2 _имя имя;' }], 'имя'))).toEqual(['x.ts:0:7', 'x.ts:0:21']);
+  });
+
+  it('declarations of Unicode names, also with Unicode types', () => {
+    const files: TextFile[] = [
+      { path: 'a.ts', text: 'const имя = 1;\nconst моеимя = 2;' },
+      { path: 'B.java', text: '  public Тип имя(int x) {' },
+    ];
+    expect(at(findDeclarations(files, 'имя'))).toEqual(['a.ts:0:6', 'B.java:0:13']);
+  });
+
+  it('a word with regex characters is taken literally', () => {
+    expect(at(findWord([{ path: 'x.js', text: '$a.b $a $ab a' }], '$a'))).toEqual(['x.js:0:0', 'x.js:0:5']);
+    expect(declarationPattern('$a', 'x.js').test('const $a = 1')).toBe(true);
+    expect(declarationPattern('$a', 'x.js').test('const xa = 1')).toBe(false);
+  });
+});
+
+describe('long lines', () => {
+  it('no catastrophic backtracking on a pathological line', () => {
+    // Each of these made a declaration pattern backtrack quadratically or worse.
+    const n = 20000;
+    const lines = [
+      `const { ${'a '.repeat(n)}`,
+      `${'const {a '.repeat(n / 10)}`,
+      `a${' '.repeat(n)}x`,
+      `  public ${'List<'.repeat(n / 5)} a`,
+      `int ${'a '.repeat(n)}`,
+      `fun ${'a.'.repeat(n)}`,
+    ];
+    for (const [path, line] of lines.flatMap((l) => ['x.ts', 'X.java', 'x.c', 'x.kt'].map((p) => [p, l] as const))) {
+      const started = performance.now();
+      // findDeclarations skips such lines; the pattern itself must stay fast on a capped one too.
+      findDeclarations([{ path, text: line }], 'a');
+      declarationPattern('a', path).test(line.slice(0, MAX_DECLARATION_LINE));
+      expect(performance.now() - started, `${path}: ${line.slice(0, 20)}`).toBeLessThan(250);
+    }
+  });
+
+  it('a declaration on an over-long line is not looked for, a use still is', () => {
+    const text = `const a = 1; ${'x'.repeat(MAX_DECLARATION_LINE)}`;
+    expect(findDeclarations([{ path: 'x.ts', text }], 'a')).toEqual([]);
+    expect(findWord([{ path: 'x.ts', text }], 'a')).toHaveLength(1);
+  });
+
+  it('300 files are searched quickly', () => {
+    const text = Array.from({ length: 400 }, (_, i) => `export function f${i}(a: number) {\n  return helper(a) + ${i};\n}`).join('\n');
+    const files: TextFile[] = Array.from({ length: 300 }, (_, i) => ({ path: `src/f${i}.ts`, text }));
+    const started = performance.now();
+    expect(findDeclarations(files, 'f399')).toHaveLength(300);
+    expect(findWord(files, 'helper')).toHaveLength(MAX_HITS);
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });

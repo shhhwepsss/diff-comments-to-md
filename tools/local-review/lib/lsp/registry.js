@@ -172,15 +172,24 @@ function bundledTsserver(command) {
 
 /**
  * initialize options that keep a server from running the repository's own
- * code: tsserver from the server's installation, not the workspace; no Gradle
- * import for jdtls (it executes build scripts). Undefined when none apply.
+ * code: tsserver from the server's installation, not the workspace; no
+ * Gradle or Maven import for jdtls (they execute build scripts and plugins);
+ * no build scripts, proc macros or `cargo check` for rust-analyzer; no
+ * toolchain download for gopls (go.mod's `toolchain` line would fetch and run
+ * another Go). Undefined when none apply. What is left is in the README.
  */
 function untrustedOptions(server, candidate, command) {
   if (server.id === 'typescript' && candidate.bin === 'typescript-language-server') {
     const tsserver = bundledTsserver(command);
     return tsserver ? { tsserver: { path: tsserver } } : undefined;
   }
-  if (server.id === 'java') return { settings: { java: { import: { gradle: { enabled: false } } } } };
+  if (server.id === 'java') {
+    return { settings: { java: { import: { gradle: { enabled: false, wrapper: { enabled: false } }, maven: { enabled: false } } } } };
+  }
+  if (server.id === 'rust') {
+    return { cargo: { buildScripts: { enable: false } }, procMacro: { enable: false }, checkOnSave: false };
+  }
+  if (server.id === 'go') return { env: { GOTOOLCHAIN: 'local' } };
   return undefined;
 }
 
@@ -232,4 +241,4 @@ function commandFor(server, root, options) {
   return null;
 }
 
-module.exports = { SERVERS, serverFor, serverById, languageIdFor, findExecutable, commandFor, rootHash, workspaceTsMajor, bundledTsserver };
+module.exports = { SERVERS, serverFor, serverById, languageIdFor, findExecutable, commandFor, rootHash, workspaceTsMajor, bundledTsserver, untrustedOptions };

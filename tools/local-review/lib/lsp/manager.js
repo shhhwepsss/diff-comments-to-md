@@ -462,9 +462,17 @@ class LspManager {
 
   /** Every server of a folder goes: its clone was unbound, or its trust changed. */
   async stopRoot(root) {
-    const resolved = path.resolve(root);
-    await Promise.all([...this.servers.values()].filter((s) => path.resolve(s.root) === resolved).map((s) => s.stop()));
-    for (const key of [...this.failures.keys()]) if (path.resolve(key.split('\u0000')[0]) === resolved) this.failures.delete(key);
+    // By real path: the binding and git's top level may spell one folder differently.
+    const real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const resolved = real(root);
+    await Promise.all([...this.servers.values()].filter((s) => real(s.root) === resolved).map((s) => s.stop()));
+    for (const key of [...this.failures.keys()]) if (real(key.split('\u0000')[0]) === resolved) this.failures.delete(key);
   }
 
   forget(server) {

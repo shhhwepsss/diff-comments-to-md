@@ -715,6 +715,29 @@ async function prCloneChecks(call, home) {
   ok(prClone.remoteMatches('https://github.com/ACME/web.git', pr), 'remote того же репозитория — без учёта регистра');
   ok(!prClone.remoteMatches('https://github.com/acme/web-fork.git', pr), 'другой репозиторий — не совпадает');
   ok(!prClone.remoteMatches('https://gitlab.com/acme/web.git', pr), 'другой хост — не совпадает');
+  eq(prClone.parseRemote('github.com:acme/web.git'), { host: 'github.com', owner: 'acme', repo: 'web' }, 'remote: scp-вид без пользователя');
+  eq(prClone.parseRemote('https://github.com/evil/acme/web.git'), null, 'remote: лишний сегмент пути — не owner/repo');
+  eq(prClone.parseRemote('C:\\src\\web'), null, 'remote: путь Windows — не адрес');
+  ok(prClone.remoteMatches('ssh://git@ghe.corp/acme/web.git', { host: 'ghe.corp:8443', owner: 'acme', repo: 'web' }),
+    'enterprise-хост с портом в PR совпадает с remote без порта');
+  for (const [field, value] of [['owner', '-x'], ['owner', '--upstream-remote-name=x'], ['repo', '..'], ['repo', 'a/b'], ['host', '-h'], ['host', 'evil.com/x']]) {
+    let refused = null;
+    try {
+      prClone.checkedRepo(Object.assign({}, pr, { [field]: value }));
+    } catch (e) {
+      refused = e.status;
+    }
+    eq(refused, 400, `PR с ${field}=${value} не доходит до gh`);
+  }
+  {
+    const { untrustedOptions, serverById } = require('./lib/lsp/registry');
+    const rust = untrustedOptions(serverById('rust'), { bin: 'rust-analyzer' }, '/x');
+    ok(rust.cargo.buildScripts.enable === false && rust.procMacro.enable === false && rust.checkOnSave === false,
+      'недоверенный rust-analyzer: без build.rs, proc-макросов и cargo check');
+    eq(untrustedOptions(serverById('go'), { bin: 'gopls' }, '/x'), { env: { GOTOOLCHAIN: 'local' } }, 'недоверенный gopls: GOTOOLCHAIN=local');
+    const java = untrustedOptions(serverById('java'), { bin: 'jdtls' }, '/x').settings.java.import;
+    ok(java.gradle.enabled === false && java.maven.enabled === false, 'недоверенный jdtls: без импорта Gradle и Maven');
+  }
 
   // The repository the fake gh «clones»: main and the PR's branch.
   const origin = tmp('pr-origin');
@@ -736,9 +759,12 @@ async function prCloneChecks(call, home) {
 
   const projects = tmp('pr-projects');
   const cloneDir = path.join(projects, 'web');
+  const failDir = path.join(projects, 'fails');
   const checkout = { code: 0, stdout: '', exec: [['git', 'checkout', '-q', '-B', 'pr-7', headSha]] };
   const cloneEntry = (dir) => ({
     code: 0,
+    // Long enough for a second POST to find the job still running.
+    delayMs: 300,
     stderr: "Cloning into 'web'...\n",
     exec: [
       ['git', 'clone', '-q', origin, dir],
@@ -769,7 +795,11 @@ async function prCloneChecks(call, home) {
         ].join('\n'),
       },
       [`repo clone acme/web ${cloneDir}`]: cloneEntry(cloneDir),
-      'pr checkout 7': checkout,
+      'pr checkout 7 --repo acme/web': checkout,
+      [`repo clone acme/web ${failDir}`]: {
+        code: 128,
+        stderr: `Cloning into '${failDir}'...\nremote: Enumerating objects\nfatal: could not create work tree dir '${failDir}': Permission denied\nexit status 128\n`,
+      },
     },
     home
   );
@@ -787,7 +817,10 @@ async function prCloneChecks(call, home) {
   ok(notEmpty.status === 400 && /не пуста/.test(notEmpty.body.error), 'клонировать в непустую папку -> 400', JSON.stringify(notEmpty.body));
   const started = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: cloneDir }));
   ok(started.status === 202 && started.body.job && started.body.job.status === 'running', 'POST clone -> 202 и задача', JSON.stringify(started.body));
-  eq(started.body.job && started.body.job.steps, [`gh repo clone acme/web ${cloneDir}`, 'gh pr checkout 7'], 'задача: шаги — команды gh');
+  eq(started.body.job && started.body.job.steps, [`gh repo clone acme/web ${cloneDir}`, 'gh pr checkout 7 --repo acme/web'],
+    'задача: шаги — команды gh, checkout привязан к репозиторию PR-а');
+  const second = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: path.join(projects, 'other') }));
+  eq(second.status, 409, 'второй клон того же репозитория, пока идёт первый -> 409');
   const finished = await jobEnd(call, started.body.job);
   eq(finished && finished.status, 'done', 'клонирование завершено', JSON.stringify(finished));
   ok(fs.existsSync(path.join(cloneDir, '.git')), 'клон на диске');
@@ -797,6 +830,7 @@ async function prCloneChecks(call, home) {
   const stored = JSON.parse(fs.readFileSync(path.join(home, 'pr-clones.json'), 'utf8'));
   eq(stored.clones['github.com/acme/web'] && stored.clones['github.com/acme/web'].path, cloneDir, 'привязка запомнена в ~/.local-review/pr-clones.json');
   eq((await call(`/api/pr/clone/job?id=nope`)).status, 404, 'неизвестная задача -> 404');
+  eq((await call(`/api/pr/clone?source=pr&owner=-x&repo=web&number=7`)).status, 400, 'owner с «-» -> 400');
 
   console.log('\nPR: LSP по клону и доверие');
   const pathBin = tmp('pr-pathbin');
@@ -878,6 +912,31 @@ async function prCloneChecks(call, home) {
     'свой клон того же репозитория принят; не на head — не переключён молча', JSON.stringify(linked.body));
   eq(git(['rev-parse', '--abbrev-ref', 'HEAD'], mine).trim(), 'main', 'свой клон остался на своей ветке');
 
+  console.log('\nPR: привязка по настоящему пути');
+  const alias = path.join(tmp('pr-alias'), 'link-to-mine');
+  fs.symlinkSync(mine, alias);
+  await call(`/api/pr/clone?${prq}`, json('POST', { action: 'trust', trusted: true }));
+  const viaAlias = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: alias }));
+  ok(viaAlias.status === 200 && viaAlias.body.path === mine && viaAlias.body.trusted === true,
+    'та же папка через символическую ссылку: путь настоящий, доверие сохранено', JSON.stringify(viaAlias.body));
+  await call(`/api/pr/clone?${prq}`, json('POST', { action: 'trust', trusted: false }));
+
+  console.log('\nPR: испорченный pr-clones.json');
+  const clonesFile = path.join(home, 'pr-clones.json');
+  fs.writeFileSync(clonesFile, '{"clones": {', 'utf8');
+  eq((await call(`/api/pr/clone?${prq}`)).body.bound, false, 'испорченный файл: клона нет, ошибки нет');
+  eq((await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: mine }))).status, 200, 'привязка поверх испорченного файла');
+  eq(fs.readFileSync(`${clonesFile}.corrupt`, 'utf8'), '{"clones": {', 'испорченный файл сохранён рядом как .corrupt');
+  ok(JSON.parse(fs.readFileSync(clonesFile, 'utf8')).clones['github.com/acme/web'].path === mine, 'новая привязка записана');
+  ok(!fs.readdirSync(home).some((n) => n.includes('.tmp-')), 'временных файлов записи не осталось');
+
+  console.log('\nPR: неудачный клон');
+  const failed = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: failDir }));
+  const failedEnd = await jobEnd(call, failed.body.job);
+  ok(failedEnd && failedEnd.status === 'failed' && /^fatal: could not create work tree dir/.test(failedEnd.error) && failedEnd.step === 0,
+    'ошибка задачи — строка fatal: из вывода git, а не «Cloning into…»', JSON.stringify(failedEnd));
+  eq((await call(`/api/pr/clone?${prq}`)).body.path, mine, 'неудачный клон не меняет привязку');
+
   console.log('\nPR: отвязать клон');
   const unlinked = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'unlink' }));
   eq(unlinked.body.bound, false, 'POST unlink -> клона нет');
@@ -894,6 +953,10 @@ async function prCloneChecks(call, home) {
     'комментарий к файлу вне диффа принят');
   eq((await call(`/api/comments?${lq}`, json('POST', { file: 'README.md', startLine: null, endLine: null, text: 'к файлу целиком' }))).status, 201,
     'комментарий ко всему файлу вне диффа принят');
+  for (const bad of ['../outside.ts', '/etc/passwd', '.git/config', 'src/.GIT/hooks/x', 'src/./b.ts', 'src//b.ts', 'C:\\x.ts', 'a\u0000b']) {
+    eq((await call(`/api/comments?${lq}`, json('POST', { file: bad, startLine: 1, endLine: 1, text: 'нельзя' }))).status, 400,
+      `комментарий к пути ${JSON.stringify(bad)} -> 400`);
+  }
   const localState2 = await call(`/api/state?${lq}`);
   eq(localState2.body.orphanFiles.map((f) => f.path).sort(), ['README.md', 'src/b.ts'], 'файлы с комментариями — в «Вне диффа» после перезагрузки');
   const localExport = await call(`/api/export/text?${lq}`);

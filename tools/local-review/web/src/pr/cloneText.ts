@@ -16,7 +16,12 @@ function shellPath(dir: string): string {
 /** What «Клонировать» runs, to show before it does (the server runs the same, without a shell). */
 export function cloneCommands(d: PrDescriptor, dir: string): string {
   const at = shellPath(dir.trim());
-  return `gh repo clone ${repoArg(d)} ${at}\ncd ${at} && gh pr checkout ${d.number}`;
+  return `gh repo clone ${repoArg(d)} ${at}\ncd ${at} && ${checkoutCommand(d)}`;
+}
+
+/** The PR's checkout, pinned to its repository (a fork's clone has another default). */
+export function checkoutCommand(d: PrDescriptor): string {
+  return `gh pr checkout ${d.number} --repo ${repoArg(d)}`;
 }
 
 /** What «Использовать» checks of a folder; nothing in it is changed. */

@@ -70,7 +70,8 @@ function configure(patch) {
 
 /**
  * One run of gh, nothing more: no retry, no sharing. `options.cwd` is for the
- * few commands that act on a folder (`gh pr checkout` in a clone).
+ * few commands that act on a folder (`gh pr checkout` in a clone), `options.env`
+ * adds variables (GIT_TERMINAL_PROMPT=0 for them).
  */
 function ghRaw(args, options) {
   const { bin, prefixArgs } = ghBin();
@@ -80,7 +81,7 @@ function ghRaw(args, options) {
       cwd: (options && options.cwd) || undefined,
       windowsHide: true,
       shell: false,
-      env: Object.assign({}, process.env, {
+      env: Object.assign({}, process.env, (options && options.env) || {}, {
         GH_PAGER: 'cat',
         GH_PROMPT_DISABLED: '1',
         NO_COLOR: '1',

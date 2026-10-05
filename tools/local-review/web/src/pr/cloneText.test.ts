@@ -11,7 +11,7 @@ describe('cloneText', () => {
   });
 
   it('shows the commands the server runs', () => {
-    expect(cloneCommands(pr, '~/projects/web')).toBe('gh repo clone acme/web ~/projects/web\ncd ~/projects/web && gh pr checkout 128');
+    expect(cloneCommands(pr, '~/projects/web')).toBe('gh repo clone acme/web ~/projects/web\ncd ~/projects/web && gh pr checkout 128 --repo acme/web');
     expect(cloneCommands(pr, "/tmp/my web's")).toContain(`'/tmp/my web'\\''s'`);
     expect(cloneCommands(pr, '  ')).toContain('gh repo clone acme/web …');
     expect(linkCommands(pr, '/src/web')).toContain('git -C /src/web remote -v');
