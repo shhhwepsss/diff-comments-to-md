@@ -491,9 +491,9 @@ export const FileDiff = memo(function FileDiff({
               <span className="rv-file-header__arrow">→</span>
             </>
           ) : null}
-          <span>
+          <span className="rv-file-header__name">
             {dir && <span className="rv-file-header__dir">{dir}</span>}
-            {base}
+            <span className="rv-file-header__base">{base}</span>
           </span>
         </div>
         {navFile && diff?.fullFile && (

@@ -112,6 +112,12 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
 }
 
+.rv-tree-dir {
+  margin-left: var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
 .rv-tree-trailing {
   display: inline-flex;
   align-items: center;
@@ -291,18 +297,37 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
 }
 
+/* The path gives way first: with a side panel open and a word's occurrences
+   counted, the header would otherwise wrap and push the code down on every
+   click. Its basis is small so the row wraps only when the name alone no
+   longer fits; it grows back to its own width and no further (the spacer
+   takes the rest). The folder is what gets cut — the name always shows. */
 .rv-file-header__path {
   display: flex;
   align-items: baseline;
   gap: var(--base-size-8);
+  flex: 1 1 8rem;
+  max-width: max-content;
   min-width: 0;
   font-family: var(--fontStack-monospace);
   font-size: var(--text-body-size-small);
   font-weight: var(--base-text-weight-semibold, 600);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+
+.rv-file-header__name {
+  display: flex;
+  min-width: 0;
+}
+
+.rv-file-header__base {
+  flex: none;
 }
 
 .rv-file-header__old {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--fgColor-muted);
   font-weight: normal;
 }
@@ -323,6 +348,9 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
 }
 
 .rv-file-header__dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--fgColor-muted);
   font-weight: normal;
 }

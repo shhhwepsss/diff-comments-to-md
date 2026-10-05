@@ -213,6 +213,8 @@ function onEscape(e: KeyboardEvent) {
   // A drag over line numbers is in progress: this Esc cancels the drag
   // (DiffEditor), the highlight stays.
   if (document.body.classList.contains('rv-dragging-lines')) return;
+  // The right-click menu is open: this Esc closes it (cm/lsp.ts), the highlight stays.
+  if (document.querySelector('.rv-lsp-menu')) return;
   // Before Zen's own Escape (App.tsx), which skips a handled event.
   e.preventDefault();
   activeHub.clear();

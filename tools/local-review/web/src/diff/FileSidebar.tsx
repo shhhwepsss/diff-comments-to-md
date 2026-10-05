@@ -183,6 +183,18 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       </TreeView.Item>
     );
 
+  // A file listed outside the tree: the name first, its folder after it, so
+  // the row's truncation cuts the folder and never the name.
+  const flatName = (path: string) => {
+    const cut = path.lastIndexOf('/') + 1;
+    return (
+      <>
+        {path.slice(cut)}
+        {cut > 0 && <span className="rv-tree-dir">{path.slice(0, cut - 1)}</span>}
+      </>
+    );
+  };
+
   const renderOrphan = (f: OrphanFile, idPrefix = 'orphan') => (
     <TreeView.Item
       as="a"
@@ -197,7 +209,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       <TreeView.LeadingVisual>
         <QuestionIcon className="rv-status" />
       </TreeView.LeadingVisual>
-      {f.path}
+      {flatName(f.path)}
       {trailing(f.path)}
     </TreeView.Item>
   );
@@ -227,7 +239,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       <TreeView.LeadingVisual>
         <FileCodeIcon className="rv-status" />
       </TreeView.LeadingVisual>
-      {path}
+      {flatName(path)}
       {trailing(path)}
     </TreeView.Item>
   );

@@ -122,6 +122,11 @@ export function FileFeed({
   const [choices, setChoices] = useState<Record<string, CollapseChoice>>({});
   const quietUntil = useRef(0);
   const pin = useRef<{ path: string; until: number; giveUp: number } | null>(null);
+  // The file a jump to a line landed in. The line is centred, so near the top
+  // of its file the file above is what the reading line falls in — and the
+  // current file (and with it the address) must stay the one jumped to. Held
+  // until the reviewer scrolls.
+  const landed = useRef<string | null>(null);
   // Asks the scroll-spy to look again; set by its effect below.
   const remeasure = useRef<() => void>(() => undefined);
   const activeRef = useRef(activeFile);
@@ -167,6 +172,7 @@ export function FileFeed({
     }
     if (!fileFocus || fileFocus.nonce === focusedNonce.current) return;
     focusedNonce.current = fileFocus.nonce;
+    landed.current = null;
     focus(fileFocus.path);
     // A file the feed does not show (hidden by the search or a rule) cannot be
     // the current one: hand that back to whatever is at the top.
@@ -228,6 +234,11 @@ export function FileFeed({
       // While a requested file is being held at the top, that file is the current one.
       if (pin.current && performance.now() > pin.current.until) pin.current = null;
       if (pin.current || performance.now() < quietUntil.current) return;
+      if (landed.current !== null && !filesRef.current.some((f) => f.path === landed.current)) landed.current = null;
+      if (landed.current !== null) {
+        if (landed.current !== activeRef.current) onCurrentFile(landed.current);
+        return;
+      }
       const nodes = items();
       const top = box.getBoundingClientRect().top;
       const index = currentIndexAt(
@@ -276,6 +287,7 @@ export function FileFeed({
     resized.observe(el);
     const release = () => {
       pin.current = null;
+      landed.current = null;
     };
     box.addEventListener('wheel', release, { passive: true });
     box.addEventListener('touchstart', release, { passive: true });
@@ -320,6 +332,7 @@ export function FileFeed({
       if (!file) return false;
       open(path);
       pin.current = null;
+      landed.current = null;
       if (diffs.get(path)?.kind === 'ready') return true;
       if (file.orphan) diffs.setOrphan(path);
       else void diffs.ensure(path);
@@ -342,7 +355,9 @@ export function FileFeed({
 
   useEffect(() => {
     if (!lineReveal) return;
-    if (!prepare(lineReveal.path)) {
+    if (prepare(lineReveal.path)) {
+      landed.current = lineReveal.path;
+    } else {
       onLineRevealed(lineReveal.nonce);
       toast('Файл скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
     }

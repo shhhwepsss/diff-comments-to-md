@@ -60,21 +60,17 @@
 }
 
 /* Горячие клавиши: одна строка на действие. */
+/* One grid for all the rows, so the shortcuts stand in a column whatever the
+   length of the labels. */
 .rv-keybindings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--base-size-8);
+  display: grid;
+  grid-template-columns: minmax(0, max-content) max-content max-content;
+  align-items: center;
+  gap: var(--base-size-8) var(--base-size-12);
 }
 
 .rv-keybinding {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--base-size-12);
-}
-
-.rv-keybinding__label {
-  min-width: 240px;
+  display: contents;
 }
 
 .rv-keybinding__value {

@@ -14,14 +14,14 @@ export const PANEL_FILTERS: { value: PanelFilter; label: string }[] = [
   { value: 'all', label: 'Все' },
   { value: 'file', label: 'В файлах' },
   { value: 'general', label: 'Общие' },
-  { value: 'orphan', label: 'Нет в диффе' },
+  { value: 'orphan', label: 'Вне диффа' },
   { value: 'stale', label: 'Старые' },
 ];
 
 export const GROUP_LABEL: Record<PanelKind, string> = {
   general: 'Общие',
   file: 'В файлах',
-  orphan: 'Нет в диффе',
+  orphan: 'Вне диффа',
   stale: 'Старые',
 };
 
