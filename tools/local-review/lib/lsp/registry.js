@@ -155,19 +155,33 @@ function bundledTsserver(command) {
     return null;
   }
   for (let i = 0; i < 6; i += 1) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
-      if (pkg && pkg.name === 'typescript-language-server') {
-        return require.resolve('typescript/lib/tsserver.js', { paths: [dir] });
+    // The launcher is inside the package (a symlink into it, on Unix) or next
+    // to the node_modules that holds it (npm's .cmd shim on Windows).
+    for (const pkgDir of [dir, path.join(dir, 'node_modules', 'typescript-language-server')]) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+        if (pkg && pkg.name === 'typescript-language-server') {
+          return require.resolve('typescript/lib/tsserver.js', { paths: [pkgDir] });
+        }
+      } catch {
+        /* not this folder: the next one, then one up */
       }
-    } catch {
-      /* not this folder: one up */
     }
     const up = path.dirname(dir);
     if (up === dir) break;
     dir = up;
   }
   return null;
+}
+
+/** Whether `file` is `root` or inside it, symbolic links resolved; false when either cannot be read. */
+function within(root, file) {
+  try {
+    const rel = path.relative(fs.realpathSync(root), fs.realpathSync(file));
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -222,7 +236,28 @@ function workspaceTsMajor(root) {
  * tool's home (never inside the repository, which must stay untouched).
  */
 function commandFor(server, root, options) {
+  return resolveCommand(server, root, options).spec;
+}
+
+/**
+ * The server on PATH that an untrusted clone was refused, or null:
+ * { command, why: 'in-clone' | 'no-typescript' }. Only asked when
+ * commandFor() found nothing for that clone.
+ */
+function refusedFor(server, root, options) {
+  return resolveCommand(server, root, options).refused;
+}
+
+/**
+ * For an untrusted clone a command is refused rather than run unrestricted:
+ * one PATH leads into the clone itself for, and a typescript-language-server
+ * with no TypeScript of its own (it would load the clone's tsserver.js — see
+ * bundledTsserver). The next command is tried; with none left the language has
+ * no server, and `refused` says which one was turned down and why.
+ */
+function resolveCommand(server, root, options) {
   const { homeDir, env = process.env, platform = process.platform, repoBin = true } = options || {};
+  let refused = null;
   // Untrusted: the repository's own programs are not looked at — not even to
   // read which TypeScript it pins (that is a file of the repository, too, but
   // reading it runs nothing; the command it would pick does).
@@ -232,13 +267,40 @@ function commandFor(server, root, options) {
     if (candidate.applies && !candidate.applies(root)) continue;
     const found = findExecutable(candidate.bin, { root: binRoot, env: candidate.repoOnly ? { PATHEXT: env.PATHEXT } : env, platform });
     if (!found) continue;
+    let initializationOptions;
+    if (!repoBin) {
+      if (root && within(root, found.command)) {
+        refused = refused || { command: found.command, why: 'in-clone' };
+        continue;
+      }
+      initializationOptions = untrustedOptions(server, candidate, found.command);
+      if (server.id === 'typescript' && candidate.bin === 'typescript-language-server') {
+        const tsserver = initializationOptions && initializationOptions.tsserver.path;
+        if (!tsserver || (root && within(root, tsserver))) {
+          refused = refused || { command: found.command, why: 'no-typescript' };
+          continue;
+        }
+      }
+    }
     const args = candidate.args.slice();
     if (server.id === 'java') args.push('-data', path.join(homeDir, 'jdtls', rootHash(root)));
     const spec = { command: found.command, args, source: found.source, label: candidate.label };
-    if (!repoBin) spec.initializationOptions = untrustedOptions(server, candidate, found.command);
-    return spec;
+    if (!repoBin) spec.initializationOptions = initializationOptions;
+    return { spec, refused: null };
   }
-  return null;
+  return { spec: null, refused };
 }
 
-module.exports = { SERVERS, serverFor, serverById, languageIdFor, findExecutable, commandFor, rootHash, workspaceTsMajor, bundledTsserver, untrustedOptions };
+module.exports = {
+  SERVERS,
+  serverFor,
+  serverById,
+  languageIdFor,
+  findExecutable,
+  commandFor,
+  refusedFor,
+  rootHash,
+  workspaceTsMajor,
+  bundledTsserver,
+  untrustedOptions,
+};

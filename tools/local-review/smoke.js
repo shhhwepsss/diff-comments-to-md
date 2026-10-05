@@ -468,6 +468,38 @@ async function lspChecks(call, home) {
     const classic = registry.commandFor(tsServer, ts7, { homeDir: home, env: { PATH: '' } });
     eq(classic && [path.basename(classic.command).replace(/\.cmd$/i, ''), classic.args, classic.label],
       ['typescript-language-server', ['--stdio'], 'tsserver'], 'TypeScript 5 -> typescript-language-server --stdio');
+    // An untrusted clone (`repoBin: false`): a typescript-language-server on
+    // PATH runs only with a TypeScript of its own — otherwise it would load
+    // the clone's node_modules/typescript — and never from inside the clone.
+    const untrustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-untrusted-'));
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-bare-'));
+    installFakeLsp(bare, 'typescript-language-server');
+    const bareEnv = { PATH: path.join(bare, 'node_modules', '.bin') };
+    const open = registry.commandFor(tsServer, untrustedRoot, { homeDir: home, env: bareEnv });
+    ok(open && open.source === 'PATH' && open.initializationOptions === undefined, 'свой репозиторий: сервер из PATH без ограничений', JSON.stringify(open));
+    eq(registry.commandFor(tsServer, untrustedRoot, { homeDir: home, env: bareEnv, repoBin: false }), null,
+      'недоверенный клон: typescript-language-server без своего TypeScript не запускается');
+    const refusedTs = registry.refusedFor(tsServer, untrustedRoot, { homeDir: home, env: bareEnv, repoBin: false });
+    eq(refusedTs && [refusedTs.why, refusedTs.command === open.command], ['no-typescript', true], 'отказ назван: у сервера нет своего TypeScript');
+    eq(registry.refusedFor(tsServer, untrustedRoot, { homeDir: home, env: bareEnv }), null, 'для своего репозитория отказов нет');
+    // npm's global layout on Windows: the launcher beside node_modules, the package inside it.
+    const installed = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-installed-'));
+    installFakeLsp(installed, 'typescript-language-server');
+    const shimDir = path.join(installed, 'node_modules', '.bin');
+    write(shimDir, 'node_modules/typescript-language-server/package.json', JSON.stringify({ name: 'typescript-language-server' }));
+    write(shimDir, 'node_modules/typescript/lib/tsserver.js', '');
+    const guarded = registry.commandFor(tsServer, untrustedRoot, { homeDir: home, env: { PATH: shimDir }, repoBin: false });
+    eq(
+      guarded && guarded.initializationOptions && fs.realpathSync(guarded.initializationOptions.tsserver.path),
+      fs.realpathSync(path.join(shimDir, 'node_modules', 'typescript', 'lib', 'tsserver.js')),
+      'недоверенный клон: сервер с TypeScript рядом с launcher-ом получает свой tsserver.path'
+    );
+    // PATH that leads into the clone is the clone's program all the same.
+    installFakeLsp(untrustedRoot, 'gopls');
+    const inClone = { homeDir: home, env: { PATH: path.join(untrustedRoot, 'node_modules', '.bin') }, repoBin: false };
+    eq(registry.commandFor(registry.serverById('go'), untrustedRoot, inClone), null, 'недоверенный клон: сервер из PATH внутри клона не запускается');
+    eq((registry.refusedFor(registry.serverById('go'), untrustedRoot, inClone) || {}).why, 'in-clone', 'отказ назван: сервер лежит в клоне');
+    for (const dir of [untrustedRoot, bare, installed]) fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(ts7, { recursive: true, force: true });
     fs.rmSync(binDir, { recursive: true, force: true });
   }
@@ -837,6 +869,10 @@ async function prCloneChecks(call, home) {
   const pathLog = path.join(pathBin, 'path.log');
   const repoLog = path.join(pathBin, 'repo.log');
   installLoggingLsp(pathBin, 'typescript-language-server', pathLog);
+  // An installation with its own TypeScript: without one the server is not
+  // started for an untrusted clone at all (registry.resolveCommand).
+  write(pathBin, 'node_modules/typescript-language-server/package.json', JSON.stringify({ name: 'typescript-language-server' }));
+  write(pathBin, 'node_modules/typescript/lib/tsserver.js', '');
   installLoggingLsp(path.join(cloneDir, 'node_modules', '.bin'), 'typescript-language-server', repoLog);
   const savedPath = process.env.PATH;
   process.env.PATH = `${pathBin}${path.delimiter}${savedPath}`;

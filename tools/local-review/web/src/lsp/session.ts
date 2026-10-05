@@ -70,6 +70,17 @@ export function indicatorFor(status: LspStatusResponse | null, path: string): Ls
       title: `${server.name}: сервер есть только в node_modules/.bin клона (${server.untrusted.command}), а запускать программы чужого репозитория не разрешено. Включите «Доверять этому репозиторию» над диффом или поставьте сервер глобально: ${server.hint}`,
     };
   }
+  if (!server.found && server.refused) {
+    const why =
+      server.refused.why === 'in-clone'
+        ? 'лежит внутри клона, а запускать программы чужого репозитория не разрешено'
+        : 'не запущен: своего TypeScript рядом с ним нет, и он загрузил бы node_modules/typescript клона';
+    return {
+      tone: 'off',
+      text: 'LSP не доверен',
+      title: `${server.name}: сервер из PATH (${server.refused.command}) ${why}. Поставьте TypeScript рядом с сервером (npm i -g typescript typescript-language-server) или включите «Доверять этому репозиторию» над диффом.`,
+    };
+  }
   if (!server.found) {
     return { tone: 'off', text: 'LSP не найден', title: `${server.name}: language server не установлен. Установите: ${server.hint}` };
   }

@@ -67,6 +67,14 @@ describe('indicatorFor', () => {
     expect(ind).toMatchObject({ tone: 'off', text: 'LSP не доверен' });
     expect(ind?.title).toContain('Доверять этому репозиторию');
   });
+
+  it('says why a server on PATH was not started for an untrusted clone', () => {
+    const refused = { ...ts, found: null, refused: { command: '/usr/bin/typescript-language-server', why: 'no-typescript' as const } };
+    const ind = indicatorFor(status([refused]), 'a.ts');
+    expect(ind).toMatchObject({ tone: 'off', text: 'LSP не доверен' });
+    expect(ind?.title).toContain('/usr/bin/typescript-language-server');
+    expect(ind?.title).toContain('node_modules/typescript клона');
+  });
 });
 
 describe('failureText', () => {

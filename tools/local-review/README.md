@@ -437,7 +437,10 @@ review                 # или: review --staged / review --base origin/main
   строке, файлов вне диффа нет; читаются только первые 300 файлов диффа.
 - **Недоверенный клон**: typescript-language-server из `PATH` получает
   `tsserver.path` своей установки (иначе он сам загрузил бы
-  `node_modules/typescript` клона); jdtls — без импорта Gradle и Maven (они
+  `node_modules/typescript` клона); если своего TypeScript у него нет
+  (поставлен без `typescript` рядом) или сервер из `PATH` лежит внутри самого
+  клона, он не запускается вовсе — индикатор «LSP не доверен», в подсказке
+  причина; jdtls — без импорта Gradle и Maven (они
   исполняют скрипты сборки и плагины; навигация по библиотекам тогда беднее);
   rust-analyzer — без build-скриптов (`build.rs`), proc-макросов и `cargo
   check`; gopls — с `GOTOOLCHAIN=local` (строка `toolchain` в `go.mod` не

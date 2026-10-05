@@ -5,7 +5,17 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { Connection } = require('./jsonrpc');
-const { SERVERS, commandFor } = require('./registry');
+const { SERVERS, commandFor, refusedFor } = require('./registry');
+
+const REFUSED_HINT =
+  'поставьте TypeScript рядом с сервером (npm i -g typescript typescript-language-server) или включите «Доверять этому репозиторию» в плашке клона';
+
+/** Why a server on PATH was not started for an untrusted clone (registry.refusedFor). */
+function refusedMessage(refused) {
+  return refused.why === 'in-clone'
+    ? `LSP из PATH лежит внутри клона (${refused.command}), а репозиторию не доверено запускать свои программы`
+    : `typescript-language-server из PATH (${refused.command}) не запущен: своего TypeScript у него нет, и он загрузил бы node_modules/typescript клона, которому не доверено`;
+}
 
 // Language server processes: one per repository × server kind, started on the
 // first request that needs it and stopped after a stretch of disuse. All a
@@ -428,6 +438,8 @@ class LspManager {
 
     const spec = commandFor(def, root, { homeDir: this.options.homeDir, repoBin });
     if (!spec) {
+      const refused = refusedFor(def, root, { homeDir: this.options.homeDir, repoBin });
+      if (refused) throw new LspError('no-server', refusedMessage(refused), { hint: REFUSED_HINT });
       const blocked = !repoBin && commandFor(def, root, { homeDir: this.options.homeDir });
       throw new LspError(
         'no-server',
@@ -518,6 +530,8 @@ class LspManager {
         extensions: Object.keys(def.languageIds),
         found: spec ? { command: spec.command, source: spec.source } : null,
         untrusted: own && own.source === 'node_modules' ? { command: own.command } : null,
+        // A server on PATH that was not started for an untrusted clone, and why.
+        refused: spec ? null : refusedFor(def, root || null, { homeDir: this.options.homeDir, repoBin }),
         hint: def.hint,
         state: server ? server.publicState() : failure ? 'failed' : 'stopped',
         message: server ? server.message : failure ? failure.message : null,

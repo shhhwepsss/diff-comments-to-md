@@ -129,6 +129,8 @@ export type LspServerStatus = {
   found: { command: string; source: 'node_modules' | 'PATH' } | null;
   /** A PR's clone that is not trusted has this server in its node_modules/.bin, unused. */
   untrusted?: { command: string } | null;
+  /** A server on PATH not started for an untrusted clone: it is inside the clone, or would load the clone's TypeScript. */
+  refused?: { command: string; why: 'in-clone' | 'no-typescript' } | null;
   /** What to install when it is not found. */
   hint: string;
   state: LspState;
