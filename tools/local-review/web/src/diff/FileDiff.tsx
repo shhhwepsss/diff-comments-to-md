@@ -185,6 +185,9 @@ export function Empty({ icon: Icon, title, children }: { icon: typeof FileIcon; 
 /** Why a ready diff can't be shown line by line, or null when it can. */
 function unavailableReason(diff: DiffResponse): { icon: typeof FileIcon; title: string; text: string } | null {
   if (diff.fullFile) {
+    if (diff.missing) {
+      return { icon: QuestionIcon, title: 'Файла нет в текущем диффе', text: 'И на диске его нет. Комментарии к нему сохранены и попадут в экспорт.' };
+    }
     if (diff.binary) return { icon: FileBinaryIcon, title: 'Бинарный файл', text: 'Файл вне диффа, показать его текст нельзя.' };
     if (diff.newText == null) return { icon: AlertIcon, title: 'Текст файла недоступен', text: diff.textUnavailable || 'Сервер не вернул текст файла.' };
     return null;
@@ -278,7 +281,11 @@ export type FileDiffProps = {
   placeholderHeight?: number;
   /** Given in the feed, where a failed diff is not reloaded by reopening the file. */
   onRetry?: (path: string) => void;
-  /** A file outside the diff that code navigation opened: shown whole, read-only. */
+  /**
+   * A file outside the diff: opened by code navigation, or left with comments.
+   * When its text can be read (a folder, a PR's clone) it is shown whole, and
+   * commented on like any other.
+   */
   navFile?: boolean;
   /** A pending «scroll to this line» for this file (a jump, Back/Forward). */
   lineReveal?: { line: number; ch?: number; nonce: number } | null;
@@ -436,6 +443,7 @@ export const FileDiff = memo(function FileDiff({
   lsp.session = nav?.session ?? null;
   lsp.sendText = Boolean(nav?.sendText) && !navFile;
   lsp.keys = nav?.keys ?? null;
+  lsp.text = nav?.text ?? null;
   lsp.toast = toast;
   lsp.onNavigate = (loc, fromLine) => {
     if (loc.path) actions.navigateTo({ path: loc.path, line: loc.line, character: loc.character }, { path, line: fromLine });
@@ -488,9 +496,9 @@ export const FileDiff = memo(function FileDiff({
             {base}
           </span>
         </div>
-        {navFile && (
-          <span className="rv-nav-badge" title="Файл открыт переходом по коду и не входит в дифф">
-            вне диффа · только чтение
+        {navFile && diff?.fullFile && (
+          <span className="rv-nav-badge" title="Файл не входит в дифф: открыт переходом по коду или в нём есть комментарии">
+            вне диффа
           </span>
         )}
         {stat && !navFile && (
@@ -548,14 +556,12 @@ export const FileDiff = memo(function FileDiff({
           </ActionMenu.Anchor>
           <ActionMenu.Overlay width="small" align="end">
             <ActionList>
-              {!navFile && (
-                <ActionList.Item onSelect={() => actions.openEditor({ file: path, start: null, end: null })}>
-                  <ActionList.LeadingVisual>
-                    <CommentIcon />
-                  </ActionList.LeadingVisual>
-                  Комментарий к файлу
-                </ActionList.Item>
-              )}
+              <ActionList.Item onSelect={() => actions.openEditor({ file: path, start: null, end: null })}>
+                <ActionList.LeadingVisual>
+                  <CommentIcon />
+                </ActionList.LeadingVisual>
+                Комментарий к файлу
+              </ActionList.Item>
               {!collapsed && comments.length > 0 && (
                 <ActionList.Item onSelect={() => onCommentsHidden(path, !commentsHidden)}>
                   <ActionList.LeadingVisual>{commentsHidden ? <EyeIcon /> : <EyeClosedIcon />}</ActionList.LeadingVisual>
@@ -589,9 +595,9 @@ export const FileDiff = memo(function FileDiff({
   function body() {
     return (
       <>
-      {navFile && (
+      {navFile && diff?.fullFile && !diff.missing && (
         <div className="rv-nav-banner" role="note">
-          Файл открыт переходом по коду и не входит в дифф. Показан целиком, комментарии к нему в этой версии не ставятся.
+          Файл не входит в дифф и показан целиком. Комментарии к его строкам — как обычно: клик по номеру строки; они попадут в экспорт.
         </div>
       )}
       {activeDiff === null && placeholderHeight !== undefined && (

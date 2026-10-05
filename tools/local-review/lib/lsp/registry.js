@@ -9,6 +9,9 @@ const path = require('node:path');
 // node_modules/.bin first (a project pins its typescript-language-server
 // there, next to the TypeScript it should use), then on PATH. Not found means
 // «LSP не найден» in the file header, with the hint below.
+// The clone of somebody else's PR is not the reviewer's own code: its
+// node_modules/.bin is only looked in once the reviewer trusts it
+// (`repoBin: false` otherwise, see lib/pr-clone.js), and PATH alone is used.
 
 /**
  * One entry per server process kind. A server can serve several languages
@@ -138,6 +141,49 @@ function findExecutable(bin, options) {
   return null;
 }
 
+/**
+ * The TypeScript a typescript-language-server installation brings along (its
+ * own dependency, or the global one beside it), or null. Without being told,
+ * the server loads the workspace's node_modules/typescript/lib/tsserver.js —
+ * JavaScript of the repository, which an untrusted clone must not get to run.
+ */
+function bundledTsserver(command) {
+  let dir;
+  try {
+    dir = path.dirname(fs.realpathSync(command));
+  } catch {
+    return null;
+  }
+  for (let i = 0; i < 6; i += 1) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      if (pkg && pkg.name === 'typescript-language-server') {
+        return require.resolve('typescript/lib/tsserver.js', { paths: [dir] });
+      }
+    } catch {
+      /* not this folder: one up */
+    }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return null;
+}
+
+/**
+ * initialize options that keep a server from running the repository's own
+ * code: tsserver from the server's installation, not the workspace; no Gradle
+ * import for jdtls (it executes build scripts). Undefined when none apply.
+ */
+function untrustedOptions(server, candidate, command) {
+  if (server.id === 'typescript' && candidate.bin === 'typescript-language-server') {
+    const tsserver = bundledTsserver(command);
+    return tsserver ? { tsserver: { path: tsserver } } : undefined;
+  }
+  if (server.id === 'java') return { settings: { java: { import: { gradle: { enabled: false } } } } };
+  return undefined;
+}
+
 /** Stable short name of a repository for per-repository server data. */
 function rootHash(root) {
   return crypto.createHash('sha1').update(path.resolve(root)).digest('hex').slice(0, 16);
@@ -161,22 +207,29 @@ function workspaceTsMajor(root) {
  * Everything needed to spawn `server` for `root`, or null when it is not
  * installed: the first of its commands that applies and is found.
  * `repoOnly` commands are looked for in the repository alone (a global `tsc`
- * may be any version). jdtls keeps an index per workspace and refuses to
+ * may be any version). `repoBin: false` skips the repository's
+ * node_modules/.bin (an untrusted clone). jdtls keeps an index per workspace and refuses to
  * share one between projects, so it gets its own `-data` directory under the
  * tool's home (never inside the repository, which must stay untouched).
  */
 function commandFor(server, root, options) {
-  const { homeDir, env = process.env, platform = process.platform } = options || {};
+  const { homeDir, env = process.env, platform = process.platform, repoBin = true } = options || {};
+  // Untrusted: the repository's own programs are not looked at — not even to
+  // read which TypeScript it pins (that is a file of the repository, too, but
+  // reading it runs nothing; the command it would pick does).
+  const binRoot = repoBin ? root : null;
   for (const candidate of server.commands) {
+    if (candidate.repoOnly && !binRoot) continue;
     if (candidate.applies && !candidate.applies(root)) continue;
-    if (candidate.repoOnly && !root) continue;
-    const found = findExecutable(candidate.bin, { root, env: candidate.repoOnly ? { PATHEXT: env.PATHEXT } : env, platform });
+    const found = findExecutable(candidate.bin, { root: binRoot, env: candidate.repoOnly ? { PATHEXT: env.PATHEXT } : env, platform });
     if (!found) continue;
     const args = candidate.args.slice();
     if (server.id === 'java') args.push('-data', path.join(homeDir, 'jdtls', rootHash(root)));
-    return { command: found.command, args, source: found.source, label: candidate.label };
+    const spec = { command: found.command, args, source: found.source, label: candidate.label };
+    if (!repoBin) spec.initializationOptions = untrustedOptions(server, candidate, found.command);
+    return spec;
   }
   return null;
 }
 
-module.exports = { SERVERS, serverFor, serverById, languageIdFor, findExecutable, commandFor, rootHash, workspaceTsMajor };
+module.exports = { SERVERS, serverFor, serverById, languageIdFor, findExecutable, commandFor, rootHash, workspaceTsMajor, bundledTsserver };

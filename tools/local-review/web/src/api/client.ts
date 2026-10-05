@@ -1,4 +1,6 @@
 import type {
+  CloneJob,
+  PrCloneStatus,
   BrowseResponse,
   Comment,
   CommitContext,
@@ -233,6 +235,15 @@ export const api = {
   /** No descriptor: what is installed on PATH and what runs anywhere (the settings page). */
   lspStatus: (d: Descriptor | null) => request<LspStatusResponse>(`/api/lsp/status${d ? `?${descriptorQuery(d)}` : ''}`),
   file: (d: Descriptor, path: string) => request<FileResponse>(`/api/file?${descriptorQuery(d, { path })}`),
+
+  // A PR's local clone (lib/pr-clone.js).
+  prClone: (d: Descriptor) => request<PrCloneStatus>(`/api/pr/clone?${descriptorQuery(d)}`),
+  /** clone and checkout start a job; link, trust and unlink answer with the new status. */
+  prCloneStart: (d: Descriptor, body: { action: 'clone'; dir: string } | { action: 'checkout' }) =>
+    request<{ job: CloneJob }>(`/api/pr/clone?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  prCloneSet: (d: Descriptor, body: { action: 'link'; dir: string } | { action: 'trust'; trusted: boolean } | { action: 'unlink' }) =>
+    request<PrCloneStatus>(`/api/pr/clone?${descriptorQuery(d)}`, jsonBody('POST', body)),
+  prCloneJob: (id: string) => request<{ job: CloneJob }>(`/api/pr/clone/job?id=${encodeURIComponent(id)}`),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   repos: () => request<RepoListResponse>('/api/gh/repos'),

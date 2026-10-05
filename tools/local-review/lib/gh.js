@@ -40,7 +40,9 @@ function ghBin() {
  *   - only failures that a repeat can cure are repeated (isTransient);
  *   - identical requests in flight share one run, and no more than
  *     `maxConcurrent` runs exist at once.
- * Everything gh does for this tool is a read, so a repeat is always safe.
+ * Everything gh() runs is a read, so a repeat is always safe. The two writes —
+ * cloning a PR's repository and checking the PR out (lib/pr-clone.js) — go
+ * through ghRaw() once, never through this.
  */
 const DEFAULTS = {
   maxConcurrent: 6,
@@ -66,11 +68,16 @@ function configure(patch) {
   return previous;
 }
 
+/**
+ * One run of gh, nothing more: no retry, no sharing. `options.cwd` is for the
+ * few commands that act on a folder (`gh pr checkout` in a clone).
+ */
 function ghRaw(args, options) {
   const { bin, prefixArgs } = ghBin();
   const timeoutMs = options && options.timeoutMs;
   return new Promise((resolve) => {
     const child = spawn(bin, prefixArgs.concat(args), {
+      cwd: (options && options.cwd) || undefined,
       windowsHide: true,
       shell: false,
       env: Object.assign({}, process.env, {

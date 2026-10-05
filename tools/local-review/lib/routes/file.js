@@ -5,12 +5,12 @@ const { sendJson } = require('../http');
 const { parseDescriptor } = require('../descriptor');
 const { MAX_TEXT_BYTES, TEXT_TOO_BIG_MESSAGE } = require('../diff');
 const { resolveInRepo } = require('../repo-path');
-const { repoRootOf } = require('./lsp');
+const { filesRootOf } = require('./lsp');
 
 // GET /api/file?<descriptor>&path=<repo-relative path> — a whole file of the
 // working tree, for a file outside the diff that «go to definition» led to.
-// Only inside the repository and never under .git/ (lib/repo-path.js); only
-// for a local folder (a PR has no files on disk until it is cloned).
+// Only inside the repository and never under .git/ (lib/repo-path.js); for a
+// PR, from its clone (lib/pr-clone.js) — without one there is nothing to read.
 
 function looksBinary(buf) {
   const limit = Math.min(buf.length, 8000);
@@ -20,11 +20,12 @@ function looksBinary(buf) {
 
 async function read(req, res, ctx, url) {
   const descriptor = parseDescriptor(url, ctx.defaults);
-  if (descriptor.source !== 'local') {
-    sendJson(res, 409, { error: 'Нет локального клона: файлы вне диффа доступны только для локальной папки' });
+  const where = await filesRootOf(descriptor);
+  if (!where || !where.root) {
+    sendJson(res, 409, { error: (where && where.problem) || 'Нет локального клона: файлы вне диффа доступны после «Клонировать…» или «Указать свой клон»' });
     return;
   }
-  const root = await repoRootOf(descriptor);
+  const root = where.root;
   const rel = url.searchParams.get('path');
   const abs = resolveInRepo(root, rel);
   let stat;

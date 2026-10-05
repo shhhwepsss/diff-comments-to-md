@@ -243,10 +243,12 @@ type Props = ViewProps & {
   route: Route;
   /** The «all comments» panel beside the diff is open. */
   commentsPanel: boolean;
+  /** The panel is on screen: open, and not behind the navigation panel. Defaults to `commentsPanel`. */
+  commentsShown?: boolean;
   onCommentsPanel: (open: boolean) => void;
 };
 
-export function AppHeader({ route, commentsPanel, onCommentsPanel, ...view }: Props) {
+export function AppHeader({ route, commentsPanel, commentsShown = commentsPanel, onCommentsPanel, ...view }: Props) {
   const review = useOptionalReview();
   const source = route.screen === 'diff' ? route.descriptor.source : route.screen;
   const local = review && review.descriptor.source === 'local' ? review.descriptor : null;
@@ -348,9 +350,11 @@ export function AppHeader({ route, commentsPanel, onCommentsPanel, ...view }: Pr
           <Button
             size="small"
             leadingVisual={CommentIcon}
-            aria-pressed={commentsPanel}
-            className={'rv-header__count' + (commentsPanel ? ' is-on' : '')}
-            title={commentsPanel ? 'Закрыть панель комментариев' : 'Все комментарии ревью'}
+            aria-pressed={commentsShown}
+            className={'rv-header__count' + (commentsShown ? ' is-on' : '')}
+            title={commentsShown ? 'Закрыть панель комментариев' : 'Все комментарии ревью'}
+            // Behind the navigation panel the comments panel is still «open»:
+            // the click turns it off, and DiffScreen takes that as «show it».
             onClick={() => onCommentsPanel(!commentsPanel)}
           >
             Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>

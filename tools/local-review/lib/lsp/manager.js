@@ -53,12 +53,13 @@ function lastLines(text, n) {
 
 /** One running server process and its connection. */
 class ServerProcess {
-  constructor(manager, root, def, spec) {
+  constructor(manager, root, def, spec, repoBin) {
     this.manager = manager;
     this.root = root;
     this.def = def;
     this.spec = spec;
-    this.key = keyOf(root, def.id);
+    this.repoBin = repoBin;
+    this.key = keyOf(root, def.id, repoBin);
     // tsserver or tsgo: which program actually serves this repository.
     this.label = spec.label || def.label;
     this.state = 'starting';
@@ -124,6 +125,7 @@ class ServerProcess {
           clientInfo: { name: 'local-review' },
           rootUri,
           rootPath: this.root,
+          ...(this.spec.initializationOptions ? { initializationOptions: this.spec.initializationOptions } : {}),
           workspaceFolders: [{ uri: rootUri, name: path.basename(this.root) }],
           capabilities: {
             general: { positionEncodings: ['utf-16'] },
@@ -378,8 +380,13 @@ class ServerProcess {
   }
 }
 
-function keyOf(root, id) {
-  return `${root}\u0000${id}`;
+/**
+ * A server per repository, kind and trust: one started from the repository's
+ * node_modules/.bin is not the one an untrusted view of the same folder (a PR's
+ * clone) may use.
+ */
+function keyOf(root, id, repoBin = true) {
+  return `${root}\u0000${id}\u0000${repoBin ? 'repo' : 'path'}`;
 }
 
 class LspManager {
@@ -404,8 +411,9 @@ class LspManager {
    * Throws LspError: 'no-server' when it is not installed, 'failed' when it
    * crashed (recently, or now while starting).
    */
-  async ensure(root, def) {
-    const key = keyOf(root, def.id);
+  async ensure(root, def, options) {
+    const repoBin = !(options && options.repoBin === false);
+    const key = keyOf(root, def.id, repoBin);
     const running = this.servers.get(key);
     if (running) return running.ready;
 
@@ -418,15 +426,22 @@ class LspManager {
       this.failures.delete(key);
     }
 
-    const spec = commandFor(def, root, { homeDir: this.options.homeDir });
+    const spec = commandFor(def, root, { homeDir: this.options.homeDir, repoBin });
     if (!spec) {
-      throw new LspError('no-server', `LSP не найден: ${def.commands.map((c) => c.bin).join(' / ')}`, { hint: def.hint });
+      const blocked = !repoBin && commandFor(def, root, { homeDir: this.options.homeDir });
+      throw new LspError(
+        'no-server',
+        blocked
+          ? `LSP не найден в PATH; в node_modules/.bin клона он есть, но репозиторию не доверено запускать свои программы`
+          : `LSP не найден: ${def.commands.map((c) => c.bin).join(' / ')}`,
+        { hint: blocked ? 'включите «Доверять этому репозиторию» в плашке клона или поставьте сервер глобально' : def.hint }
+      );
     }
     if (def.id === 'java') {
       const dataDir = spec.args[spec.args.indexOf('-data') + 1];
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    const server = new ServerProcess(this, root, def, spec);
+    const server = new ServerProcess(this, root, def, spec, repoBin);
     this.servers.set(key, server);
     // `ready` is what a second request arriving during the handshake awaits
     // too, so it is the promise that must fail with an LspError.
@@ -445,6 +460,13 @@ class LspManager {
     return server.ready;
   }
 
+  /** Every server of a folder goes: its clone was unbound, or its trust changed. */
+  async stopRoot(root) {
+    const resolved = path.resolve(root);
+    await Promise.all([...this.servers.values()].filter((s) => path.resolve(s.root) === resolved).map((s) => s.stop()));
+    for (const key of [...this.failures.keys()]) if (path.resolve(key.split('\u0000')[0]) === resolved) this.failures.delete(key);
+  }
+
   forget(server) {
     if (this.servers.get(server.key) === server) this.servers.delete(server.key);
   }
@@ -459,6 +481,7 @@ class LspManager {
     return [...this.servers.values()].map((s) => ({
       root: s.root,
       id: s.def.id,
+      repoBin: s.repoBin,
       label: s.label,
       state: s.publicState(),
       pid: s.child && s.child.pid,
@@ -471,10 +494,13 @@ class LspManager {
    * Per server kind, for one repository (or for none: `root` null looks on
    * PATH only): is it installed, where, and what it is doing.
    */
-  status(root) {
+  status(root, options) {
+    const repoBin = !(options && options.repoBin === false);
     return SERVERS.map((def) => {
-      const spec = commandFor(def, root || null, { homeDir: this.options.homeDir });
-      const key = root ? keyOf(root, def.id) : null;
+      const spec = commandFor(def, root || null, { homeDir: this.options.homeDir, repoBin });
+      // What trusting the repository would add: a server only its node_modules/.bin has.
+      const own = !repoBin && root ? commandFor(def, root, { homeDir: this.options.homeDir }) : null;
+      const key = root ? keyOf(root, def.id, repoBin) : null;
       const server = key ? this.servers.get(key) : null;
       const failure = key ? this.failures.get(key) : null;
       return {
@@ -483,6 +509,7 @@ class LspManager {
         label: server ? server.label : spec ? spec.label : def.label,
         extensions: Object.keys(def.languageIds),
         found: spec ? { command: spec.command, source: spec.source } : null,
+        untrusted: own && own.source === 'node_modules' ? { command: own.command } : null,
         hint: def.hint,
         state: server ? server.publicState() : failure ? 'failed' : 'stopped',
         message: server ? server.message : failure ? failure.message : null,

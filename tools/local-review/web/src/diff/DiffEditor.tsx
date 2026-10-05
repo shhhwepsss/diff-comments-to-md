@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, lineNumbers } from '@codemirror/view';
+import { EditorView } from '@codemirror/view';
 import { unifiedMergeView } from '@codemirror/merge';
 import type { Hunk } from '../api/types';
 import { failureMessage } from '../api/client';
@@ -14,7 +14,7 @@ import { PortalRegistry, blocksField, setBlocks, type Block } from './cm/blocks'
 import { pinBlocks } from './cm/blockPin';
 import { selectedLines, setSelectedLines } from './cm/selection';
 import { foldUnchanged, unfoldAt } from './cm/collapse';
-import { diffGutters, lineAtY } from './cm/gutters';
+import { diffGutters, fullFileGutter, lineAtY } from './cm/gutters';
 import { githubHighlight, githubTheme } from './cm/theme';
 import { languageFor } from './cm/language';
 import { occurrences as occurrenceHighlight, type OccurrenceHub } from './cm/occurrences';
@@ -49,8 +49,9 @@ type Props = {
   /** Hover, Ctrl+click and the context menu of code navigation. */
   lsp: LspHub;
   /**
-   * A whole file outside the diff (opened by code navigation): `newText` is
-   * the file, there is no old side, nothing is folded, one column of numbers.
+   * A whole file outside the diff (opened by code navigation, or one with
+   * comments): `newText` is the file, there is no old side, nothing is
+   * folded, one column of numbers — clickable for comments like the diff's.
    */
   full?: boolean;
 };
@@ -203,7 +204,7 @@ export function DiffEditor({
     const create = (lang: Extension) => {
       // Both texts keep their final newline (see cm/lastLine.ts).
       const diffOnly: Extension[] = full
-        ? [lineNumbers()]
+        ? [fullFileGutter({ onLineMouseDown })]
         : [
             // Before the merge view: its deletion blocks are highlighted with
             // the language that is active when they are first drawn.

@@ -1,0 +1,182 @@
+/* The clone bar above a PR's diff (CloneBar.tsx). */
+.rv-clonebar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--base-size-8) var(--base-size-12);
+  margin: 10px var(--base-size-16) 0;
+  padding: var(--base-size-6) var(--base-size-8) var(--base-size-6) 10px;
+  background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-left: 3px solid var(--borderColor-accent-emphasis);
+  border-radius: var(--borderRadius-medium);
+  font-size: 12px;
+}
+
+.rv-clonebar.is-text,
+.rv-clonebar.is-warning {
+  background: var(--bgColor-attention-muted);
+  border-color: var(--borderColor-attention-muted);
+  border-left-color: var(--borderColor-attention-emphasis);
+}
+
+.rv-clonebar__icon {
+  flex: none;
+  color: var(--fgColor-muted);
+}
+
+.rv-clonebar.is-text .rv-clonebar__icon,
+.rv-clonebar.is-warning .rv-clonebar__icon {
+  color: var(--fgColor-attention);
+}
+
+.rv-clonebar__body {
+  flex: 1 1 280px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-clonebar__body code {
+  font-size: 11.5px;
+  padding: 1px 4px;
+  background: var(--bgColor-neutral-muted);
+  border-radius: var(--borderRadius-small);
+}
+
+.rv-clonebar__trust {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  color: var(--fgColor-default);
+  cursor: pointer;
+}
+
+/* The dialog. */
+.rv-clone-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-12);
+}
+
+.rv-clone-dialog__text {
+  margin: 0;
+  font-size: var(--text-body-size-medium);
+  color: var(--fgColor-muted);
+}
+
+.rv-clone-dialog__label {
+  margin-bottom: calc(-1 * var(--base-size-8));
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+
+.rv-clone-dialog__cmd,
+.rv-clone-dialog__log {
+  margin: 0;
+  padding: var(--base-size-8) 10px;
+  background: var(--bgColor-muted);
+  border-radius: var(--borderRadius-medium);
+  font: 11.5px/1.6 var(--fontStack-monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fgColor-muted);
+}
+
+.rv-clone-dialog__log {
+  max-height: 160px;
+  overflow: auto;
+}
+
+.rv-clone-dialog__error {
+  display: flex;
+  gap: var(--base-size-6);
+  align-items: flex-start;
+  padding: var(--base-size-8) 10px;
+  color: var(--fgColor-default);
+  background: var(--bgColor-danger-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-danger-muted);
+  border-radius: var(--borderRadius-medium);
+  font-size: 12px;
+}
+
+.rv-clone-dialog__error svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--fgColor-danger);
+}
+
+.rv-clone-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4);
+  font-size: 12px;
+}
+
+.rv-clone-steps__item {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  color: var(--fgColor-muted);
+}
+
+.rv-clone-steps__item code {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.rv-clone-steps__icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+}
+
+.rv-clone-steps__item.is-done .rv-clone-steps__icon {
+  color: var(--fgColor-success);
+}
+
+.rv-clone-steps__item.is-running {
+  color: var(--fgColor-default);
+}
+
+.rv-clone-steps__item.is-failed {
+  color: var(--fgColor-danger);
+}
+
+/* An indeterminate bar: how long a clone takes is not known in advance. */
+.rv-clone-progress {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  background: var(--bgColor-neutral-muted);
+  border-radius: 2px;
+}
+
+.rv-clone-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: var(--bgColor-accent-emphasis);
+  border-radius: 2px;
+  animation: rv-clone-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes rv-clone-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-clone-progress::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}

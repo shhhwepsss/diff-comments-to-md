@@ -3,7 +3,8 @@ import { Decoration, EditorView, ViewPlugin, closeHoverTooltips, hoverTooltip, t
 import { language } from '@codemirror/language';
 import { highlightCode } from '@lezer/highlight';
 import type { LspCallDirection, LspHover, LspLocation } from '../../api/types';
-import type { CodeNavKeys, NavQuery, NavTab } from '../../nav/codeNav';
+import type { CodeNavKeys, NavQuery, NavTab, TextNav } from '../../nav/codeNav';
+import { findDeclarations, findWord, type TextFile } from '../../nav/textSearch';
 import { kindFromHover, mayHaveCalls, mayHaveImplementations, type SymbolKind } from '../../nav/navList';
 import { displayBinding, isTypingTarget } from '../../lib/keybindings';
 import { portalOpen } from '../../lib/portal';
@@ -24,6 +25,12 @@ import { wordAt } from './occurrenceMatch';
 // unchanged lines), the text the server sees. Deleted lines are the merge
 // view's widgets with no file on disk behind them, so they get neither hover
 // nor a menu (the highlight of occurrences still works there).
+//
+// A GitHub PR with no local clone has no server to ask: there «definition»
+// and «references» search the text of the files of the diff instead
+// (nav/textSearch.ts), and the rest says that it needs a clone.
+
+const NEEDS_CLONE = 'Нужен локальный клон: реализации и иерархию вызовов LSP ищет по типам. «Клонировать…» — над диффом';
 
 /** The context menu on screen, if any: one for the whole page. */
 let openMenu: { el: HTMLElement; close: () => void } | null = null;
@@ -67,14 +74,22 @@ export class LspHub {
   sendText = false;
   /** The shortcuts, for the menu. */
   keys: CodeNavKeys | null = null;
+  /** Navigation by text instead of a server (a PR with no clone); null when a server is there to ask. */
+  text: TextNav | null = null;
   /** Open the place a definition is at; `fromLine` (1-based) is where the jump started. */
   onNavigate: (loc: LspLocation, fromLine: number) => void = () => undefined;
   /** Show the navigation panel for a symbol of this file. */
   onPanel: (query: NavQuery) => void = () => undefined;
   toast: (text: string, error?: boolean) => void = () => undefined;
 
-  /** Why this file cannot be asked, or null when it can. */
-  unavailable(): string | null {
+  /** Ctrl+click and F12 lead somewhere here: a server answers, or the search by text. */
+  canNavigate(): boolean {
+    return this.text !== null || Boolean(this.session?.canAsk(this.path));
+  }
+
+  /** Why this file cannot be asked (about `tab`, when given), or null when it can. */
+  unavailable(tab?: NavTab): string | null {
+    if (this.text) return tab === 'implementation' || tab === 'calls' ? NEEDS_CLONE : null;
     const session = this.session;
     if (!session) return 'LSP недоступен';
     const indicator = indicatorFor(session.getSnapshot(), this.path);
@@ -96,17 +111,77 @@ export class LspHub {
   openPanel(view: EditorView, pos: number, tab: NavTab, direction: LspCallDirection = 'incoming', kind?: SymbolKind | null) {
     const w = wordRange(view.state, pos);
     if (!w) return;
-    const reason = this.unavailable();
+    const reason = this.unavailable(tab);
     if (reason) {
       this.toast(reason, true);
+      return;
+    }
+    if (this.text) {
+      void this.textPanel(view, w, 'references');
       return;
     }
     this.onPanel({ tab, direction, word: view.state.sliceDoc(w.from, w.to), kind, ...this.request(view, w) });
   }
 
+  /** The panel with what the search by text found: declarations to choose from, or every occurrence. */
+  private async textPanel(view: EditorView, w: Word, kind: 'definitions' | 'references', found?: { locations: LspLocation[]; skipped: number }) {
+    const word = view.state.sliceDoc(w.from, w.to);
+    let hits = found;
+    if (!hits) {
+      const { files, skipped } = await this.textFiles(view);
+      if (!files) return;
+      hits = { locations: findWord(files, word), skipped };
+    }
+    this.onPanel({ tab: 'references', direction: 'incoming', word, path: this.path, line: w.line, character: w.character, textHits: { kind, ...hits } });
+  }
+
+  /** The texts of the files of the diff, with the editor marked busy while they load. */
+  private async textFiles(view: EditorView): Promise<{ files: TextFile[] | null; skipped: number }> {
+    view.dom.classList.add('rv-lsp-pending');
+    try {
+      return await this.text!.files();
+    } catch (e) {
+      this.toast(`Не удалось прочитать файлы диффа: ${e instanceof Error ? e.message : String(e)}`, true);
+      return { files: null, skipped: 0 };
+    } finally {
+      view.dom.classList.remove('rv-lsp-pending');
+    }
+  }
+
+  /**
+   * «Definition» without a server: the lines of the diff's files that declare
+   * the word. One — it is opened; several — the panel lists them; the
+   * declaration itself clicked — its uses, as VS Code does.
+   */
+  private async definitionByText(view: EditorView, w: Word) {
+    const word = view.state.sliceDoc(w.from, w.to);
+    const { files, skipped } = await this.textFiles(view);
+    if (!files) return;
+    const found = findDeclarations(files, word);
+    const more = skipped ? ` (прочитаны не все файлы диффа: пропущено ${skipped})` : '';
+    if (found.length === 0) {
+      this.toast(`Объявление «${word}» не найдено поиском по тексту${more}`);
+      return;
+    }
+    const here = found.length === 1 && found[0].path === this.path && found[0].line === w.line && found[0].character === w.character;
+    if (here) {
+      await this.textPanel(view, w, 'references');
+      return;
+    }
+    if (found.length === 1) {
+      this.onNavigate(found[0], view.state.doc.lineAt(w.from).number);
+      return;
+    }
+    await this.textPanel(view, w, 'definitions', { locations: found, skipped });
+  }
+
   async goToDefinition(view: EditorView, pos: number) {
     const w = wordRange(view.state, pos);
     if (!w) return;
+    if (this.text) {
+      await this.definitionByText(view, w);
+      return;
+    }
     const reason = this.unavailable();
     if (reason) {
       this.toast(reason, true);
@@ -125,7 +200,11 @@ export class LspHub {
         return;
       }
       if (target.path === null) {
-        this.toast(`Определение вне репозитория: ${target.external ?? 'неизвестно где'}`);
+        this.toast(
+          target.gitInternal
+            ? `Определение в служебных файлах .git (${target.external ?? ''}) — они не открываются`
+            : `Определение вне репозитория: ${target.external ?? 'неизвестно где'}`,
+        );
         return;
       }
       if (res.locations.length > 1) this.toast(`Определений: ${res.locations.length} — открыто первое`);
@@ -220,7 +299,7 @@ function linkPlugin(hub: LspHub) {
       };
 
       refresh(mod: boolean) {
-        const w = mod && this.last && hub.session?.canAsk(hub.path) ? wordAtPointer(this.view, this.last) : null;
+        const w = mod && this.last && hub.canNavigate() ? wordAtPointer(this.view, this.last) : null;
         this.set(w && { from: w.from, to: w.to });
       }
 
@@ -358,6 +437,7 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
   el.setAttribute('role', 'menu');
   el.setAttribute('aria-label', `Действия с «${name}»`);
   const reason = hub.unavailable();
+  const byText = hub.text !== null;
 
   const item = (label: string, kbd: string, run: () => void, disabled: string | null = null) => {
     const b = el.appendChild(document.createElement('button'));
@@ -378,10 +458,10 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
   };
 
   const keys = hub.keys;
-  item('Перейти к определению', displayBinding(keys?.definition ?? ''), () => void hub.goToDefinition(view, w.from), reason);
-  item('Найти ссылки', displayBinding(keys?.references ?? ''), () => hub.openPanel(view, w.from, 'references'), reason);
-  item('Реализации', displayBinding(keys?.implementation ?? ''), () => hub.openPanel(view, w.from, 'implementation'), reason);
-  item('Иерархия вызовов', displayBinding(keys?.callHierarchy ?? ''), () => hub.openPanel(view, w.from, 'calls'), reason);
+  item(byText ? 'Найти объявление (по тексту)' : 'Перейти к определению', displayBinding(keys?.definition ?? ''), () => void hub.goToDefinition(view, w.from), reason);
+  item(byText ? 'Найти слово в файлах диффа' : 'Найти ссылки', displayBinding(keys?.references ?? ''), () => hub.openPanel(view, w.from, 'references'), reason);
+  item('Реализации', displayBinding(keys?.implementation ?? ''), () => hub.openPanel(view, w.from, 'implementation'), hub.unavailable('implementation'));
+  item('Иерархия вызовов', displayBinding(keys?.callHierarchy ?? ''), () => hub.openPanel(view, w.from, 'calls'), hub.unavailable('calls'));
   el.appendChild(document.createElement('hr'));
   item('Подсветить совпадения', '', () => view.dispatch({ selection: { anchor: w.from, head: w.to } }));
   item('Копировать имя', '', () => {
@@ -390,10 +470,11 @@ function showMenu(view: EditorView, hub: LspHub, w: Word, x: number, y: number) 
       () => hub.toast('Буфер обмена недоступен', true),
     );
   });
-  if (reason) {
-    const note = el.appendChild(document.createElement('div'));
-    note.className = 'rv-lsp-menu__note';
-    note.textContent = reason;
+  const note = reason ?? (byText ? 'Нет локального клона — поиск по тексту файлов диффа, без типов' : null);
+  if (note) {
+    const div = el.appendChild(document.createElement('div'));
+    div.className = 'rv-lsp-menu__note';
+    div.textContent = note;
   }
 
   // Inside the app's root: Primer's colour variables are defined there, not on <body>.

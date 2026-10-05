@@ -1,6 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
-import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, FileResponse, LocalDescriptor, Mode, StateResponse } from '../api/types';
+import { ApiError, api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
+import type {
+  Comment,
+  Commit,
+  Descriptor,
+  DiffResponse,
+  DirtyStatus,
+  FileResponse,
+  LocalDescriptor,
+  Mode,
+  PrCloneStatus,
+  StateResponse,
+} from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
@@ -44,7 +55,14 @@ export type LineReveal = { path: string; line: number; ch?: number; nonce: numbe
 /** A place to jump to: a repository file and a zero-based LSP position in it. */
 export type NavTarget = { path: string; line: number; character: number };
 
-/** A file outside the diff, shown whole: GET /api/file as a diff with nothing changed. */
+/**
+ * A file outside the diff, shown whole: GET /api/file as a diff with nothing
+ * changed. A file that is not there (a comment outlived it) is `missing`.
+ */
+function missingFile(path: string): DiffResponse {
+  return { path, status: '', kind: '', hunks: [], binary: false, additions: null, deletions: null, oldText: null, newText: null, fullFile: true, missing: true };
+}
+
 function fullFileDiff(file: FileResponse): DiffResponse {
   return {
     path: file.path,
@@ -129,6 +147,17 @@ export type Review = {
   navFiles: string[];
   /** A pending «scroll to this line», set by a jump and by Back/Forward. */
   lineReveal: LineReveal | null;
+  /**
+   * Files outside the diff can be read: a local folder, or a PR with a clone.
+   * They are then shown whole (and commented on); otherwise only listed.
+   */
+  filesReadable: boolean;
+  /** A PR's local clone (lib/pr-clone.js); null for a folder and until it is known. */
+  clone: PrCloneStatus | null;
+  /** Re-reads the clone's status (and the language servers', which follow it). */
+  refreshClone: () => Promise<PrCloneStatus | null>;
+  /** A clone action answered with the new status: show it, and what it changes. */
+  setCloneStatus: (next: PrCloneStatus) => void;
 
   reload: () => void;
   setMode: (mode: Mode) => void;
@@ -240,14 +269,25 @@ export function ReviewProvider({
   const [drafts] = useState(createDraftStore);
   // Reads the descriptor at fetch time: the view (mode, base, range) changes
   // under one provider, and every change resets the store.
-  // A file code navigation opened outside the diff is read whole instead.
+  // A file outside the diff (code navigation led there, or it has comments)
+  // is read whole instead — asked for only when files can be read at all.
   const [diffs] = useState(() =>
     createDiffStore((path, fresh) =>
-      navFilesRef.current.includes(path) && !(stateRef.current?.files ?? []).some((f) => f.path === path)
-        ? api.file(descriptorRef.current, path).then(fullFileDiff)
+      stateRef.current && !stateRef.current.files.some((f) => f.path === path)
+        ? api.file(descriptorRef.current, path).then(fullFileDiff, (e: unknown) => {
+            if (e instanceof ApiError && e.status === 404) return missingFile(path);
+            throw e;
+          })
         : api.diff(descriptorRef.current, path, fresh),
     ),
   );
+  // A PR's clone: what makes its files outside the diff readable, and the
+  // language server work.
+  const [clone, setClone] = useState<PrCloneStatus | null>(null);
+  const filesReadable = initial.source === 'local' || Boolean(clone?.bound && clone.valid);
+  // Read by callbacks that outlive the render that knew the clone.
+  const filesReadableRef = useRef(filesReadable);
+  filesReadableRef.current = filesReadable;
 
   // Commits-mode state. The provider does NOT remount when toggling this mode
   // (hashFor ignores from/to on purpose), so it lives alongside the rest here.
@@ -275,6 +315,39 @@ export function ReviewProvider({
     lsp.start();
     return () => lsp.stop();
   }, [lsp]);
+
+  const cloneSeq = useRef(0);
+  const setCloneStatus = useCallback(
+    (next: PrCloneStatus) => {
+      cloneSeq.current += 1;
+      setClone(next);
+      filesReadableRef.current = Boolean(next.bound && next.valid);
+      // The file on screen was only listed (out of the diff, no clone): now it can be shown.
+      const open = activeFileRef.current;
+      if (filesReadableRef.current && open && diffs.get(open)?.kind === 'orphan') void diffs.ensure(open, { force: true });
+      // The servers follow the clone: another root, another trust, or none.
+      void lsp.refresh();
+    },
+    [lsp, diffs],
+  );
+  const refreshClone = useCallback(async () => {
+    const d = descriptorRef.current;
+    if (d.source !== 'pr') return null;
+    const seq = ++cloneSeq.current;
+    try {
+      const next = await api.prClone(d);
+      if (seq !== cloneSeq.current) return next;
+      setCloneStatus(next);
+      return next;
+    } catch {
+      // Without the status the PR works by text, as if there were no clone.
+      return null;
+    }
+  }, [setCloneStatus]);
+  // Whether the clone is at the commit shown depends on the range, too.
+  useEffect(() => {
+    if (initial.source === 'pr') void refreshClone();
+  }, [initial.source, refreshClone, descriptor.from, descriptor.to]);
 
   // Responses for a descriptor the user already left must not land. (For a
   // file's diff the store does the same, per path.)
@@ -305,17 +378,20 @@ export function ReviewProvider({
       const sameSpot = feedRef.current && fresh && activeFileRef.current === path;
       setActiveFile(path);
       if (!sameSpot) setFileFocus((f) => ({ path, nonce: (f?.nonce ?? 0) + 1 }));
+      // A file out of the diff is shown whole when it can be read; otherwise
+      // only its comments are (a PR with no clone).
+      const listedOnly = orphan && !filesReadableRef.current;
       if (feedRef.current) {
         // In the feed opening a file only scrolls to it: the form the reviewer
         // has open (maybe in another file) stays, and a diff already on screen
         // is not fetched again. A failure shows in the file's own section.
-        if (orphan) diffs.setOrphan(path);
+        if (listedOnly) diffs.setOrphan(path);
         else void diffs.ensure(path, { fresh });
         return;
       }
       setEditor(null);
       setEditingId(null);
-      if (orphan) {
+      if (listedOnly) {
         diffs.setOrphan(path);
         return;
       }
@@ -355,6 +431,8 @@ export function ReviewProvider({
         const [next, commentData] = await Promise.all([api.state(d, fresh), api.comments(d)]);
         if (seq !== stateSeq.current) return;
         setState(next);
+        // Before the render: the diff fetcher, asked below, tells by it a file of the diff from one outside it.
+        stateRef.current = next;
         setComments(commentData.comments);
         setLoadError(null);
         // We asked for the repository's default branch without naming it;
@@ -378,7 +456,7 @@ export function ReviewProvider({
         const asNav =
           keepFile !== null &&
           !inDiff &&
-          d.source === 'local' &&
+          filesReadableRef.current &&
           (navFilesRef.current.includes(keepFile) || (Boolean(opts.named) && !inOrphans));
         if (asNav) addNavFile(keepFile);
         if (inDiff || inOrphans || asNav) {
@@ -555,6 +633,7 @@ export function ReviewProvider({
       // A mark flipped meanwhile is newer than this answer, which would undo it on screen.
       if (left() || viewedAtStart !== viewedSeq.current) return;
       setState(next);
+      stateRef.current = next;
       // So is a comment saved meanwhile.
       if (commentsAtStart === commentsSeq.current) setComments(commentData.comments);
       setLoadError(null);
@@ -568,7 +647,8 @@ export function ReviewProvider({
       } else if (file && navFilesRef.current.includes(file)) {
         void diffs.ensure(file, { fresh: true });
       } else if (file && next.orphanFiles.some((f) => f.path === file)) {
-        diffs.setOrphan(file);
+        if (filesReadableRef.current) void diffs.ensure(file, { fresh: true });
+        else diffs.setOrphan(file);
       } else if (next.files.length) {
         const first = feedRef.current ? filesOf(buildTree(next.files, (f) => f.path))[0] : next.files[0];
         await loadDiff(first.path, false, true);
@@ -742,8 +822,7 @@ export function ReviewProvider({
       const inDiff = (s?.files ?? []).some((f) => f.path === path);
       const nav =
         !inDiff &&
-        (navFilesRef.current.includes(path) ||
-          (descriptorRef.current.source === 'local' && !(s?.orphanFiles ?? []).some((f) => f.path === path)));
+        (navFilesRef.current.includes(path) || (filesReadableRef.current && !(s?.orphanFiles ?? []).some((f) => f.path === path)));
       if (nav) addNavFile(path);
       void loadDiff(path, !inDiff && !nav, false);
     },
@@ -1091,6 +1170,10 @@ export function ReviewProvider({
       navHistory,
       navFiles,
       lineReveal,
+      filesReadable,
+      clone,
+      refreshClone,
+      setCloneStatus,
       reload,
       setMode,
       setBase,
@@ -1155,6 +1238,10 @@ export function ReviewProvider({
       navHistory,
       navFiles,
       lineReveal,
+      filesReadable,
+      clone,
+      refreshClone,
+      setCloneStatus,
       reload,
       setMode,
       setBase,

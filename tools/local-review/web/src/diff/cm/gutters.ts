@@ -89,14 +89,24 @@ export function lineAtY(view: EditorView, clientY: number): number | null {
   return view.state.doc.lineAt(block.from).number;
 }
 
-export function diffGutters(handlers: GutterHandlers): Extension {
-  const mousedown = (view: EditorView, _block: BlockInfo, event: Event) => {
+/** A press on a line number starts selecting lines for a comment. */
+function numberMouseDown(handlers: GutterHandlers) {
+  return (view: EditorView, _block: BlockInfo, event: Event) => {
     const e = event as MouseEvent;
     const line = lineAtY(view, e.clientY);
     if (line === null) return false;
     handlers.onLineMouseDown(line, e);
     return true;
   };
+}
+
+/** The one column of numbers of a whole file outside the diff, clickable like the diff's. */
+export function fullFileGutter(handlers: GutterHandlers): Extension {
+  return lineNumbers({ domEventHandlers: { mousedown: numberMouseDown(handlers) } });
+}
+
+export function diffGutters(handlers: GutterHandlers): Extension {
+  const mousedown = numberMouseDown(handlers);
 
   const oldNumbers = gutter({
     class: 'rv-old-numbers',

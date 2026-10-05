@@ -127,6 +127,8 @@ export type LspServerStatus = {
   extensions: string[];
   /** Where it was found; null = not installed. */
   found: { command: string; source: 'node_modules' | 'PATH' } | null;
+  /** A PR's clone that is not trusted has this server in its node_modules/.bin, unused. */
+  untrusted?: { command: string } | null;
   /** What to install when it is not found. */
   hint: string;
   state: LspState;
@@ -141,6 +143,8 @@ export type LspStatusResponse = {
   reason?: 'no-clone';
   message?: string;
   root: string | null;
+  /** false: a PR's clone not trusted to run its node_modules/.bin. */
+  repoBin?: boolean;
   servers: LspServerStatus[];
   running: LspRunning[];
 };
@@ -151,6 +155,8 @@ export type LspLocation = {
   path: string | null;
   /** The file or URI outside the repository. */
   external?: string;
+  /** Inside the repository's .git: listed, never opened (`external` is its path there). */
+  gitInternal?: boolean;
   line: number;
   character: number;
   endLine: number;
@@ -213,6 +219,45 @@ export type LspRequest = {
 
 /** Expanding a node of a call hierarchy: the node's item and token as they came, and the file the hierarchy began in. */
 export type LspCallsRequest = { path: string; text?: string; item: unknown; token: string };
+
+/** A clone or checkout running on the server for a PR (GET /api/pr/clone/job). */
+export type CloneJob = {
+  id: string;
+  kind: 'clone' | 'checkout';
+  status: 'running' | 'done' | 'failed';
+  /** The commands, as they are run. */
+  steps: string[];
+  /** The step running now; steps.length once done. */
+  step: number;
+  error: string | null;
+  /** The tail of what the commands printed. */
+  log: string;
+};
+
+/** GET /api/pr/clone: the PR repository's local clone, if any. */
+export type PrCloneStatus = {
+  bound: boolean;
+  /** The folder the clone dialog suggests: ~/projects/<repo>. */
+  suggested: string;
+  job: CloneJob | null;
+  path?: string;
+  /** The reviewer lets servers come from the clone's node_modules/.bin. */
+  trusted?: boolean;
+  /** Still a clone of the PR's repository; `problem` says what is wrong otherwise. */
+  valid?: boolean;
+  problem?: string | null;
+  head?: string | null;
+  branch?: string | null;
+  /** Uncommitted changes to tracked files. */
+  dirty?: boolean;
+  /** The commit the diff shows the new side of: the PR's head, or the range's end. */
+  prHead?: string | null;
+  prBranch?: string | null;
+  /** null: unknown (the PR's head could not be read). */
+  onHead?: boolean | null;
+  /** The clone has a node_modules/.bin, so trust matters. */
+  repoBin?: boolean;
+};
 
 /** Commit range a comment was written against; omitted for the latest-commit-only selection. */
 export type CommitContext = { from: string; to: string; label: string };

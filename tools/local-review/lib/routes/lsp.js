@@ -8,7 +8,8 @@ const { sendJson, readJsonBody } = require('../http');
 const { parseDescriptor } = require('../descriptor');
 const { findRepoRoot } = require('../git');
 const { MAX_TEXT_BYTES } = require('../diff');
-const { resolveInRepo, relativeToRepo } = require('../repo-path');
+const { resolveInRepo, relativeToRepo, isGitInternal } = require('../repo-path');
+const prClone = require('../pr-clone');
 const { serverFor, languageIdFor } = require('../lsp/registry');
 const { LspManager, LspError } = require('../lsp/manager');
 
@@ -34,8 +35,10 @@ const { LspManager, LspError } = require('../lsp/manager');
 // GET /api/lsp/status — which servers are installed for this repository and
 // what the running ones are doing, for the file header and the settings page.
 //
-// Only a local folder has files a server can read. A PR has none until it is
-// cloned, and says so: { ok: false, reason: 'no-clone' }.
+// A local folder is its own root. A PR has files only once it has a clone
+// (lib/pr-clone.js): then the clone is the root, its paths are the PR's
+// paths, and the clone's node_modules/.bin is used only when the reviewer
+// trusts it. Without one: { ok: false, reason: 'no-clone' }.
 
 /**
  * name -> the LSP request, the capability a server must announce for it
@@ -70,7 +73,7 @@ function configure(options) {
 const NO_CLONE = {
   ok: false,
   reason: 'no-clone',
-  message: 'Нет локального клона: LSP работает только для локальной папки.',
+  message: 'Нет локального клона: навигация по тексту, LSP заработает после «Клонировать…» или «Указать свой клон».',
 };
 
 // A repository root, once confirmed by git, stays confirmed: hover fires often.
@@ -95,6 +98,29 @@ async function repoRootOf(descriptor) {
   if (!top || path.resolve(top) !== root) throw bad('Папка не является корнем git-репозитория');
   knownRoots.add(root);
   return root;
+}
+
+/**
+ * Where the files of a review are: { root, repoBin } — the repository (local)
+ * or the PR's clone, and whether servers may come from its node_modules/.bin.
+ * null for a PR with no clone. A clone that is gone or no longer a repository
+ * is a no-clone too, with what is wrong in `problem`.
+ */
+async function filesRootOf(descriptor) {
+  if (descriptor.source === 'local') return { root: await repoRootOf(descriptor), repoBin: true };
+  const binding = prClone.bindingOf(descriptor);
+  if (!binding) return null;
+  try {
+    // repoRootOf remembers a root once confirmed; a clone can be deleted since.
+    if (!fs.existsSync(path.join(binding.path, '.git'))) throw new Error('gone');
+    return { root: await repoRootOf({ root: binding.path }), repoBin: binding.trusted };
+  } catch {
+    return { root: null, problem: `Клон не найден или это уже не корень репозитория: ${binding.path}` };
+  }
+}
+
+function noClone(where) {
+  return where && where.problem ? Object.assign({}, NO_CLONE, { message: where.problem }) : NO_CLONE;
 }
 
 function position(body) {
@@ -192,7 +218,11 @@ function previewOf(full, character) {
   return { text: full.slice(start, start + PREVIEW_CHARS).trimEnd(), start };
 }
 
-/** A file: URI -> repository-relative path, or { external } for anything outside. */
+/**
+ * A file: URI -> repository-relative path, or { external } for anything
+ * outside. A place inside .git is the repository's, but nothing there can be
+ * opened (lib/repo-path.js): it comes as `gitInternal`, listed and not clickable.
+ */
 function placeOf(root, uri) {
   if (typeof uri !== 'string') return null;
   if (!uri.startsWith('file:')) return { path: null, external: uri };
@@ -203,6 +233,7 @@ function placeOf(root, uri) {
     return { path: null, external: uri };
   }
   const rel = relativeToRepo(root, abs);
+  if (rel && isGitInternal(rel)) return { path: null, external: rel, gitInternal: true };
   return rel ? { path: rel } : { path: null, external: abs };
 }
 
@@ -303,8 +334,8 @@ function hoverOf(result) {
   return { kind, value };
 }
 
-function serverInfo(m, root, def) {
-  const status = m.status(root).find((s) => s.id === def.id);
+function serverInfo(m, root, def, repoBin) {
+  const status = m.status(root, { repoBin }).find((s) => s.id === def.id);
   return { id: def.id, label: status ? status.label : def.label, state: status ? status.state : 'stopped' };
 }
 
@@ -339,11 +370,12 @@ async function request(req, res, ctx, url) {
   const name = Object.prototype.hasOwnProperty.call(METHODS, body.method) ? body.method : null;
   if (!name) throw bad(`Неизвестный метод LSP: ${body.method}`);
   const method = METHODS[name];
-  if (descriptor.source !== 'local') {
-    sendJson(res, 200, NO_CLONE);
+  const where = await filesRootOf(descriptor);
+  if (!where || !where.root) {
+    sendJson(res, 200, noClone(where));
     return;
   }
-  const root = await repoRootOf(descriptor);
+  const { root, repoBin } = where;
   const abs = resolveInRepo(root, body.path);
   const uri = pathToFileURL(abs).href;
   // Malformed requests are a 400 before any server is started for them.
@@ -360,13 +392,13 @@ async function request(req, res, ctx, url) {
     if (!res.writableFinished) abort.abort();
   });
   try {
-    const server = await m.ensure(root, def);
+    const server = await m.ensure(root, def, { repoBin });
     if (method.capability && !server.capabilities[method.capability]) {
       sendJson(res, 200, {
         ok: false,
         reason: 'not-supported',
         message: `${server.label} не поддерживает ${method.label}`,
-        server: serverInfo(m, root, def),
+        server: serverInfo(m, root, def, repoBin),
       });
       return;
     }
@@ -378,7 +410,7 @@ async function request(req, res, ctx, url) {
     const previews = new Previews(root, server);
     const payload = payloadFor(name, root, result, previews, params);
     previews.fill();
-    sendJson(res, 200, Object.assign({ ok: true, server: serverInfo(m, root, def) }, payload));
+    sendJson(res, 200, Object.assign({ ok: true, server: serverInfo(m, root, def, repoBin) }, payload));
   } catch (e) {
     if (!(e instanceof LspError)) throw e;
     if (e.reason === 'aborted') return;
@@ -387,7 +419,7 @@ async function request(req, res, ctx, url) {
       reason: e.reason,
       message: e.message,
       hint: e.hint || null,
-      server: serverInfo(m, root, def),
+      server: serverInfo(m, root, def, repoBin),
     });
   }
 }
@@ -399,12 +431,21 @@ async function status(req, res, ctx, url) {
   // A descriptor that is there but broken is still a 400.
   const descriptor = url.searchParams.get('source') || ctx.defaults ? parseDescriptor(url, ctx.defaults) : null;
   const running = m.running();
-  if (descriptor && descriptor.source === 'pr') {
-    sendJson(res, 200, Object.assign({}, NO_CLONE, { available: false, root: null, servers: m.status(null), running }));
+  const where = descriptor ? await filesRootOf(descriptor) : null;
+  if (descriptor && (!where || !where.root)) {
+    sendJson(res, 200, Object.assign({}, noClone(where), { available: false, root: null, servers: m.status(null), running }));
     return;
   }
-  const root = descriptor ? await repoRootOf(descriptor) : null;
-  sendJson(res, 200, { ok: true, available: Boolean(root), root, servers: m.status(root), running });
+  const root = where ? where.root : null;
+  sendJson(res, 200, {
+    ok: true,
+    available: Boolean(root),
+    root,
+    // false: a PR's clone the reviewer has not trusted; its node_modules/.bin is not used.
+    repoBin: where ? where.repoBin : true,
+    servers: m.status(root, { repoBin: where ? where.repoBin : true }),
+    running,
+  });
 }
 
-module.exports = { request, status, configure, getManager, locationsOf, hoverOf, repoRootOf, METHODS };
+module.exports = { request, status, configure, getManager, locationsOf, hoverOf, repoRootOf, filesRootOf, METHODS };

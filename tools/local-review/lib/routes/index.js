@@ -12,6 +12,7 @@ const commitsRoutes = require('./commits');
 const viewedRoutes = require('./viewed');
 const lspRoutes = require('./lsp');
 const fileRoutes = require('./file');
+const cloneRoutes = require('./pr-clone');
 
 const ROUTES = [
   { method: 'GET', path: '/api/state', handle: state.getState },
@@ -38,6 +39,9 @@ const ROUTES = [
   { method: 'POST', path: '/api/lsp', handle: lspRoutes.request },
   { method: 'GET', path: '/api/lsp/status', handle: lspRoutes.status },
   { method: 'GET', path: '/api/file', handle: fileRoutes.read },
+  { method: 'GET', path: '/api/pr/clone', handle: cloneRoutes.get },
+  { method: 'POST', path: '/api/pr/clone', handle: cloneRoutes.post },
+  { method: 'GET', path: '/api/pr/clone/job', handle: cloneRoutes.job },
 ];
 
 const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;

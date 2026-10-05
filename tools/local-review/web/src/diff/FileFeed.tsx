@@ -74,7 +74,10 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
     if (file.orphan) {
       // Whatever was loaded for it belongs to a diff it is no longer in.
       if (diff?.kind !== 'orphan') diffs.setOrphan(file.path);
-    } else if (needsLoad(diff)) void diffs.ensure(file.path);
+    } else if (needsLoad(diff) || diff?.kind === 'orphan') {
+      // An «orphan» entry here was only listed before (a PR's clone arrived since): now it is read.
+      void diffs.ensure(file.path, { force: diff?.kind === 'orphan' });
+    }
   }, [near, collapsed, diff, diffs, file.orphan, file.path]);
 
   return (

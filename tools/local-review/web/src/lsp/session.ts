@@ -52,10 +52,22 @@ export function indicatorFor(status: LspStatusResponse | null, path: string): Ls
   const server = serverForPath(status.servers, path);
   if (!server) return null;
   if (!status.available) {
+    if (status.reason === 'no-clone') {
+      return {
+        tone: 'off',
+        text: 'По тексту',
+        title:
+          (status.message ? `${status.message} ` : '') +
+          'Ctrl+клик ищет объявления по тексту файлов диффа; подсказки, реализации и вызовы — после «Клонировать…».',
+      };
+    }
+    return { tone: 'off', text: 'Без LSP', title: status.message || 'LSP недоступен' };
+  }
+  if (!server.found && server.untrusted) {
     return {
       tone: 'off',
-      text: 'Без LSP',
-      title: status.message || 'LSP работает только для локальной папки: у PR нет локального клона.',
+      text: 'LSP не доверен',
+      title: `${server.name}: сервер есть только в node_modules/.bin клона (${server.untrusted.command}), а запускать программы чужого репозитория не разрешено. Включите «Доверять этому репозиторию» над диффом или поставьте сервер глобально: ${server.hint}`,
     };
   }
   if (!server.found) {

@@ -43,6 +43,9 @@ export function App({ theme, onTheme }: Props) {
     writeZen(on);
   }, []);
   const [commentsPanel, setCommentsPanelState] = useState(readCommentsPanel);
+  // The navigation panel takes the comments panel's place while open: the
+  // header's button must not read «on» for a panel nobody can see.
+  const [navPanelOpen, setNavPanelOpen] = useState(false);
   const setCommentsPanel = useCallback((open: boolean) => {
     setCommentsPanelState(open);
     writeCommentsPanel(open);
@@ -188,6 +191,7 @@ export function App({ theme, onTheme }: Props) {
           theme={theme}
           onTheme={onTheme}
           commentsPanel={commentsPanel}
+          commentsShown={commentsPanel && !(route.screen === 'diff' && navPanelOpen)}
           onCommentsPanel={setCommentsPanel}
           viewMode={viewMode}
           onViewMode={setViewMode}
@@ -210,6 +214,7 @@ export function App({ theme, onTheme }: Props) {
             wrap={wrap}
             onWrap={setWrap}
             navKeys={navKeys}
+            onNavPanel={setNavPanelOpen}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />

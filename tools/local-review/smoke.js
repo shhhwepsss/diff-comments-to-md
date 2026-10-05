@@ -671,6 +671,248 @@ async function lspChecks(call, home) {
   return [lspRepo, outsideDir, emptyDir, ...extraDirs];
 }
 
+/** A launcher for the fake server that logs to its own file: tells apart which copy was started. */
+function installLoggingLsp(dir, bin, logFile) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, bin);
+  fs.writeFileSync(file, `#!/bin/sh\nLOCAL_REVIEW_LSP_FIXTURE_LOG="${logFile}" exec "${process.execPath}" "${FIXTURE_LSP}" "$@"\n`);
+  fs.chmodSync(file, 0o755);
+}
+
+function logged(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).method) : [];
+}
+
+/** Polls a clone/checkout job until it ends. */
+async function jobEnd(call, job) {
+  return waitFor(async () => {
+    const r = await call(`/api/pr/clone/job?id=${job.id}`);
+    return r.body.job && r.body.job.status !== 'running' ? r.body.job : null;
+  }, 15000);
+}
+
+/**
+ * A PR's local clone (lib/pr-clone.js): cloning through gh (the fixture makes
+ * a real `git clone`), naming one's own clone, the PR's head, trust in the
+ * clone's node_modules/.bin, the language server and /api/file working on
+ * the clone; and comments on files outside the diff, for a PR and a folder.
+ */
+async function prCloneChecks(call, home) {
+  const lspRoutes = require('./lib/routes/lsp');
+  const prClone = require('./lib/pr-clone');
+  const dirs = [];
+  const tmp = (name) => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `local-review-${name}-`)));
+    dirs.push(d);
+    return d;
+  };
+
+  console.log('\nPR: адрес remote');
+  eq(prClone.parseRemote('git@github.com:acme/web.git'), { host: 'github.com', owner: 'acme', repo: 'web' }, 'remote: scp-вид git@host:o/r.git');
+  eq(prClone.parseRemote('https://github.com/Acme/Web'), { host: 'github.com', owner: 'Acme', repo: 'Web' }, 'remote: https без .git');
+  eq(prClone.parseRemote('ssh://git@github.com/acme/web.git/'), { host: 'github.com', owner: 'acme', repo: 'web' }, 'remote: ssh:// со слешем в конце');
+  const pr = { host: 'github.com', owner: 'acme', repo: 'web', number: 7 };
+  ok(prClone.remoteMatches('https://github.com/ACME/web.git', pr), 'remote того же репозитория — без учёта регистра');
+  ok(!prClone.remoteMatches('https://github.com/acme/web-fork.git', pr), 'другой репозиторий — не совпадает');
+  ok(!prClone.remoteMatches('https://gitlab.com/acme/web.git', pr), 'другой хост — не совпадает');
+
+  // The repository the fake gh «clones»: main and the PR's branch.
+  const origin = tmp('pr-origin');
+  git(['init', '-q', '-b', 'main'], origin);
+  git(['config', 'user.email', 'smoke@example.com'], origin);
+  git(['config', 'user.name', 'Smoke Test'], origin);
+  git(['config', 'commit.gpgsign', 'false'], origin);
+  write(origin, 'src/b.ts', 'export function helper() {\n  return 1;\n}\n');
+  write(origin, 'src/a.ts', "import { helper } from './b';\nexport const value = 1;\n");
+  write(origin, 'README.md', '# web\n');
+  write(origin, '.gitignore', 'node_modules/\n');
+  git(['add', '-A'], origin);
+  git(['commit', '-q', '-m', 'init'], origin);
+  git(['checkout', '-q', '-b', 'feature'], origin);
+  write(origin, 'src/a.ts', "import { helper } from './b';\nexport const value = helper();\n");
+  git(['commit', '-q', '-am', 'use helper'], origin);
+  const headSha = git(['rev-parse', 'HEAD'], origin).trim();
+  git(['checkout', '-q', 'main'], origin);
+
+  const projects = tmp('pr-projects');
+  const cloneDir = path.join(projects, 'web');
+  const checkout = { code: 0, stdout: '', exec: [['git', 'checkout', '-q', '-B', 'pr-7', headSha]] };
+  const cloneEntry = (dir) => ({
+    code: 0,
+    stderr: "Cloning into 'web'...\n",
+    exec: [
+      ['git', 'clone', '-q', origin, dir],
+      ['git', '-C', dir, 'remote', 'set-url', 'origin', 'https://github.com/acme/web.git'],
+    ],
+  });
+  ghFixtures(
+    {
+      'pr view 7 --repo acme/web --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,url': {
+        code: 0,
+        stdout: JSON.stringify({
+          number: 7, title: 'Use helper', author: { login: 'octocat' }, state: 'OPEN', isDraft: false,
+          headRefName: 'feature', baseRefName: 'main', headRefOid: headSha, url: 'https://github.com/acme/web/pull/7',
+        }),
+      },
+      'pr diff 7 --repo acme/web': {
+        code: 0,
+        stdout: [
+          'diff --git a/src/a.ts b/src/a.ts',
+          'index 1111111..2222222 100644',
+          '--- a/src/a.ts',
+          '+++ b/src/a.ts',
+          '@@ -1,2 +1,2 @@',
+          " import { helper } from './b';",
+          '-export const value = 1;',
+          '+export const value = helper();',
+          '',
+        ].join('\n'),
+      },
+      [`repo clone acme/web ${cloneDir}`]: cloneEntry(cloneDir),
+      'pr checkout 7': checkout,
+    },
+    home
+  );
+  const prq = 'source=pr&host=github.com&owner=acme&repo=web&number=7';
+
+  console.log('\nPR: клон через gh');
+  const none = await call(`/api/pr/clone?${prq}`);
+  eq([none.status, none.body.bound, none.body.suggested], [200, false, '~/projects/web'], 'GET /api/pr/clone: клона нет, предложена ~/projects/<repo>');
+  eq((await call(`/api/pr/clone?source=local&root=${encodeURIComponent(origin)}`)).status, 400, 'клон у локальной папки -> 400');
+  const relative = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: 'projects/web' }));
+  eq(relative.status, 400, 'клонировать в относительный путь -> 400');
+  const busy = tmp('pr-busy');
+  write(busy, 'x.txt', 'занято\n');
+  const notEmpty = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: busy }));
+  ok(notEmpty.status === 400 && /не пуста/.test(notEmpty.body.error), 'клонировать в непустую папку -> 400', JSON.stringify(notEmpty.body));
+  const started = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'clone', dir: cloneDir }));
+  ok(started.status === 202 && started.body.job && started.body.job.status === 'running', 'POST clone -> 202 и задача', JSON.stringify(started.body));
+  eq(started.body.job && started.body.job.steps, [`gh repo clone acme/web ${cloneDir}`, 'gh pr checkout 7'], 'задача: шаги — команды gh');
+  const finished = await jobEnd(call, started.body.job);
+  eq(finished && finished.status, 'done', 'клонирование завершено', JSON.stringify(finished));
+  ok(fs.existsSync(path.join(cloneDir, '.git')), 'клон на диске');
+  const bound = (await call(`/api/pr/clone?${prq}`)).body;
+  ok(bound.bound && bound.valid && bound.path === cloneDir && bound.onHead === true && bound.trusted === false && bound.branch === 'pr-7',
+    'после клона: привязан, на head PR, не доверен', JSON.stringify(bound));
+  const stored = JSON.parse(fs.readFileSync(path.join(home, 'pr-clones.json'), 'utf8'));
+  eq(stored.clones['github.com/acme/web'] && stored.clones['github.com/acme/web'].path, cloneDir, 'привязка запомнена в ~/.local-review/pr-clones.json');
+  eq((await call(`/api/pr/clone/job?id=nope`)).status, 404, 'неизвестная задача -> 404');
+
+  console.log('\nPR: LSP по клону и доверие');
+  const pathBin = tmp('pr-pathbin');
+  const pathLog = path.join(pathBin, 'path.log');
+  const repoLog = path.join(pathBin, 'repo.log');
+  installLoggingLsp(pathBin, 'typescript-language-server', pathLog);
+  installLoggingLsp(path.join(cloneDir, 'node_modules', '.bin'), 'typescript-language-server', repoLog);
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${pathBin}${path.delimiter}${savedPath}`;
+  try {
+    const st = (await call(`/api/lsp/status?${prq}`)).body;
+    const ts = (st.servers || []).find((s) => s.id === 'typescript');
+    ok(st.available && st.root === cloneDir && st.repoBin === false, 'статус LSP для PR: корень — клон, node_modules/.bin не используется', JSON.stringify(st));
+    ok(ts && ts.found && ts.found.source === 'PATH' && ts.untrusted && ts.untrusted.command.startsWith(cloneDir),
+      'статус: сервер из PATH, а сервер клона помечен как недоверенный', JSON.stringify(ts));
+    const plsp = (body) => call(`/api/lsp?${prq}`, json('POST', body));
+    const def = await plsp({ method: 'definition', path: 'src/a.ts', line: 1, character: 22 });
+    eq(def.body.ok && def.body.locations.map((l) => [l.path, l.line]), [['src/b.ts', 0]], 'definition в PR: место в файле клона');
+    ok(logged(pathLog).includes('initialize') && logged(repoLog).length === 0, 'без доверия запущен сервер из PATH, не из клона');
+    const shown = "import { helper } from './b';\nexport const shownOnly = helper();\n";
+    const hov = await plsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 16, text: shown });
+    eq(hov.body.hover && hov.body.hover.value.split('\n')[1], '(word) shownOnly', 'hover в PR: показанный текст уходит в сервер (didOpen/didChange)');
+    const file = await call(`/api/file?${prq}&path=src/b.ts`);
+    eq([file.status, file.body.text], [200, 'export function helper() {\n  return 1;\n}\n'], 'GET /api/file для PR читает файл клона');
+    eq((await call(`/api/file?${prq}&path=.git/config`)).status, 403, 'GET /api/file для PR: .git клона недоступен');
+
+    const trusted = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'trust', trusted: true }));
+    eq([trusted.status, trusted.body.trusted], [200, true], 'POST trust -> доверено');
+    eq((await call(`/api/lsp/status?${prq}`)).body.repoBin, true, 'статус: после доверия node_modules/.bin клона используется');
+    await plsp({ method: 'definition', path: 'src/a.ts', line: 1, character: 22 });
+    ok(logged(repoLog).includes('initialize'), 'с доверием запущен сервер из node_modules/.bin клона');
+    eq(JSON.parse(fs.readFileSync(path.join(home, 'pr-clones.json'), 'utf8')).clones['github.com/acme/web'].trusted, true, 'доверие запомнено');
+    eq((await call(`/api/pr/clone?${prq}`, json('POST', { action: 'trust', trusted: 'yes' }))).status, 400, 'trust не boolean -> 400');
+    await call(`/api/pr/clone?${prq}`, json('POST', { action: 'trust', trusted: false }));
+  } finally {
+    process.env.PATH = savedPath;
+    await lspRoutes.getManager().stopAll();
+  }
+
+  console.log('\nPR: комментарий к файлу вне диффа');
+  const prState = await call(`/api/state?${prq}`);
+  eq(prState.body.files && prState.body.files.map((f) => f.path), ['src/a.ts'], 'в диффе PR один файл');
+  const outsideComment = await call(`/api/comments?${prq}`, json('POST', { file: 'src/b.ts', startLine: 2, endLine: 3, text: 'вне диффа PR' }));
+  eq(outsideComment.status, 201, 'комментарий к файлу клона вне диффа PR принят');
+  const prState2 = await call(`/api/state?${prq}`);
+  eq(prState2.body.orphanFiles, [{ path: 'src/b.ts', comments: 1, orphan: true }], 'файл с комментарием — в «Вне диффа»');
+  const prExport = await call(`/api/export/text?${prq}`);
+  ok(typeof prExport.body === 'string' && prExport.body.includes('src/b.ts:L2-L3\nвне диффа PR'), 'экспорт PR: комментарий вне диффа с диапазоном строк', prExport.body);
+
+  console.log('\nPR: клон не на head PR');
+  git(['checkout', '-q', 'main'], cloneDir);
+  const off = (await call(`/api/pr/clone?${prq}`)).body;
+  eq([off.onHead, off.branch], [false, 'main'], 'клон на другой ветке -> onHead false');
+  write(cloneDir, 'README.md', '# правка\n');
+  const dirty = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'checkout' }));
+  ok(dirty.status === 409 && /незакоммиченные/.test(dirty.body.error), 'gh pr checkout при незакоммиченных правках -> 409', JSON.stringify(dirty.body));
+  git(['checkout', '-q', '--', 'README.md'], cloneDir);
+  const co = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'checkout' }));
+  eq(co.status, 202, 'POST checkout -> задача');
+  eq((await jobEnd(call, co.body.job) || {}).status, 'done', 'gh pr checkout выполнен');
+  eq((await call(`/api/pr/clone?${prq}`)).body.onHead, true, 'после checkout клон на head PR');
+
+  console.log('\nPR: свой клон');
+  const stranger = tmp('pr-stranger');
+  git(['init', '-q', '-b', 'main'], stranger);
+  git(['remote', 'add', 'origin', 'https://github.com/other/thing.git'], stranger);
+  const wrong = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: stranger }));
+  ok(wrong.status === 400 && /другого репозитория/.test(wrong.body.error), 'свой клон с другим remote -> отказ', JSON.stringify(wrong.body));
+  const plain = tmp('pr-plain');
+  eq((await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: plain }))).status, 400, 'свой клон: не git-репозиторий -> 400');
+  eq((await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: path.join(cloneDir, 'src') }))).status, 400,
+    'свой клон: подпапка репозитория -> 400');
+  eq((await call(`/api/pr/clone?${prq}`)).body.path, cloneDir, 'после отказов привязка прежняя');
+  const mine = path.join(tmp('pr-mine'), 'web');
+  git(['clone', '-q', origin, mine], os.tmpdir());
+  git(['remote', 'set-url', 'origin', 'git@github.com:acme/web.git'], mine);
+  const linked = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'link', dir: mine }));
+  ok(linked.status === 200 && linked.body.path === mine && linked.body.onHead === false && linked.body.trusted === false,
+    'свой клон того же репозитория принят; не на head — не переключён молча', JSON.stringify(linked.body));
+  eq(git(['rev-parse', '--abbrev-ref', 'HEAD'], mine).trim(), 'main', 'свой клон остался на своей ветке');
+
+  console.log('\nPR: отвязать клон');
+  const unlinked = await call(`/api/pr/clone?${prq}`, json('POST', { action: 'unlink' }));
+  eq(unlinked.body.bound, false, 'POST unlink -> клона нет');
+  ok(fs.existsSync(mine), 'папка клона не удалена');
+  eq((await call(`/api/lsp/status?${prq}`)).body.reason, 'no-clone', 'после отвязки LSP для PR снова no-clone');
+  eq((await call(`/api/pr/clone?${prq}`, json('POST', { action: 'nope' }))).status, 400, 'неизвестное действие -> 400');
+
+  console.log('\nЛокальная папка: комментарий к файлу вне диффа');
+  const lq = `source=local&root=${encodeURIComponent(cloneDir)}&mode=working`;
+  write(cloneDir, 'src/a.ts', "import { helper } from './b';\nexport const value = helper() + 1;\n");
+  const localState = await call(`/api/state?${lq}`);
+  eq(localState.body.files.map((f) => f.path), ['src/a.ts'], 'в рабочей копии изменён один файл');
+  eq((await call(`/api/comments?${lq}`, json('POST', { file: 'src/b.ts', startLine: 1, endLine: 1, text: 'объявление helper' }))).status, 201,
+    'комментарий к файлу вне диффа принят');
+  eq((await call(`/api/comments?${lq}`, json('POST', { file: 'README.md', startLine: null, endLine: null, text: 'к файлу целиком' }))).status, 201,
+    'комментарий ко всему файлу вне диффа принят');
+  const localState2 = await call(`/api/state?${lq}`);
+  eq(localState2.body.orphanFiles.map((f) => f.path).sort(), ['README.md', 'src/b.ts'], 'файлы с комментариями — в «Вне диффа» после перезагрузки');
+  const localExport = await call(`/api/export/text?${lq}`);
+  ok(localExport.body.includes('src/b.ts:L1\nобъявление helper') && localExport.body.includes('README.md\nк файлу целиком'),
+    'экспорт: комментарии вне диффа — со строкой и к файлу', localExport.body);
+
+  console.log('\nLSP: места внутри .git');
+  {
+    const places = lspRoutes.locationsOf(cloneDir, [
+      { uri: require('node:url').pathToFileURL(path.join(cloneDir, '.git', 'hooks', 'x.ts')).href, range: { start: { line: 0, character: 0 } } },
+      { uri: require('node:url').pathToFileURL(path.join(cloneDir, 'src', 'b.ts')).href, range: { start: { line: 0, character: 0 } } },
+    ]);
+    eq(places.map((p) => [p.path, p.gitInternal || false]), [[null, true], ['src/b.ts', false]], 'место в .git — без пути, помечено gitInternal');
+  }
+
+  process.env.LOCAL_REVIEW_GH_BIN = FIXTURE_GH;
+  return dirs;
+}
+
 // -------------------------------------------------------------------- suite
 
 async function main() {
@@ -3645,6 +3887,7 @@ async function main() {
   ok(localState.body.truncated === null, 'локальный дифф: пометки об обрезке нет', JSON.stringify(localState.body.truncated));
 
   const lspDirs = await lspChecks(call, home);
+  if (process.platform !== 'win32') lspDirs.push(...(await prCloneChecks(call, home)));
 
   await new Promise((resolve) => server.server.close(resolve));
 

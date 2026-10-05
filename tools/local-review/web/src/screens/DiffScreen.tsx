@@ -14,7 +14,9 @@ import { CommentsPanel } from '../comments/CommentsPanel';
 import { selHi, selLo } from '../review/commitSelection';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
-import { CodeNavContext, type CodeNav, type CodeNavKeys, type NavQuery } from '../nav/codeNav';
+import { CodeNavContext, type CodeNav, type CodeNavKeys, type NavQuery, type TextNav } from '../nav/codeNav';
+import { diffTexts } from '../nav/textSources';
+import { CloneBar } from '../pr/CloneBar';
 import { NavPanel } from '../nav/NavPanel';
 import { closeLspMenu, definitionAtCaret, navKeysBlocked, panelAtCaret } from '../diff/cm/lsp';
 import '../diff/diff.css';
@@ -149,15 +151,31 @@ type Props = {
   onWrap: (on: boolean) => void;
   /** Go to definition, Back, Forward. */
   navKeys: CodeNavKeys;
+  /** The navigation panel opened or closed: the header's «Комментарии» is not «on» behind it. */
+  onNavPanel?: (open: boolean) => void;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap, navKeys }: Props) {
-  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed, descriptor, lsp, navHistory } =
-    useReview();
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap, navKeys, onNavPanel }: Props) {
+  const {
+    state,
+    activeFile,
+    loading,
+    loadError,
+    reload,
+    commitsEmpty,
+    commitsMode,
+    commitsLoading,
+    toggleActiveViewed,
+    descriptor,
+    lsp,
+    navHistory,
+    clone,
+    diffs,
+  } = useReview();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
   const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
 
@@ -174,8 +192,19 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
 
   // The shown text goes to the language server when it is not the working
   // tree: the index (staged) or a commit range. Base compares against the
-  // working tree, so its new side is on disk.
-  const sendText = descriptor.source === 'local' && (descriptor.mode === 'staged' || descriptor.mode === 'commits');
+  // working tree, so its new side is on disk. A PR's clone counts as the
+  // working tree only while it is at the commit the diff shows.
+  const sendText =
+    descriptor.source === 'local' ? descriptor.mode === 'staged' || descriptor.mode === 'commits' : clone?.onHead !== true;
+  // A PR with no clone has no server: navigation searches the text of the
+  // diff's files. Its file list is read at search time, not captured here.
+  const noClone = descriptor.source === 'pr' && !(clone?.bound && clone.valid);
+  const filesRef = useRef(state?.files);
+  filesRef.current = state?.files;
+  const textNav = useMemo<TextNav | null>(
+    () => (noClone ? { files: () => diffTexts(diffs, filesRef.current ?? []) } : null),
+    [noClone, diffs],
+  );
 
   // The navigation panel (references, implementations, calls). It takes the
   // comments panel's place on the right while open — the diff keeps its
@@ -198,12 +227,16 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
     if (!commentsPanel) onCommentsPanel(true);
   }, [commentsPanel, onCommentsPanel]);
   // Another repository or view: the answers were about other code.
+  // A clone made or dropped meanwhile: the answers were by text, or by a server.
   const viewKey = JSON.stringify(descriptor);
-  useEffect(() => setNavPanel(null), [viewKey]);
+  useEffect(() => setNavPanel(null), [viewKey, noClone]);
+  const navPanelOpen = navPanel !== null;
+  useEffect(() => onNavPanel?.(navPanelOpen), [navPanelOpen, onNavPanel]);
+  useEffect(() => () => onNavPanel?.(false), [onNavPanel]);
 
   const codeNav = useMemo<CodeNav>(
-    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText, openPanel }),
-    [lsp, navHistory, navKeys, sendText, openPanel],
+    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText, openPanel, text: textNav }),
+    [lsp, navHistory, navKeys, sendText, openPanel, textNav],
   );
 
   // F12 (or its replacement) and Alt+←/→. F12 may open DevTools first: the
@@ -296,6 +329,7 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
           <CommitRail />
           <DirtyBanner />
           {state.pr && <PrHeader pr={state.pr} />}
+          <CloneBar />
         </>
       )}
       <OldCommitBanner />

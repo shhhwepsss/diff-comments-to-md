@@ -55,8 +55,17 @@ describe('indicatorFor', () => {
     expect(ind?.title).toContain('JDK 21+');
   });
 
-  it('is off for a PR without a clone', () => {
-    expect(indicatorFor(status([ts], false), 'a.ts')).toMatchObject({ tone: 'off', text: 'Без LSP' });
+  it('says «by text» for a PR without a clone', () => {
+    const ind = indicatorFor(status([ts], false), 'a.ts');
+    expect(ind).toMatchObject({ tone: 'off', text: 'По тексту' });
+    expect(ind?.title).toContain('Клонировать');
+  });
+
+  it('tells an untrusted clone from a missing server', () => {
+    const untrusted = { ...ts, found: null, untrusted: { command: '/clone/node_modules/.bin/typescript-language-server' } };
+    const ind = indicatorFor(status([untrusted]), 'a.ts');
+    expect(ind).toMatchObject({ tone: 'off', text: 'LSP не доверен' });
+    expect(ind?.title).toContain('Доверять этому репозиторию');
   });
 });
 

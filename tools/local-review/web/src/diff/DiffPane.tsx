@@ -40,7 +40,7 @@ type Props = {
 export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap, onWrap, filter }: Props) {
   const single = viewMode === 'single';
   const review = useReview();
-  const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId, navFiles, lineReveal } = review;
+  const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId, navFiles, lineReveal, filesReadable } = review;
   const activeDiff = useFileDiff(diffs, activeFile);
   // Source diff or rendered markdown / html; source is the default. One choice for
   // every file or one per file, as the setting says (renderMode.ts). Not persisted.
@@ -158,10 +158,8 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
   );
 
   // Files outside the diff that code navigation opened, and are still outside it.
-  const outsideNav = useMemo(() => {
-    const inDiff = new Set((state?.files ?? []).map((f) => f.path));
-    return new Set(navFiles.filter((p) => !inDiff.has(p)));
-  }, [navFiles, state?.files]);
+  const inDiff = useMemo(() => new Set((state?.files ?? []).map((f) => f.path)), [state?.files]);
+  const outsideNav = useMemo(() => new Set(navFiles.filter((p) => !inDiff.has(p))), [navFiles, inDiff]);
 
   // The feed shows what the sidebar's tree shows, in the tree's order, then
   // the files that are out of the diff but still have comments, then the
@@ -169,12 +167,18 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
   const feedFiles = useMemo<FeedFile[]>(
     () => [
       ...filesOf(buildTree(filter.shown, (f) => f.path)).map((entry) => ({ path: entry.path, entry, orphan: false })),
-      ...filter.shownOrphans.map((f) => ({ path: f.path, entry: undefined, orphan: !outsideNav.has(f.path), nav: outsideNav.has(f.path) })),
+      // Out of the diff with comments: shown whole when files can be read, listed otherwise.
+      ...filter.shownOrphans.map((f) => ({
+        path: f.path,
+        entry: undefined,
+        orphan: !outsideNav.has(f.path) && !filesReadable,
+        nav: outsideNav.has(f.path) || filesReadable,
+      })),
       ...[...outsideNav]
         .filter((p) => !filter.shownOrphans.some((f) => f.path === p))
         .map((path) => ({ path, entry: undefined, orphan: false, nav: true })),
     ],
-    [filter.shown, filter.shownOrphans, outsideNav],
+    [filter.shown, filter.shownOrphans, outsideNav, filesReadable],
   );
 
   // «Next unviewed file» has to mean the next one the feed shows.
@@ -224,7 +228,7 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
       onRunScripts: runScripts,
       zen,
       onZen,
-      navFile: outsideNav.has(path),
+      navFile: !inDiff.has(path),
       lineReveal: pendingLineProp && pendingLine?.path === path ? pendingLineProp : null,
       onLineRevealed: markLineRevealed,
     };

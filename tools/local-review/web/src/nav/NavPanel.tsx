@@ -96,6 +96,11 @@ function onListKey(e: ReactKeyboardEvent<HTMLElement>) {
   rows[next].focus();
 }
 
+/** Why a place cannot be opened, for its row and its group. */
+function closedReason(l: LspLocation): string {
+  return l.gitInternal ? 'служебный .git' : 'вне репозитория';
+}
+
 function LocationList({
   state,
   first,
@@ -104,6 +109,7 @@ function LocationList({
   empty,
   other,
   noun,
+  note,
 }: {
   state: Loaded<LspLocation[]> | undefined;
   first: string;
@@ -112,46 +118,59 @@ function LocationList({
   empty: string;
   other: string;
   noun: [string, string, string];
+  /** Said above the list instead of the bare count (a search by text says what it is). */
+  note?: (count: string) => React.ReactNode;
 }) {
   const grouped = useMemo(() => (state?.status === 'done' ? groupLocations(state.value, first) : null), [state, first]);
   if (!state || state.status === 'loading') return <Status busy>Спрашиваю language server…</Status>;
   if (state.status === 'error') return <Failure state={state} other={other} />;
   if (!grouped || grouped.total === 0) return <div className="rv-npanel__note">{empty}</div>;
+  const count = `${plural(grouped.total, ...noun)} в ${plural(grouped.groups.length, 'файле', 'файлах', 'файлах')}`;
   return (
     <>
-      <div className="rv-npanel__note">
-        {plural(grouped.total, ...noun)} в {plural(grouped.groups.length, 'файле', 'файлах', 'файлах')}
-      </div>
-      <div className="rv-npanel__list" role="list" onKeyDown={onListKey}>
+      <div className="rv-npanel__note">{note ? note(count) : count}</div>
+      {/* Groups are plain blocks with a heading; each one's places are a list
+          of their own, every row a list item holding its button. */}
+      <div className="rv-npanel__list" onKeyDown={onListKey}>
         {grouped.groups.map((g) => {
           const name = g.path ?? g.external ?? '';
+          const closed = g.path === null ? closedReason(g.items[0]) : null;
+          const headId = `rv-npanel-g-${g.key.replace(/[^\w-]/g, '_')}`;
           return (
-            <div key={g.key} role="group" aria-label={name} className="rv-npanel__group">
-              <div className={`rv-npanel__file${g.path === null ? ' is-external' : ''}`} title={name}>
+            <div key={g.key} className="rv-npanel__group">
+              <div className={`rv-npanel__file${closed ? ' is-external' : ''}`} title={name} id={headId}>
                 <span className="rv-npanel__dir">{dirName(name)}</span>
                 <b>{fileName(name)}</b>
-                {g.path === null && <span className="rv-npanel__ext">вне репозитория</span>}
+                {closed && <span className="rv-npanel__ext">{closed}</span>}
                 <CounterLabel>{g.items.length}</CounterLabel>
               </div>
-              {g.items.map((l) => {
-                const key = `${g.key}:${l.line}:${l.character}`;
-                const target = targetOf(l);
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    role="listitem"
-                    className={`rv-npanel__item${current === key ? ' is-current' : ''}`}
-                    aria-current={current === key || undefined}
-                    disabled={!target}
-                    title={target ? `${l.path}:${l.line + 1}` : `Вне репозитория: ${l.external ?? ''}`}
-                    onClick={() => target && onGo(key, target)}
-                  >
-                    <span className="rv-npanel__lno">{l.line + 1}</span>
-                    {target ? <Preview loc={l} /> : <span className="rv-npanel__pv is-missing">{fileName(l.external ?? '')}</span>}
-                  </button>
-                );
-              })}
+              <ul className="rv-npanel__items" aria-labelledby={headId}>
+                {g.items.map((l) => {
+                  const key = `${g.key}:${l.line}:${l.character}`;
+                  const target = targetOf(l);
+                  return (
+                    <li key={key}>
+                      <button
+                        type="button"
+                        className={`rv-npanel__item${current === key ? ' is-current' : ''}`}
+                        aria-current={current === key || undefined}
+                        disabled={!target}
+                        title={
+                          target
+                            ? `${l.path}:${l.line + 1}`
+                            : l.gitInternal
+                              ? `Служебные файлы .git не открываются: ${l.external ?? ''}`
+                              : `Вне репозитория: ${l.external ?? ''}`
+                        }
+                        onClick={() => target && onGo(key, target)}
+                      >
+                        <span className="rv-npanel__lno">{l.line + 1}</span>
+                        {target ? <Preview loc={l} /> : <span className="rv-npanel__pv is-missing">{fileName(l.external ?? '')}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           );
         })}
@@ -324,7 +343,9 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
   // The direction as of now, for roots that arrive after a switch made while they loaded.
   const directionNow = useRef(query.direction);
   const [kind, setKind] = useState<SymbolKind | null>(query.kind ?? null);
-  const [refs, setRefs] = useState<Loaded<LspLocation[]>>();
+  // Found by text (a PR with no clone): the list is there already, nothing is asked.
+  const text = query.textHits ?? null;
+  const [refs, setRefs] = useState<Loaded<LspLocation[]> | undefined>(text ? { status: 'done', value: text.locations } : undefined);
   const [impls, setImpls] = useState<Loaded<LspLocation[]>>();
   const [roots, setRoots] = useState<Loaded<LspCallNode[]>>();
   const [tree, setTree] = useState<CallTree>(EMPTY_TREE);
@@ -350,7 +371,7 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
 
   // The header's «метод» / «класс»: from the hover, when the panel was not opened from one.
   useEffect(() => {
-    if (query.kind !== undefined) return;
+    if (query.kind !== undefined || text) return;
     session
       .hover(req)
       .then((res) => {
@@ -359,11 +380,11 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
         if (k) setKind((was) => was ?? k);
       })
       .catch(() => undefined);
-  }, [session, req, query.kind]);
+  }, [session, req, query.kind, text]);
 
   // Each list is asked for the first time its tab is shown, and kept.
   useEffect(() => {
-    if (tab === 'calls') return;
+    if (tab === 'calls' || text) return;
     const set = tab === 'references' ? setRefs : setImpls;
     if ((tab === 'references' ? refs : impls) !== undefined) return;
     set({ status: 'loading' });
@@ -371,7 +392,7 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
       (res) => live() && set(res.ok ? { status: 'done', value: res.locations } : failed(res)),
       (e) => live() && set(thrown(e)),
     );
-  }, [tab, refs, impls, session, req]);
+  }, [tab, refs, impls, session, req, text]);
 
   // The calls: a level per request. `generation` drops answers for a tree
   // that was rebuilt meanwhile (the direction switched).
@@ -410,7 +431,7 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
   );
 
   useEffect(() => {
-    if (tab !== 'calls' || roots !== undefined) return;
+    if (tab !== 'calls' || roots !== undefined || text) return;
     setRoots({ status: 'loading' });
     session.prepareCalls(req).then(
       (res) => {
@@ -426,7 +447,7 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
       },
       (e) => live() && setRoots(thrown(e)),
     );
-  }, [tab, roots, session, req, plant]);
+  }, [tab, roots, session, req, plant, text]);
 
   const switchDirection = (dir: typeof direction) => {
     if (dir === direction) return;
@@ -492,10 +513,14 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
     [refs, impls],
   );
 
+  // Without a server only the list found by text is there to show.
+  const tabs = text ? TABS.filter((t) => t === 'references') : TABS;
+  const tabLabel = (t: NavTab) => (t === 'references' && text?.kind === 'definitions' ? 'Объявления' : TAB_LABEL[t]);
+
   const onTabKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const next = TABS[(TABS.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
+    const next = tabs[(tabs.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
     setTab(next);
     e.currentTarget.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
   };
@@ -514,7 +539,7 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
         <IconButton icon={XIcon} aria-label="Закрыть панель (Esc)" size="small" variant="invisible" onClick={onClose} />
       </div>
       <div className="rv-npanel__tabs" role="tablist" aria-label="Что показать" onKeyDown={onTabKey}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             type="button"
@@ -527,13 +552,47 @@ export function NavPanel({ query, onClose }: { query: NavQuery; onClose: () => v
             className="rv-npanel__tab"
             onClick={() => setTab(t)}
           >
-            {TAB_LABEL[t]}
+            {tabLabel(t)}
             {counts[t] !== undefined && <CounterLabel>{counts[t]}</CounterLabel>}
           </button>
         ))}
+        {text &&
+          TABS.filter((t) => t !== 'references').map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={false}
+              aria-disabled
+              tabIndex={-1}
+              className="rv-npanel__tab is-disabled"
+              title="Нужен локальный клон: это ищет LSP по типам. «Клонировать…» — над диффом"
+            >
+              {TAB_LABEL[t]}
+            </button>
+          ))}
       </div>
       <div className="rv-npanel__body" id="rv-npanel-body" role="tabpanel" aria-labelledby={`rv-npanel-tab-${tab}`}>
-        {tab === 'references' && (
+        {tab === 'references' && text && (
+          <LocationList
+            state={refs}
+            first={query.path}
+            current={current}
+            onGo={go}
+            empty={`«${query.word}» не найдено в файлах диффа.`}
+            other=""
+            noun={text.kind === 'definitions' ? ['объявление', 'объявления', 'объявлений'] : ['вхождение', 'вхождения', 'вхождений']}
+            note={(count) => (
+              <span className="rv-npanel__textnote">
+                {text.kind === 'definitions'
+                  ? `Без LSP: ${count} с таким именем. Какое из них нужное, поиск по тексту не знает.`
+                  : `Поиск слова по файлам диффа: ${count}, включая комментарии, строки и одноимённые переменные.`}
+                {text.skipped > 0 && ` Прочитаны не все файлы: пропущено ${text.skipped}.`}
+              </span>
+            )}
+          />
+        )}
+        {tab === 'references' && !text && (
           <LocationList
             state={refs}
             first={query.path}

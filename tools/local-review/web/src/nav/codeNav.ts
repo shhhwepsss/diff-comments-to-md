@@ -1,8 +1,9 @@
 import { createContext } from 'react';
-import type { LspCallDirection } from '../api/types';
+import type { LspCallDirection, LspLocation } from '../api/types';
 import type { LspSession } from '../lsp/session';
 import type { NavHistory } from './history';
 import type { SymbolKind } from './navList';
+import type { TextFile } from './textSearch';
 
 /** The shortcuts of code navigation, as the settings page stores them. */
 export type CodeNavKeys = {
@@ -31,6 +32,18 @@ export type NavQuery = {
   text?: string;
   /** What the hover said it is, when a hover was seen; the panel asks otherwise. */
   kind?: SymbolKind | null;
+  /**
+   * Found by text, without a language server (a PR with no clone): the
+   * declarations to choose from, or every occurrence of the word. The panel
+   * lists these and asks nothing.
+   */
+  textHits?: { kind: 'definitions' | 'references'; locations: LspLocation[]; skipped: number };
+};
+
+/** Navigation by text, for a PR with no local clone (nav/textSearch.ts). */
+export type TextNav = {
+  /** The new side of the files of the diff; `skipped` is how many were not read (a huge PR). */
+  files: () => Promise<{ files: TextFile[]; skipped: number }>;
 };
 
 /**
@@ -49,6 +62,8 @@ export type CodeNav = {
   sendText: boolean;
   /** Show the navigation panel (references, implementations, calls) for a symbol. */
   openPanel: (query: NavQuery) => void;
+  /** Set when there is no language server to ask (a PR with no clone): navigation by text. */
+  text: TextNav | null;
 };
 
 export const CodeNavContext = createContext<CodeNav | null>(null);

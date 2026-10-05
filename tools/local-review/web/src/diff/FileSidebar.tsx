@@ -202,8 +202,15 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
     </TreeView.Item>
   );
 
-  // Files code navigation opened that are not (or no longer) in the diff.
-  const outside = useMemo(() => navFiles.filter((p) => !files.some((f) => f.path === p)), [navFiles, files]);
+  // Files code navigation opened that are not (or no longer) in the diff. One
+  // with comments is listed once, under «Вне диффа», where it stays after a reload.
+  const outside = useMemo(
+    () =>
+      navFiles.filter(
+        (p) => !files.some((f) => f.path === p) && !shownOrphans.some((f) => f.path === p) && !hiddenOrphans.some((f) => f.path === p),
+      ),
+    [navFiles, files, shownOrphans, hiddenOrphans],
+  );
 
   const renderNav = (path: string) => (
     <TreeView.Item
