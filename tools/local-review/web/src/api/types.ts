@@ -98,6 +98,87 @@ export type DiffResponse = {
   oldText?: string | null;
   newText?: string | null;
   textUnavailable?: string;
+  /**
+   * Client-side only: not a diff but a whole file outside it, opened by code
+   * navigation (GET /api/file). Both texts are the file; it is read-only.
+   */
+  fullFile?: boolean;
+};
+
+/** GET /api/file: a whole file of the working tree, inside the repository. */
+export type FileResponse = {
+  path: string;
+  /** null for a binary file or one too big to show. */
+  text: string | null;
+  binary: boolean;
+  textUnavailable?: string;
+};
+
+/** What a language server is doing for one repository (GET /api/lsp/status). */
+export type LspState = 'stopped' | 'starting' | 'indexing' | 'ready' | 'failed' | 'stopping';
+
+export type LspServerStatus = {
+  /** typescript | java | go | python | rust */
+  id: string;
+  name: string;
+  /** The program: tsserver, tsgo, jdtls, … */
+  label: string;
+  /** File extensions it serves, with the dot. */
+  extensions: string[];
+  /** Where it was found; null = not installed. */
+  found: { command: string; source: 'node_modules' | 'PATH' } | null;
+  /** What to install when it is not found. */
+  hint: string;
+  state: LspState;
+  message: string | null;
+};
+
+export type LspRunning = { root: string; id: string; label: string; state: LspState; pid: number; startedAt: string; lastUsed: string };
+
+export type LspStatusResponse = {
+  /** False for a PR (no clone) or when no repository was named. */
+  available: boolean;
+  reason?: 'no-clone';
+  message?: string;
+  root: string | null;
+  servers: LspServerStatus[];
+  running: LspRunning[];
+};
+
+/** A place a language server pointed at. Positions are zero-based (LSP). */
+export type LspLocation = {
+  /** Repository-relative; null when it is outside the repository. */
+  path: string | null;
+  /** The file or URI outside the repository. */
+  external?: string;
+  line: number;
+  character: number;
+  endLine: number;
+  endCharacter: number;
+};
+
+export type LspHover = { kind: 'markdown' | 'plaintext'; value: string };
+
+type LspServerInfo = { id: string; label: string; state: LspState };
+
+export type LspFailure = {
+  ok: false;
+  reason: 'no-clone' | 'unsupported' | 'no-server' | 'failed' | 'timeout';
+  message: string;
+  hint?: string | null;
+  server?: LspServerInfo;
+};
+
+export type LspDefinitionResponse = ({ ok: true; server: LspServerInfo; locations: LspLocation[] }) | LspFailure;
+export type LspHoverResponse = ({ ok: true; server: LspServerInfo; hover: LspHover | null }) | LspFailure;
+
+export type LspRequest = {
+  path: string;
+  /** Zero-based line and UTF-16 column, as LSP counts them. */
+  line: number;
+  character: number;
+  /** The text on screen when it is not the working tree (staged, commits). */
+  text?: string;
 };
 
 /** Commit range a comment was written against; omitted for the latest-commit-only selection. */

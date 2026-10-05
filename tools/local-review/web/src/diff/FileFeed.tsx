@@ -8,8 +8,11 @@ import { useFileDiff } from '../review/useFileDiff';
 import { Empty, FileDiff, type FileDiffActions, type FileDiffProps } from './FileDiff';
 import { currentIndexAt, isCollapsed, placeholderHeight, type CollapseChoice } from './feedMath';
 
-/** One section of the feed: a file of the diff, or (at the end) a file that only has comments left. */
-export type FeedFile = { path: string; entry: FileEntry | undefined; orphan: boolean };
+/**
+ * One section of the feed: a file of the diff, or (at the end) a file that
+ * only has comments left, or one code navigation opened (`nav`, shown whole).
+ */
+export type FeedFile = { path: string; entry: FileEntry | undefined; orphan: boolean; nav?: boolean };
 
 /** What the feed decides for a file itself; the rest comes from the pane. */
 type OwnProps = 'diff' | 'collapsed' | 'onCollapse' | 'placeholderHeight' | 'onRetry' | 'actions';
@@ -26,6 +29,9 @@ type Props = {
   /** A pending «scroll to this comment»: its file has to be open and loaded. */
   reveal: { comment: Comment; nonce: number } | null;
   onRevealed: (nonce: number) => void;
+  /** A pending «scroll to this line» (code navigation): the same, for a line. */
+  lineReveal: { path: string; nonce: number } | null;
+  onLineRevealed: (nonce: number) => void;
   /** The open new-comment form: its file cannot be collapsed, the form is in the body. */
   editor: EditorAnchor | null;
   actions: FileDiffActions;
@@ -92,7 +98,20 @@ function FeedItem({ file, diffs, near, collapsed, shared, actions, onCollapse, o
  * to its header and never loads. The file at the top is reported back as the
  * current one, and a request to open a file scrolls to it.
  */
-export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, reveal, onRevealed, editor, actions, fileProps }: Props) {
+export function FileFeed({
+  files,
+  diffs,
+  activeFile,
+  fileFocus,
+  onCurrentFile,
+  reveal,
+  onRevealed,
+  lineReveal,
+  onLineRevealed,
+  editor,
+  actions,
+  fileProps,
+}: Props) {
   const toast = useToast();
   const editorFile = editor?.file ?? null;
   const root = useRef<HTMLDivElement>(null);
@@ -288,27 +307,44 @@ export function FileFeed({ files, diffs, activeFile, fileFocus, onCurrentFile, r
     });
   }, [files]);
 
-  // A comment can only be scrolled to in an open, loaded file. The line itself
-  // is the editor's to scroll to once it exists (FileDiff); until then the
-  // file's header is the nearest thing to show.
+  // A comment (or a line a jump leads to) can only be scrolled to in an open,
+  // loaded file. The line itself is the editor's to scroll to once it exists
+  // (FileDiff); until then the file's header is the nearest thing to show.
+  // False when the file is not in the feed.
+  const prepare = useCallback(
+    (path: string) => {
+      const file = filesRef.current.find((f) => f.path === path);
+      if (!file) return false;
+      open(path);
+      pin.current = null;
+      if (diffs.get(path)?.kind === 'ready') return true;
+      if (file.orphan) diffs.setOrphan(path);
+      else void diffs.ensure(path);
+      aim(path);
+      return true;
+    },
+    [open, diffs, aim],
+  );
+
   useEffect(() => {
     const path = reveal?.comment.file;
     if (!path) return;
-    const file = filesRef.current.find((f) => f.path === path);
-    if (!file) {
+    if (!prepare(path)) {
       // Not in the feed: the request must not wait for the day the file is.
       onRevealed(reveal.nonce);
       toast('Файл комментария скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
-      return;
     }
-    open(path);
-    pin.current = null;
-    if (diffs.get(path)?.kind === 'ready') return;
-    if (file.orphan) diffs.setOrphan(path);
-    else void diffs.ensure(path);
-    aim(path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.nonce]);
+
+  useEffect(() => {
+    if (!lineReveal) return;
+    if (!prepare(lineReveal.path)) {
+      onLineRevealed(lineReveal.nonce);
+      toast('Файл скрыт поиском или правилами — сними их, чтобы перейти к строке', true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineReveal?.nonce]);
 
   // A file collapsed while its header was pinned would leave the reviewer
   // somewhere in the files below; bring its header back instead.

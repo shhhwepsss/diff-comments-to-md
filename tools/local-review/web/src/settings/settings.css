@@ -81,3 +81,24 @@
   min-width: 180px;
   font-family: var(--fontStack-monospace);
 }
+
+/* Навигация по коду: какие language server найдены. */
+.rv-lsp-status {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size-small);
+}
+.rv-lsp-status th,
+.rv-lsp-status td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-status th {
+  font-weight: 600;
+  color: var(--fgColor-muted);
+}
+.rv-lsp-status__missing {
+  color: var(--fgColor-default);
+}

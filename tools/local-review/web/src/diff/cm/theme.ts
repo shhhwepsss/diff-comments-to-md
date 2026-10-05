@@ -169,29 +169,30 @@ export const githubTheme = EditorView.theme({
   },
 });
 
-export const githubHighlight = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: 'var(--codeMirror-syntax-fgColor-comment)' },
-    {
-      tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword, t.self],
-      color: 'var(--codeMirror-syntax-fgColor-keyword)',
-    },
-    { tag: [t.string, t.special(t.string), t.regexp, t.character], color: 'var(--codeMirror-syntax-fgColor-string)' },
-    {
-      tag: [t.number, t.bool, t.null, t.atom, t.constant(t.variableName), t.definition(t.propertyName), t.attributeName, t.unit],
-      color: 'var(--codeMirror-syntax-fgColor-constant)',
-    },
-    {
-      tag: [t.function(t.variableName), t.function(t.propertyName), t.definition(t.function(t.variableName)), t.tagName, t.macroName],
-      color: 'var(--codeMirror-syntax-fgColor-entity)',
-    },
-    { tag: [t.typeName, t.className, t.namespace, t.labelName], color: 'var(--codeMirror-syntax-fgColor-variable)' },
-    { tag: [t.definition(t.variableName)], color: 'var(--codeMirror-syntax-fgColor-constant)' },
-    { tag: [t.meta, t.processingInstruction, t.annotation], color: 'var(--codeMirror-syntax-fgColor-support)' },
-    { tag: t.heading, fontWeight: '600', color: 'var(--codeMirror-syntax-fgColor-constant)' },
-    { tag: t.strong, fontWeight: '600' },
-    { tag: t.emphasis, fontStyle: 'italic' },
-    { tag: t.link, textDecoration: 'underline' },
-    { tag: t.invalid, color: 'var(--fgColor-danger)' },
-  ]),
-);
+/** Also used outside the editor: the hover tooltip highlights its signature with it. */
+export const githubHighlightStyle = HighlightStyle.define([
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: 'var(--codeMirror-syntax-fgColor-comment)' },
+  {
+    tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword, t.self],
+    color: 'var(--codeMirror-syntax-fgColor-keyword)',
+  },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: 'var(--codeMirror-syntax-fgColor-string)' },
+  {
+    tag: [t.number, t.bool, t.null, t.atom, t.constant(t.variableName), t.definition(t.propertyName), t.attributeName, t.unit],
+    color: 'var(--codeMirror-syntax-fgColor-constant)',
+  },
+  {
+    tag: [t.function(t.variableName), t.function(t.propertyName), t.definition(t.function(t.variableName)), t.tagName, t.macroName],
+    color: 'var(--codeMirror-syntax-fgColor-entity)',
+  },
+  { tag: [t.typeName, t.className, t.namespace, t.labelName], color: 'var(--codeMirror-syntax-fgColor-variable)' },
+  { tag: [t.definition(t.variableName)], color: 'var(--codeMirror-syntax-fgColor-constant)' },
+  { tag: [t.meta, t.processingInstruction, t.annotation], color: 'var(--codeMirror-syntax-fgColor-support)' },
+  { tag: t.heading, fontWeight: '600', color: 'var(--codeMirror-syntax-fgColor-constant)' },
+  { tag: t.strong, fontWeight: '600' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.link, textDecoration: 'underline' },
+  { tag: t.invalid, color: 'var(--fgColor-danger)' },
+]);
+
+export const githubHighlight = syntaxHighlighting(githubHighlightStyle);

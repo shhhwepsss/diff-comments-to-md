@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@primer/react';
 import { SettingsSection } from './SettingsScreen';
-import { bindingFromEvent, formatBinding, KEYBINDING_ACTIONS, type Keybindings } from '../lib/keybindings';
+import { bindingFromEvent, displayBinding, formatBinding, KEYBINDING_ACTIONS, type Keybindings } from '../lib/keybindings';
 
 /**
  * One row: the action, the shortcut it has and the two things you can do to it.
@@ -54,7 +54,7 @@ function KeybindingRow({
         onClick={() => setRecording(true)}
         disabled={recording}
       >
-        {recording ? 'Нажми сочетание…' : value || 'Не задано'}
+        {recording ? 'Нажми сочетание…' : displayBinding(value) || 'Не задано'}
       </Button>
       <Button variant="invisible" onClick={() => onChange('')} disabled={recording || !value}>
         Очистить
@@ -73,7 +73,7 @@ export function KeybindingsSection({
   return (
     <SettingsSection
       title="Горячие клавиши"
-      description="По умолчанию заданы Alt+V («просмотрено») и Alt+A (режим просмотра). Клавиша — буква, цифра или F1–F12, с модификаторами или без; сочетание не срабатывает, пока курсор в поле ввода. Esc всегда выходит из Zen и его назначить нельзя."
+      description="По умолчанию заданы Alt+V («просмотрено»), Alt+A (режим просмотра), F12 (определение) и Alt+←/→ (назад и вперёд по переходам). Клавиша — буква, цифра, F1–F12 или стрелка ←/→ (стрелка — только с Ctrl, Alt или Meta); сочетание не срабатывает, пока курсор в поле ввода. Esc всегда выходит из Zen и его назначить нельзя. F12 браузер может сначала отдать DevTools — тогда назначьте другое сочетание; Ctrl+клик и меню по правой кнопке работают всегда."
     >
       <div className="rv-keybindings">
         {KEYBINDING_ACTIONS.map((action) => (

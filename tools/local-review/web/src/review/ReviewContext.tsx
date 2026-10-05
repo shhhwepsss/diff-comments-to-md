@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
-import type { Comment, Commit, Descriptor, DirtyStatus, LocalDescriptor, Mode, StateResponse } from '../api/types';
+import type { Comment, Commit, Descriptor, DiffResponse, DirtyStatus, FileResponse, LocalDescriptor, Mode, StateResponse } from '../api/types';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
-import { descriptorFromHash, hashFor, navigationFor, viewHash } from '../lib/hash';
+import { descriptorFromHash, fileFromHash, hashFor, lineFromHash, navigationFor, viewHash } from '../lib/hash';
+import { LspSession } from '../lsp/session';
+import { NavHistory, type StorageLike } from '../nav/history';
 import { createDraftStore, type DraftStore } from './drafts';
 import { createDiffStore, type DiffStore } from './diffStore';
 import { watchReturn } from './focusRevalidate';
@@ -35,6 +37,37 @@ const RETURN_GAP_MS = 5000;
 
 /** Where a new comment goes: a line range in the new file, or the whole file. */
 export type EditorAnchor = { file: string; start: number | null; end: number | null };
+
+/** «Scroll this file to this line» (1-based), with the caret at column `ch`; `nonce` makes a repeat new. */
+export type LineReveal = { path: string; line: number; ch?: number; nonce: number };
+
+/** A place to jump to: a repository file and a zero-based LSP position in it. */
+export type NavTarget = { path: string; line: number; character: number };
+
+/** A file outside the diff, shown whole: GET /api/file as a diff with nothing changed. */
+function fullFileDiff(file: FileResponse): DiffResponse {
+  return {
+    path: file.path,
+    status: '',
+    kind: '',
+    hunks: [],
+    binary: file.binary,
+    additions: null,
+    deletions: null,
+    oldText: file.text,
+    newText: file.text,
+    textUnavailable: file.textUnavailable,
+    fullFile: true,
+  };
+}
+
+function sessionStorageOrNull(): StorageLike | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
 export type Review = {
   descriptor: Descriptor;
@@ -88,6 +121,14 @@ export type Review = {
   reveal: { commentId: string; nonce: number } | null;
   /** The view «Открыть в <коммит>» left; set while that old commit is on screen. */
   returnTo: Descriptor | null;
+  /** The language servers of this review: status and requests. */
+  lsp: LspSession;
+  /** Back / Forward through jumps, on top of the browser history. */
+  navHistory: NavHistory;
+  /** Files outside the diff that code navigation opened, in the order they were opened. */
+  navFiles: string[];
+  /** A pending «scroll to this line», set by a jump and by Back/Forward. */
+  lineReveal: LineReveal | null;
 
   reload: () => void;
   setMode: (mode: Mode) => void;
@@ -107,6 +148,14 @@ export type Review = {
   returnFromCommit: () => void;
   dismissReturn: () => void;
   selectFile: (path: string) => void;
+  /**
+   * Go to definition's last step: opens `target` (a file of the diff, or any
+   * other file of the repository, read-only) at its line, as a history step;
+   * the entry left behind remembers `from`, so Back returns to that line.
+   */
+  navigateTo: (target: NavTarget, from: { path: string; line: number }) => void;
+  /** Drops a file from «Открыто через навигацию». */
+  closeNavFile: (path: string) => void;
   /**
    * The feed scrolled to this file. Only moves `activeFile` (and with it the
    * address): no history step, no fetch, and the open form stays open.
@@ -184,11 +233,21 @@ export function ReviewProvider({
   const [fileFocus, setFileFocus] = useState<{ path: string; nonce: number } | null>(null);
   const [editor, setEditor] = useState<EditorAnchor | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Back/Forward and the diff fetcher need the file list without re-subscribing on every load.
+  const stateRef = useRef<StateResponse | null>(null);
+  stateRef.current = state;
   // One store for the life of this review; the provider remounts per descriptor.
   const [drafts] = useState(createDraftStore);
   // Reads the descriptor at fetch time: the view (mode, base, range) changes
   // under one provider, and every change resets the store.
-  const [diffs] = useState(() => createDiffStore((path, fresh) => api.diff(descriptorRef.current, path, fresh)));
+  // A file code navigation opened outside the diff is read whole instead.
+  const [diffs] = useState(() =>
+    createDiffStore((path, fresh) =>
+      navFilesRef.current.includes(path) && !(stateRef.current?.files ?? []).some((f) => f.path === path)
+        ? api.file(descriptorRef.current, path).then(fullFileDiff)
+        : api.diff(descriptorRef.current, path, fresh),
+    ),
+  );
 
   // Commits-mode state. The provider does NOT remount when toggling this mode
   // (hashFor ignores from/to on purpose), so it lives alongside the rest here.
@@ -206,6 +265,16 @@ export function ReviewProvider({
   const [currentCommentId, setCurrentCommentId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ commentId: string; nonce: number } | null>(null);
   const [returnTo, setReturnTo] = useState<Descriptor | null>(null);
+  const [navFiles, setNavFiles] = useState<string[]>([]);
+  // Read by the diff fetcher, which must know before the first render after a jump.
+  const navFilesRef = useRef<string[]>([]);
+  const [lineReveal, setLineReveal] = useState<LineReveal | null>(null);
+  const [lsp] = useState(() => new LspSession(() => descriptorRef.current));
+  const [navHistory] = useState(() => new NavHistory(window.history, sessionStorageOrNull(), hashFor(initial)));
+  useEffect(() => {
+    lsp.start();
+    return () => lsp.stop();
+  }, [lsp]);
 
   // Responses for a descriptor the user already left must not land. (For a
   // file's diff the store does the same, per path.)
@@ -225,9 +294,6 @@ export function ReviewProvider({
   editorRef.current = editor;
   const editingIdRef = useRef(editingId);
   editingIdRef.current = editingId;
-  // Back/Forward needs the file list without re-subscribing on every load.
-  const stateRef = useRef<StateResponse | null>(null);
-  stateRef.current = state;
 
   const fail = useCallback((e: unknown) => toast(errorMessage(e), true), [toast]);
 
@@ -261,6 +327,13 @@ export function ReviewProvider({
     [diffs, fail],
   );
 
+  /** Puts a file in «Открыто через навигацию»; the ref first, the fetcher reads it right away. */
+  const addNavFile = useCallback((path: string) => {
+    if (navFilesRef.current.includes(path)) return;
+    navFilesRef.current = [...navFilesRef.current, path];
+    setNavFiles(navFilesRef.current);
+  }, []);
+
   // Quietly: without the history nothing is marked stale, the diff still works.
   const loadAgeHistory = useCallback(async (d: Descriptor, fresh: boolean) => {
     const seq = ++ageSeq.current;
@@ -273,7 +346,7 @@ export function ReviewProvider({
   }, []);
 
   const load = useCallback(
-    async (d: Descriptor, keepFile: string | null, fresh: boolean) => {
+    async (d: Descriptor, keepFile: string | null, fresh: boolean, opts: { named?: boolean; line?: number } = {}) => {
       const seq = ++stateSeq.current;
       setLoading(true);
       // Commits mode keeps its own history (the rail's); every other view needs it fetched.
@@ -298,8 +371,19 @@ export function ReviewProvider({
         diffs.reset({ keep: fresh });
         const inDiff = keepFile !== null && next.files.some((f) => f.path === keepFile);
         const inOrphans = keepFile !== null && next.orphanFiles.some((f) => f.path === keepFile);
-        if (inDiff || inOrphans) {
-          await loadDiff(keepFile, !inDiff, fresh);
+        // A file outside the diff stays open as one when code navigation
+        // opened it, or when the address names it (a reload, a link, Back).
+        // Otherwise — a mode switch — a file the new view lacks is left for
+        // the first one.
+        const asNav =
+          keepFile !== null &&
+          !inDiff &&
+          d.source === 'local' &&
+          (navFilesRef.current.includes(keepFile) || (Boolean(opts.named) && !inOrphans));
+        if (asNav) addNavFile(keepFile);
+        if (inDiff || inOrphans || asNav) {
+          await loadDiff(keepFile, !inDiff && !asNav, fresh);
+          if (opts.line) setLineReveal((r) => ({ path: keepFile, line: opts.line as number, nonce: (r?.nonce ?? 0) + 1 }));
         } else if (next.files.length) {
           // The feed starts at its top, and its order is the sidebar tree's.
           const first = feedRef.current ? filesOf(buildTree(next.files, (f) => f.path))[0] : next.files[0];
@@ -315,7 +399,7 @@ export function ReviewProvider({
         if (seq === stateSeq.current) setLoading(false);
       }
     },
-    [diffs, fail, loadDiff, loadAgeHistory],
+    [diffs, fail, loadDiff, loadAgeHistory, addNavFile],
   );
 
   /**
@@ -392,7 +476,7 @@ export function ReviewProvider({
     // long way: the rail needs its history, and /api/state needs a resolved
     // range, so the range in the address can't just be loaded as a diff.
     if (isCommitsMode(descriptor)) void enterCommitsMode(false, { from: descriptor.from, to: descriptor.to, file: initialFile });
-    else void load(descriptor, initialFile, false);
+    else void load(descriptor, initialFile, false, { named: true, line: lineFromHash(window.location.hash) ?? undefined });
     // Remember the choice so an empty hash after a restart lands here again.
     // The review works without it, but a silent failure means the next launch
     // quietly opens something else.
@@ -407,12 +491,17 @@ export function ReviewProvider({
   // it fires no hashchange, so this never re-enters the Back/Forward handler.
   // Skipped once the address points elsewhere (the user is leaving this review).
   useEffect(() => {
-    if (!state) return;
+    // Not while a view loads: the descriptor is already the new one but the
+    // open file is still the old one, and the address (which may name the
+    // file and line Back is going to) would be overwritten with that.
+    if (!state || loading) return;
     const current = window.location.hash;
     if (hashFor(descriptorFromHash(current)) !== hashFor(descriptor)) return;
-    const next = viewHash(descriptor, activeFile);
+    // The line a jump put in the address stays while its file is the open one.
+    const line = activeFile && fileFromHash(current) === activeFile ? lineFromHash(current) : null;
+    const next = viewHash(descriptor, activeFile, line);
     if (next !== current) window.history.replaceState(window.history.state, '', next);
-  }, [state, descriptor, activeFile]);
+  }, [state, descriptor, activeFile, loading]);
 
   const refreshComments = useCallback(async () => {
     commentsSeq.current += 1;
@@ -475,6 +564,8 @@ export function ReviewProvider({
       const file = activeFileRef.current;
       if (file && next.files.some((f) => f.path === file)) {
         // Not forced: the diff on screen stays there until its replacement comes.
+        void diffs.ensure(file, { fresh: true });
+      } else if (file && navFilesRef.current.includes(file)) {
         void diffs.ensure(file, { fresh: true });
       } else if (file && next.orphanFiles.some((f) => f.path === file)) {
         diffs.setOrphan(file);
@@ -640,13 +731,23 @@ export function ReviewProvider({
 
   const dismissReturn = useCallback(() => setReturnTo(null), []);
 
-  /** Opens `path` without touching history — the Back/Forward handler's way in. */
+  /**
+   * Opens `path` without touching history — the Back/Forward handler's way in.
+   * A path that is neither in the diff nor among the files with comments is a
+   * file code navigation led to (Back into it after a reload): shown whole.
+   */
   const openFile = useCallback(
     (path: string) => {
-      const orphan = !(stateRef.current?.files ?? []).some((f) => f.path === path);
-      void loadDiff(path, orphan, false);
+      const s = stateRef.current;
+      const inDiff = (s?.files ?? []).some((f) => f.path === path);
+      const nav =
+        !inDiff &&
+        (navFilesRef.current.includes(path) ||
+          (descriptorRef.current.source === 'local' && !(s?.orphanFiles ?? []).some((f) => f.path === path)));
+      if (nav) addNavFile(path);
+      void loadDiff(path, !inDiff && !nav, false);
     },
-    [loadDiff],
+    [loadDiff, addNavFile],
   );
 
   const selectFile = useCallback(
@@ -656,10 +757,38 @@ export function ReviewProvider({
       // base and range edits only rewrite the entry (see the mirror effect),
       // so Back never silently swaps the diff under the same address.
       const next = viewHash(descriptorRef.current, path);
-      if (next && next !== window.location.hash) window.history.pushState(window.history.state, '', next);
+      if (next && next !== window.location.hash) navHistory.push(next);
       openFile(path);
     },
-    [openFile],
+    [openFile, navHistory],
+  );
+
+  const navigateTo = useCallback(
+    (target: NavTarget, from: { path: string; line: number }) => {
+      const d = descriptorRef.current;
+      // The entry being left remembers the line the jump started from.
+      navHistory.replace(viewHash(d, from.path, from.line));
+      navHistory.push(viewHash(d, target.path, target.line + 1));
+      const inDiff = (stateRef.current?.files ?? []).some((f) => f.path === target.path);
+      if (!inDiff) addNavFile(target.path);
+      // Within one file only the line moves: the editor on screen stays.
+      if (target.path !== from.path || target.path !== activeFileRef.current) openFile(target.path);
+      setLineReveal((r) => ({ path: target.path, line: target.line + 1, ch: target.character, nonce: (r?.nonce ?? 0) + 1 }));
+    },
+    [navHistory, addNavFile, openFile],
+  );
+
+  const closeNavFile = useCallback(
+    (path: string) => {
+      navFilesRef.current = navFilesRef.current.filter((p) => p !== path);
+      setNavFiles(navFilesRef.current);
+      if (activeFileRef.current !== path) return;
+      const files = stateRef.current?.files ?? [];
+      const first = feedRef.current ? filesOf(buildTree(files, (f) => f.path))[0] : files[0];
+      if (first) selectFile(first.path);
+      else setActiveFile(null);
+    },
+    [selectFile],
   );
 
   const setCurrentFile = useCallback((path: string) => setActiveFile(path), []);
@@ -755,7 +884,9 @@ export function ReviewProvider({
       const nav = navigationFor(hash, current, activeFileRef.current);
       if (nav.kind === 'ignore') return;
       if (nav.kind === 'file') {
-        openFile(nav.file);
+        if (nav.file !== activeFileRef.current) openFile(nav.file);
+        const line = nav.line;
+        if (line) setLineReveal((r) => ({ path: nav.file, line, nonce: (r?.nonce ?? 0) + 1 }));
         return;
       }
       const target = nav.descriptor;
@@ -768,21 +899,24 @@ export function ReviewProvider({
       setCommitSel(null);
       descriptorRef.current = target;
       setDescriptor(target);
-      void load(target, nav.file, false);
+      void load(target, nav.file, false, { named: true, line: nav.line });
     },
     [enterCommitsMode, load, openFile],
   );
 
   useEffect(() => {
     // popstate covers Back/Forward; hashchange covers an address typed by hand.
-    const onNavigate = () => restore(window.location.hash);
+    const onNavigate = () => {
+      navHistory.sync();
+      restore(window.location.hash);
+    };
     window.addEventListener('popstate', onNavigate);
     window.addEventListener('hashchange', onNavigate);
     return () => {
       window.removeEventListener('popstate', onNavigate);
       window.removeEventListener('hashchange', onNavigate);
     };
-  }, [restore]);
+  }, [restore, navHistory]);
 
   const openEditor = useCallback((anchor: EditorAnchor) => {
     setEditingId(null);
@@ -953,6 +1087,10 @@ export function ReviewProvider({
       currentCommentId,
       reveal,
       returnTo,
+      lsp,
+      navHistory,
+      navFiles,
+      lineReveal,
       reload,
       setMode,
       setBase,
@@ -966,6 +1104,8 @@ export function ReviewProvider({
       returnFromCommit,
       dismissReturn,
       selectFile,
+      navigateTo,
+      closeNavFile,
       setCurrentFile,
       setFeedOrder,
       setFileViewed,
@@ -1011,6 +1151,10 @@ export function ReviewProvider({
       currentCommentId,
       reveal,
       returnTo,
+      lsp,
+      navHistory,
+      navFiles,
+      lineReveal,
       reload,
       setMode,
       setBase,
@@ -1024,6 +1168,8 @@ export function ReviewProvider({
       returnFromCommit,
       dismissReturn,
       selectFile,
+      navigateTo,
+      closeNavFile,
       setCurrentFile,
       setFeedOrder,
       setFileViewed,

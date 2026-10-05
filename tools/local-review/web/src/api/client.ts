@@ -5,8 +5,13 @@ import type {
   CommitsResponse,
   Descriptor,
   DiffResponse,
+  FileResponse,
   GhStatus,
   Gitignore,
+  LspDefinitionResponse,
+  LspHoverResponse,
+  LspRequest,
+  LspStatusResponse,
   PickFolderResponse,
   PrSearchResponse,
   RepoListResponse,
@@ -204,6 +209,15 @@ export const api = {
   settings: () => request<Settings>('/api/settings').then(normalizeSettings),
   saveSettings: (patch: Partial<Settings>) =>
     request<Settings>('/api/settings', jsonBody('PUT', patch)).then(normalizeSettings),
+
+  // Code navigation. The descriptor rides in the query, like everywhere else.
+  lspDefinition: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspDefinitionResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'definition', ...body }), signal }),
+  lspHover: (d: Descriptor, body: LspRequest, signal?: AbortSignal) =>
+    request<LspHoverResponse>(`/api/lsp?${descriptorQuery(d)}`, { ...jsonBody('POST', { method: 'hover', ...body }), signal }),
+  /** No descriptor: what is installed on PATH and what runs anywhere (the settings page). */
+  lspStatus: (d: Descriptor | null) => request<LspStatusResponse>(`/api/lsp/status${d ? `?${descriptorQuery(d)}` : ''}`),
+  file: (d: Descriptor, path: string) => request<FileResponse>(`/api/file?${descriptorQuery(d, { path })}`),
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   repos: () => request<RepoListResponse>('/api/gh/repos'),

@@ -10,6 +10,8 @@ const settings = require('./settings');
 const ghRoutes = require('./gh');
 const commitsRoutes = require('./commits');
 const viewedRoutes = require('./viewed');
+const lspRoutes = require('./lsp');
+const fileRoutes = require('./file');
 
 const ROUTES = [
   { method: 'GET', path: '/api/state', handle: state.getState },
@@ -33,6 +35,9 @@ const ROUTES = [
   { method: 'GET', path: '/api/gh/repos', handle: ghRoutes.repos },
   { method: 'GET', path: '/api/pr/search', handle: ghRoutes.search },
   { method: 'GET', path: '/api/pr/resolve', handle: ghRoutes.resolve },
+  { method: 'POST', path: '/api/lsp', handle: lspRoutes.request },
+  { method: 'GET', path: '/api/lsp/status', handle: lspRoutes.status },
+  { method: 'GET', path: '/api/file', handle: fileRoutes.read },
 ];
 
 const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;

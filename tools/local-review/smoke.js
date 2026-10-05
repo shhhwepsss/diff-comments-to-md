@@ -174,6 +174,322 @@ function json(method, payload) {
   };
 }
 
+// ------------------------------------------------------------------- LSP
+
+const FIXTURE_LSP = path.join(__dirname, 'smoke-fixtures', 'lsp-fixture.js');
+
+/** A launcher for the fake server where the registry looks first: <repo>/node_modules/.bin. */
+function installFakeLsp(repo, bin) {
+  const dir = path.join(repo, 'node_modules', '.bin');
+  fs.mkdirSync(dir, { recursive: true });
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(dir, `${bin}.cmd`), `@"${process.execPath}" "${FIXTURE_LSP}" %*\r\n`);
+  } else {
+    const file = path.join(dir, bin);
+    fs.writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "${FIXTURE_LSP}" "$@"\n`);
+    fs.chmodSync(file, 0o755);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Polls `probe` until it returns something truthy or `ms` runs out. */
+async function waitFor(probe, ms) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const value = await probe();
+    if (value || Date.now() > until) return value;
+    await sleep(50);
+  }
+}
+
+/**
+ * The language-server layer: framing, the registry's lookup, the manager's
+ * life cycle (start, sync, crash, idle stop) through the real HTTP routes,
+ * and the path checks of /api/lsp and /api/file. The server is the fixture
+ * above; a check against the real typescript-language-server is a manual
+ * step (README, «IDE-режим»).
+ */
+async function lspChecks(call, home) {
+  const { encode, MessageReader, Connection } = require('./lib/lsp/jsonrpc');
+  const registry = require('./lib/lsp/registry');
+  const lspRoutes = require('./lib/routes/lsp');
+
+  console.log('\nLSP: framing Content-Length');
+  {
+    const got = [];
+    const reader = new MessageReader((m) => got.push(m));
+    const one = encode({ jsonrpc: '2.0', id: 1, result: 'привет, мир' });
+    const two = encode({ jsonrpc: '2.0', method: 'x', params: { s: '日本' } });
+    const all = Buffer.concat([one, two]);
+    // Byte by byte: the header, the length and a multi-byte character all split.
+    for (let i = 0; i < all.length; i += 1) reader.feed(all.subarray(i, i + 1));
+    eq(got, [{ jsonrpc: '2.0', id: 1, result: 'привет, мир' }, { jsonrpc: '2.0', method: 'x', params: { s: '日本' } }],
+      'MessageReader: сообщения, порезанные по байту, собираются целиком');
+    ok(one.toString('ascii').startsWith(`Content-Length: ${Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'привет, мир' }))}\r\n\r\n`),
+      'encode: Content-Length в байтах, не в символах');
+    got.length = 0;
+    reader.feed(all);
+    eq(got.length, 2, 'MessageReader: два сообщения в одном куске');
+    const errors = [];
+    const tolerant = new MessageReader((m) => got.push(m), (e) => errors.push(e.message));
+    got.length = 0;
+    tolerant.feed(Buffer.concat([Buffer.from('Content-Length: 3\r\n\r\n{x}', 'ascii'), two]));
+    ok(errors.length === 1 && got.length === 1, 'MessageReader: битый JSON пропущен, следующее сообщение прочитано', JSON.stringify({ errors, got }));
+  }
+
+  console.log('\nLSP: Connection');
+  {
+    const written = [];
+    const conn = new Connection(
+      { write: (buf) => new MessageReader((m) => written.push(m)).feed(buf) },
+      { onRequest: (method, params) => (method === 'workspace/configuration' ? params.items.map(() => null) : undefined) }
+    );
+    const answer = conn.request('textDocument/hover', { a: 1 });
+    conn.feed(encode({ jsonrpc: '2.0', id: written[0].id, result: { contents: 'ok' } }));
+    eq(await answer, { contents: 'ok' }, 'request: ответ сопоставлен по id');
+    const failing = conn.request('x', null);
+    conn.feed(encode({ jsonrpc: '2.0', id: written[written.length - 1].id, error: { code: -32602, message: 'плохие параметры' } }));
+    const failure = await failing.catch((e) => e);
+    ok(failure instanceof Error && failure.code === -32602, 'request: ошибка сервера -> reject с её кодом', String(failure && failure.code));
+    const late = await conn.request('slow', null, { timeoutMs: 30 }).catch((e) => e);
+    ok(late.code === 'ETIMEDOUT', 'request: таймаут -> ETIMEDOUT', String(late.code));
+    ok(written.some((m) => m.method === '$/cancelRequest'), 'request: по таймауту серверу уходит $/cancelRequest');
+    conn.feed(encode({ jsonrpc: '2.0', id: 77, method: 'workspace/configuration', params: { items: [{}, {}] } }));
+    await sleep(0);
+    eq(written.find((m) => m.id === 77), { jsonrpc: '2.0', id: 77, result: [null, null] }, 'запрос сервера к клиенту получает ответ');
+    conn.feed(encode({ jsonrpc: '2.0', id: 78, method: 'unknown/thing' }));
+    await sleep(0);
+    eq((written.find((m) => m.id === 78) || {}).error && written.find((m) => m.id === 78).error.code, -32601,
+      'неизвестный запрос сервера -> MethodNotFound');
+    const pending = conn.request('never', null);
+    conn.close(new Error('закрыто'));
+    eq((await pending.catch((e) => e)).message, 'закрыто', 'close: ожидающие запросы отклоняются');
+  }
+
+  // A repository with two TypeScript files that import each other.
+  const lspRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-'));
+  git(['init', '-q', '-b', 'main'], lspRepo);
+  git(['config', 'user.email', 'smoke@example.com'], lspRepo);
+  git(['config', 'user.name', 'Smoke Test'], lspRepo);
+  git(['config', 'commit.gpgsign', 'false'], lspRepo);
+  write(lspRepo, 'src/b.ts', 'export function helper() {\n  return 1;\n}\n');
+  write(lspRepo, 'src/a.ts', "import { helper } from './b';\nexport const value = helper();\n");
+  write(lspRepo, 'README.md', '# lsp\n');
+  write(lspRepo, '.gitignore', 'node_modules/\n.local-review/\n');
+  git(['add', '-A'], lspRepo);
+  git(['commit', '-q', '-m', 'init'], lspRepo);
+  write(lspRepo, 'src/a.ts', "import { helper } from './b';\nexport const value = helper() + helper();\nconst crash = outside;\n");
+  write(lspRepo, 'assets/blob.bin', Buffer.from([0, 1, 2, 0]));
+  installFakeLsp(lspRepo, 'typescript-language-server');
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-outside-'));
+  write(outsideDir, 'secret.ts', 'export const secret = 1;\n');
+  let symlinked = false;
+  try {
+    fs.symlinkSync(path.join(outsideDir, 'secret.ts'), path.join(lspRepo, 'src', 'link.ts'));
+    symlinked = true;
+  } catch {
+    /* no symlinks here (Windows without the privilege): that check is skipped */
+  }
+  const fixtureLog = path.join(home, 'lsp-fixture.log');
+  process.env.LOCAL_REVIEW_LSP_FIXTURE_LOG = fixtureLog;
+  const methods = () => (fs.existsSync(fixtureLog) ? fs.readFileSync(fixtureLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).method) : []);
+
+  console.log('\nLSP: реестр серверов');
+  {
+    eq(registry.serverFor('src/x.tsx').id, 'typescript', 'реестр: .tsx -> typescript-language-server');
+    eq(registry.serverFor('Main.java').id, 'java', 'реестр: .java -> jdtls');
+    eq(registry.serverFor('README.md'), null, 'реестр: .md -> нет сервера');
+    eq(registry.languageIdFor(registry.serverFor('a.jsx'), 'a.jsx'), 'javascriptreact', 'реестр: languageId для .jsx');
+    const found = registry.findExecutable('typescript-language-server', { root: lspRepo, env: { PATH: '' } });
+    ok(found && found.source === 'node_modules', 'поиск: сначала <repo>/node_modules/.bin', JSON.stringify(found));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-path-'));
+    installFakeLsp(binDir, 'gopls');
+    const onPath = registry.findExecutable('gopls', { root: lspRepo, env: { PATH: path.join(binDir, 'node_modules', '.bin'), PATHEXT: '.CMD' } });
+    ok(onPath && onPath.source === 'PATH', 'поиск: затем PATH', JSON.stringify(onPath));
+    eq(registry.findExecutable('rust-analyzer', { root: lspRepo, env: { PATH: binDir } }), null, 'поиск: не найден -> null');
+    if (process.platform !== 'win32') {
+      const notExec = path.join(binDir, 'pyright-langserver');
+      fs.writeFileSync(notExec, '#!/bin/sh\n');
+      fs.chmodSync(notExec, 0o644);
+      eq(registry.findExecutable('pyright-langserver', { env: { PATH: binDir } }), null, 'поиск: файл без права на запуск не считается');
+    }
+    const winFound = registry.findExecutable('gopls', {
+      env: { PATH: path.join(binDir, 'node_modules', '.bin'), PATHEXT: '.EXE;.CMD' },
+      platform: 'win32',
+    });
+    ok(process.platform === 'win32' ? Boolean(winFound) : winFound === null, 'поиск: на Windows имя берётся с расширением из PATHEXT');
+    installFakeLsp(binDir, 'jdtls');
+    const java = registry.commandFor(registry.serverById('java'), lspRepo, {
+      homeDir: home,
+      env: { PATH: path.join(binDir, 'node_modules', '.bin') },
+    });
+    ok(
+      java && java.args[0] === '-data' && java.args[1] === path.join(home, 'jdtls', registry.rootHash(lspRepo)),
+      'jdtls: -data ~/.local-review/jdtls/<хеш репозитория>',
+      JSON.stringify(java)
+    );
+    ok(/^[0-9a-f]{16}$/.test(registry.rootHash(lspRepo)) && registry.rootHash(lspRepo) !== registry.rootHash(outsideDir),
+      'jdtls: у разных репозиториев разные каталоги данных');
+    // TypeScript 7 serves LSP itself (`tsc --lsp --stdio`); typescript-language-server cannot run on it.
+    const ts7 = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-ts7-'));
+    installFakeLsp(ts7, 'tsc');
+    installFakeLsp(ts7, 'typescript-language-server');
+    write(ts7, 'node_modules/typescript/package.json', JSON.stringify({ name: 'typescript', version: '7.0.2' }));
+    const tsServer = registry.serverById('typescript');
+    const native = registry.commandFor(tsServer, ts7, { homeDir: home, env: { PATH: '' } });
+    eq(native && [path.basename(native.command).replace(/\.cmd$/i, ''), native.args, native.label], ['tsc', ['--lsp', '--stdio'], 'tsgo'],
+      'TypeScript 7 в репозитории -> tsc --lsp --stdio');
+    write(ts7, 'node_modules/typescript/package.json', JSON.stringify({ name: 'typescript', version: '5.9.3' }));
+    const classic = registry.commandFor(tsServer, ts7, { homeDir: home, env: { PATH: '' } });
+    eq(classic && [path.basename(classic.command).replace(/\.cmd$/i, ''), classic.args, classic.label],
+      ['typescript-language-server', ['--stdio'], 'tsserver'], 'TypeScript 5 -> typescript-language-server --stdio');
+    fs.rmSync(ts7, { recursive: true, force: true });
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+
+  const lq = `source=local&root=${encodeURIComponent(lspRepo)}&mode=working`;
+  const lsp = (body, q = lq) => call(`/api/lsp?${q}`, json('POST', body));
+
+  console.log('\nLSP: статус и запросы');
+  const status0 = await call(`/api/lsp/status?${lq}`);
+  const ts0 = (status0.body.servers || []).find((s) => s.id === 'typescript');
+  ok(status0.status === 200 && ts0 && ts0.found && ts0.found.source === 'node_modules' && ts0.state === 'stopped',
+    'GET /api/lsp/status: tsserver найден в node_modules и ещё не запущен', JSON.stringify(ts0));
+  ok(ts0 && ts0.extensions.includes('.ts') && typeof ts0.hint === 'string', 'статус: расширения и подсказка, что ставить');
+
+  // `helper` on line 1 of a.ts (0-based: line 1, character 21).
+  const def = await lsp({ method: 'definition', path: 'src/a.ts', line: 1, character: 22 });
+  ok(def.status === 200 && def.body.ok, 'POST /api/lsp definition -> ok', JSON.stringify(def.body));
+  eq((def.body.locations || []).map((l) => [l.path, l.line, l.character]), [['src/b.ts', 0, 16]],
+    'definition: helper -> src/b.ts, строка 0, символ 16');
+  ok(['ready', 'indexing'].includes(def.body.server && def.body.server.state), 'ответ несёт состояние сервера', JSON.stringify(def.body.server));
+  const readyStatus = await waitFor(async () => {
+    const s = await call(`/api/lsp/status?${lq}`);
+    const t = s.body.servers.find((x) => x.id === 'typescript');
+    return t.state === 'ready' ? s : null;
+  }, 3000);
+  ok(readyStatus, 'после $/progress end сервер «готов»');
+  ok(readyStatus && readyStatus.body.running.some((r) => r.root === lspRepo && r.id === 'typescript'), 'статус: запущенный сервер в списке running');
+  eq(methods().filter((m) => m === 'initialize').length, 1, 'сервер запущен один раз (ленивый старт)');
+  ok(methods().includes('initialized') && methods().includes('textDocument/didOpen'), 'initialize -> initialized -> didOpen');
+
+  const hover1 = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 22 });
+  eq(hover1.body.hover, { kind: 'markdown', value: '```ts\n(word) helper\n```\nversion 1' }, 'hover: текст с диска, документ открыт один раз');
+  const shown = "import { helper } from './b';\nexport const shown = 1;\n";
+  const hover2 = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 15, text: shown });
+  eq(hover2.body.hover && hover2.body.hover.value, '```ts\n(word) shown\n```\nversion 2',
+    'hover: показанный текст (staged/коммиты) уходит в сервер через didChange');
+  const hover3 = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 15, text: shown });
+  eq(hover3.body.hover.value.endsWith('version 2'), true, 'hover: тот же текст повторно не отправляется');
+  eq(methods().filter((m) => m === 'textDocument/didOpen').length, 1, 'didOpen — один раз на документ');
+  const fromDisk = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 22 });
+  eq(fromDisk.body.hover && fromDisk.body.hover.value, '```ts\n(word) helper\n```\nversion 3',
+    'hover без text после показанной версии: документ возвращается к файлу на диске');
+  const bHover = await lsp({ method: 'hover', path: 'src/b.ts', line: 0, character: 17 });
+  eq(bHover.body.hover && bHover.body.hover.value, '```ts\n(word) helper\n```\nversion 1', 'hover в b.ts: открыт с диска');
+  write(lspRepo, 'src/b.ts', 'export function helperX() {\n  return 1;\n}\n');
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(lspRepo, 'src/b.ts'), later, later);
+  await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 22 });
+  const bAgain = await lsp({ method: 'hover', path: 'src/b.ts', line: 0, character: 17 });
+  eq(bAgain.body.hover && bAgain.body.hover.value, '```ts\n(word) helperX\n```\nversion 2',
+    'файл изменён на диске: открытый документ получает didChange');
+  write(lspRepo, 'src/b.ts', 'export function helper() {\n  return 1;\n}\n');
+  const virt = await lsp({ method: 'definition', path: 'src/gone.ts', line: 0, character: 10, text: "import { helper } from './b';\n" });
+  eq((virt.body.locations || []).map((l) => l.path), ['src/b.ts'], 'файла нет на диске, но текст передан: виртуальный документ');
+  const outside = await lsp({ method: 'definition', path: 'src/a.ts', line: 2, character: 16 });
+  ok(outside.body.ok && outside.body.locations[0].path === null && /elsewhere\.ts$/.test(outside.body.locations[0].external),
+    'definition вне репозитория: path null, external — где это', JSON.stringify(outside.body));
+  const md = await lsp({ method: 'hover', path: 'README.md', line: 0, character: 2 });
+  eq([md.body.ok, md.body.reason], [false, 'unsupported'], 'файл без language server -> unsupported');
+  eq((await lsp({ method: 'rename', path: 'src/a.ts', line: 0, character: 0 })).status, 400, 'неизвестный метод -> 400');
+  eq((await lsp({ method: 'hover', path: 'src/a.ts', line: -1, character: 0 })).status, 400, 'отрицательная строка -> 400');
+  eq((await lsp({ method: 'hover', path: 'src/missing.ts', line: 0, character: 0 })).status, 404, 'файла нет и текста нет -> 404');
+
+  console.log('\nLSP: пути только внутри репозитория');
+  for (const bad of ['../outside.ts', `../${path.basename(outsideDir)}/secret.ts`, path.join(outsideDir, 'secret.ts'), '/etc/passwd', 'src/../../x.ts', '', 'C:\\Windows\\win.ini']) {
+    const res = await lsp({ method: 'hover', path: bad, line: 0, character: 0 });
+    eq(res.status, 400, `POST /api/lsp: ${JSON.stringify(bad)} -> 400`);
+    const file = await call(`/api/file?${lq}&path=${encodeURIComponent(bad)}`);
+    eq(file.status, 400, `GET /api/file: ${JSON.stringify(bad)} -> 400`);
+  }
+  if (symlinked) {
+    eq((await lsp({ method: 'hover', path: 'src/link.ts', line: 0, character: 14 })).status, 400,
+      'POST /api/lsp: симлинк наружу -> 400');
+    eq((await call(`/api/file?${lq}&path=src/link.ts`)).status, 400, 'GET /api/file: симлинк наружу -> 400');
+  }
+  const subdir = `source=local&root=${encodeURIComponent(path.join(lspRepo, 'src'))}&mode=working`;
+  eq((await lsp({ method: 'hover', path: 'a.ts', line: 0, character: 0 }, subdir)).status, 400, 'root — не корень репозитория -> 400');
+  eq((await call(`/api/file?${subdir}&path=a.ts`)).status, 400, 'GET /api/file: root не корень -> 400');
+
+  console.log('\nLSP: файл целиком вне диффа');
+  const whole = await call(`/api/file?${lq}&path=src/b.ts`);
+  eq([whole.status, whole.body.path, whole.body.text], [200, 'src/b.ts', 'export function helper() {\n  return 1;\n}\n'], 'GET /api/file: текст файла');
+  eq((await call(`/api/file?${lq}&path=assets/blob.bin`)).body.binary, true, 'GET /api/file: бинарный файл помечен');
+  eq((await call(`/api/file?${lq}&path=src/nope.ts`)).status, 404, 'GET /api/file: нет файла -> 404');
+  eq((await call(`/api/file?${lq}&path=src`)).status, 404, 'GET /api/file: каталог -> 404');
+
+  console.log('\nLSP: GitHub PR без клона');
+  const prq = 'source=pr&host=github.com&owner=o&repo=r&number=7';
+  const prLsp = await lsp({ method: 'definition', path: 'src/a.ts', line: 0, character: 0 }, prq);
+  eq([prLsp.status, prLsp.body.ok, prLsp.body.reason], [200, false, 'no-clone'], 'POST /api/lsp для PR -> no-clone');
+  const prStatus = await call(`/api/lsp/status?${prq}`);
+  eq([prStatus.body.available, prStatus.body.reason], [false, 'no-clone'], 'статус для PR: LSP недоступен, нет клона');
+  eq((await call(`/api/file?${prq}&path=src/a.ts`)).status, 409, 'GET /api/file для PR -> 409');
+  const bare = await call('/api/lsp/status?source=local');
+  eq(bare.status, 400, 'статус с битым дескриптором -> 400');
+
+  console.log('\nLSP: падение сервера');
+  lspRoutes.configure({ restartDelayMs: 60 * 1000 });
+  const crashed = await lsp({ method: 'hover', path: 'src/a.ts', line: 2, character: 8 });
+  ok(crashed.body.ok === false && crashed.body.reason === 'failed' && /fixture: crash requested/.test(crashed.body.message),
+    'сервер упал во время запроса -> failed с хвостом stderr', JSON.stringify(crashed.body));
+  const afterCrash = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 15 });
+  ok(afterCrash.body.ok === false && /повторный запуск через/.test(afterCrash.body.message),
+    'сразу после падения не перезапускается', JSON.stringify(afterCrash.body));
+  const crashStatus = (await call(`/api/lsp/status?${lq}`)).body.servers.find((s) => s.id === 'typescript');
+  eq(crashStatus.state, 'failed', 'статус после падения: failed');
+  lspRoutes.configure({ restartDelayMs: 0 });
+  const restarted = await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 15 });
+  ok(restarted.body.ok && /version 1$/.test(restarted.body.hover.value), 'после паузы сервер стартует заново и открывает документ заново',
+    JSON.stringify(restarted.body));
+  eq(methods().filter((m) => m === 'initialize').length, 2, 'второй initialize — только после падения');
+
+  console.log('\nLSP: остановка после простоя');
+  lspRoutes.configure({ idleMs: 200 });
+  await lsp({ method: 'hover', path: 'src/a.ts', line: 1, character: 15 });
+  const stopped = await waitFor(async () => {
+    const s = (await call(`/api/lsp/status?${lq}`)).body;
+    return s.running.length === 0 && s.servers.find((x) => x.id === 'typescript').state === 'stopped' ? s : null;
+  }, 3000);
+  ok(stopped, 'после простоя сервер остановлен');
+  ok(methods().includes('shutdown') && methods().includes('exit'), 'остановка: shutdown, затем exit');
+  lspRoutes.configure({ idleMs: 10 * 60 * 1000 });
+  const again = await lsp({ method: 'definition', path: 'src/a.ts', line: 1, character: 22 });
+  eq((again.body.locations || []).map((l) => l.path), ['src/b.ts'], 'после остановки следующий запрос снова запускает сервер');
+
+  console.log('\nLSP: сервер не установлен');
+  const savedPath = process.env.PATH;
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-lsp-empty-'));
+  write(lspRepo, 'main.go', 'package main\n');
+  process.env.PATH = emptyDir;
+  let noServer;
+  try {
+    noServer = await lsp({ method: 'hover', path: 'main.go', line: 0, character: 2 });
+  } finally {
+    process.env.PATH = savedPath;
+  }
+  ok(noServer.body.ok === false && noServer.body.reason === 'no-server' && /gopls/.test(noServer.body.hint),
+    'нет gopls -> no-server и подсказка, что поставить', JSON.stringify(noServer.body));
+
+  await lspRoutes.getManager().stopAll();
+  delete process.env.LOCAL_REVIEW_LSP_FIXTURE_LOG;
+  return [lspRepo, outsideDir, emptyDir];
+}
+
 // -------------------------------------------------------------------- suite
 
 async function main() {
@@ -2277,8 +2593,8 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A"}',
-    'GET /api/settings: по умолчанию заданы клавиши «просмотрено» и режима просмотра');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","definition":"F12","navBack":"Alt+Left","navForward":"Alt+Right"}',
+    'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра и навигации по коду');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -2289,7 +2605,7 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A' },
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', navBack: 'Alt+Left', navForward: 'Alt+Right' },
     'клавиша панели комментариев сохраняется рядом с Zen');
   const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
   eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
@@ -2315,7 +2631,7 @@ async function main() {
     {
       copyPrompt: '',
       gitignoreTarget: 'project',
-      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A' },
+      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', navBack: 'Alt+Left', navForward: 'Alt+Right' },
       defaultViewMode: 'single',
       renderModeForAllFiles: true,
     },
@@ -3116,6 +3432,8 @@ async function main() {
   const localState = await call('/api/state');
   ok(localState.body.truncated === null, 'локальный дифф: пометки об обрезке нет', JSON.stringify(localState.body.truncated));
 
+  const lspDirs = await lspChecks(call, home);
+
   await new Promise((resolve) => server.server.close(resolve));
 
   console.log(`\n${checks - failures}/${checks} проверок прошло`);
@@ -3132,6 +3450,7 @@ async function main() {
   fs.rmSync(noGitignoreRepo, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(staticDir, { recursive: true, force: true });
+  for (const dir of lspDirs) fs.rmSync(dir, { recursive: true, force: true });
   console.log('\nвсе проверки зелёные\n');
   process.exit(0);
 }

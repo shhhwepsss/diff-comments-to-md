@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bindingFromEvent,
+  displayBinding,
   formatBinding,
   isTypingTarget,
   keybindingsFrom,
@@ -137,6 +138,9 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -146,6 +150,9 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -156,6 +163,9 @@ describe('keybindingsFrom', () => {
       commentsPanel: 'Alt+C',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      definition: 'F12',
+      navBack: 'Alt+Left',
+      navForward: 'Alt+Right',
     });
   });
 
@@ -174,5 +184,35 @@ describe('keybindingsFrom', () => {
     expect(KEYBINDING_DEFAULTS.viewedFile).toBe('Alt+V');
     expect(keybindingsFrom({}).viewedFile).toBe('Alt+V');
     expect(keybindingsFrom({ viewedFile: '' }).viewedFile).toBe('');
+  });
+
+  it('ships code navigation on F12 and Alt+←/→', () => {
+    expect(KEYBINDING_DEFAULTS.definition).toBe('F12');
+    expect(KEYBINDING_DEFAULTS.navBack).toBe('Alt+Left');
+    expect(KEYBINDING_DEFAULTS.navForward).toBe('Alt+Right');
+  });
+});
+
+describe('arrow keys', () => {
+  it('bind only with Ctrl, Alt or Meta', () => {
+    expect(parseBinding('Alt+Left')).toEqual({ ctrl: false, alt: true, shift: false, meta: false, key: 'Left' });
+    expect(normalizeBinding('alt+arrowright')).toBe('Alt+Right');
+    expect(normalizeBinding('Ctrl+→')).toBe('Ctrl+Right');
+    expect(parseBinding('Left')).toBeNull();
+    expect(parseBinding('Shift+Right')).toBeNull();
+  });
+
+  it('are read from events with a modifier', () => {
+    expect(bindingFromEvent(press('ArrowLeft', { altKey: true }))?.key).toBe('Left');
+    expect(bindingFromEvent(press('ArrowRight', { shiftKey: true }))).toBeNull();
+    expect(matchesEvent('Alt+Left', press('ArrowLeft', { altKey: true }))).toBe(true);
+    expect(matchesEvent('Alt+Left', press('ArrowRight', { altKey: true }))).toBe(false);
+  });
+
+  it('show as arrows', () => {
+    expect(displayBinding('Alt+Left')).toBe('Alt+←');
+    expect(displayBinding('Ctrl+Right')).toBe('Ctrl+→');
+    expect(displayBinding('F12')).toBe('F12');
+    expect(displayBinding('')).toBe('');
   });
 });

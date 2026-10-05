@@ -7,7 +7,9 @@ import type { Descriptor, Mode } from '../api/types';
 //   #/local, #/pr — the picker screens
 //   #/settings, #/settings/<encoded hash to go back to> — the settings page
 // A diff route also carries the open view as a query, so another tab reproduces it:
-//   ?mode=working|staged|base|commits&base=<ref>&from=<sha>&to=<sha>&file=<path>
+//   ?mode=working|staged|base|commits&base=<ref>&from=<sha>&to=<sha>&file=<path>&line=<n>
+// `line` is set by code navigation (go to definition, Back/Forward), so the
+// browser's own history returns to the line a jump started from.
 // Only the route part identifies the review (`hashFor`): the query never
 // remounts it. A parameter that is unknown, half-written or meaningless for
 // the route falls back to the default instead of breaking the screen. The
@@ -84,8 +86,8 @@ export function hashFor(d: Descriptor | null): string {
   return `#/pr/${d.host}/${d.owner}/${d.repo}/${d.number}`;
 }
 
-/** The full address of what is on screen: the review, its view, and the open file. */
-export function viewHash(d: Descriptor | null, file: string | null): string {
+/** The full address of what is on screen: the review, its view, the open file and maybe a line in it. */
+export function viewHash(d: Descriptor | null, file: string | null, line?: number | null): string {
   const route = hashFor(d);
   if (!d || !route) return '';
   const q = new URLSearchParams();
@@ -102,6 +104,7 @@ export function viewHash(d: Descriptor | null, file: string | null): string {
     q.set('to', d.to);
   }
   if (file) q.set('file', file);
+  if (file && line && Number.isInteger(line) && line > 0) q.set('line', String(line));
   const query = q.toString();
   return query ? `${route}?${query}` : route;
 }
@@ -130,6 +133,14 @@ export function fileFromHash(hash: string): string | null {
   return new URLSearchParams(splitHash(hash).query).get('file') || null;
 }
 
+/** The 1-based line the address points at, or null; anything but a positive integer is none. */
+export function lineFromHash(hash: string): number | null {
+  const q = new URLSearchParams(splitHash(hash).query);
+  if (!q.get('file')) return null;
+  const n = Number(q.get('line'));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Same review and same diff inside it — only the open file may differ. */
 export function sameView(a: Descriptor | null, b: Descriptor | null): boolean {
   if (!a || !b) return false;
@@ -150,21 +161,24 @@ export function routeFromHash(hash: string): Route {
 /** What Back/Forward (or a hand-edited address) asks the open review to do. */
 export type Navigation =
   | { kind: 'ignore' }
-  | { kind: 'file'; file: string }
-  | { kind: 'view'; descriptor: Descriptor; file: string | null };
+  | { kind: 'file'; file: string; line?: number }
+  | { kind: 'view'; descriptor: Descriptor; file: string | null; line?: number };
 
 /**
  * Reads an address against what is on screen. Another review is nobody's
  * business here — the route changed, so the app remounts the review itself.
- * The same view only ever means "open that file"; anything else reloads the
- * diff the address describes, on the file it names.
+ * The same view only ever means "open that file" (at that line, when the
+ * address names one — a step of code navigation, which may stay in the same
+ * file); anything else reloads the diff the address describes, on the file it
+ * names.
  */
 export function navigationFor(hash: string, current: Descriptor, currentFile: string | null): Navigation {
   const target = descriptorFromHash(hash);
   if (!target || hashFor(target) !== hashFor(current)) return { kind: 'ignore' };
   const file = fileFromHash(hash);
-  if (!sameView(target, current)) return { kind: 'view', descriptor: target, file };
-  return file && file !== currentFile ? { kind: 'file', file } : { kind: 'ignore' };
+  const line = lineFromHash(hash) ?? undefined;
+  if (!sameView(target, current)) return { kind: 'view', descriptor: target, file, line };
+  return file && (file !== currentFile || line !== undefined) ? { kind: 'file', file, line } : { kind: 'ignore' };
 }
 
 /**

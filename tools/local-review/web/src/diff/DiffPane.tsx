@@ -40,7 +40,7 @@ type Props = {
 export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap, onWrap, filter }: Props) {
   const single = viewMode === 'single';
   const review = useReview();
-  const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId } = review;
+  const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId, navFiles, lineReveal } = review;
   const activeDiff = useFileDiff(diffs, activeFile);
   // Source diff or rendered markdown / html; source is the default. One choice for
   // every file or one per file, as the setting says (renderMode.ts). Not persisted.
@@ -119,6 +119,22 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
     [pending, reveal],
   );
 
+  // «Scroll to this line» after a jump or Back/Forward, handled the same way.
+  const handledLine = useRef(0);
+  const [, setLineTick] = useState(0);
+  const markLineRevealed = useCallback((nonce: number) => {
+    handledLine.current = nonce;
+    setLineTick(nonce);
+  }, []);
+  const pendingLine = lineReveal && lineReveal.nonce !== handledLine.current ? lineReveal : null;
+  useEffect(() => {
+    if (single && pendingLine && activeFile !== null && pendingLine.path !== activeFile) markLineRevealed(pendingLine.nonce);
+  }, [single, pendingLine, activeFile, markLineRevealed]);
+  const pendingLineProp = useMemo(
+    () => (pendingLine ? { line: pendingLine.line, ch: pendingLine.ch, nonce: pendingLine.nonce } : null),
+    [pendingLine],
+  );
+
   // One object for the life of the pane, calling whatever the review offers
   // at that moment. Some of these are recreated whenever the open form moves
   // (createComment closes over it); passed as they are, every such move would
@@ -136,18 +152,29 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
       deleteComment: (id) => latest.current.deleteComment(id),
       setCurrentComment: (id) => latest.current.setCurrentComment(id),
       setFileViewed: (path, viewed) => latest.current.setFileViewed(path, viewed),
+      navigateTo: (target, from) => latest.current.navigateTo(target, from),
     }),
     [],
   );
 
-  // The feed shows what the sidebar's tree shows, in the tree's order, and
-  // then the files that are out of the diff but still have comments.
+  // Files outside the diff that code navigation opened, and are still outside it.
+  const outsideNav = useMemo(() => {
+    const inDiff = new Set((state?.files ?? []).map((f) => f.path));
+    return new Set(navFiles.filter((p) => !inDiff.has(p)));
+  }, [navFiles, state?.files]);
+
+  // The feed shows what the sidebar's tree shows, in the tree's order, then
+  // the files that are out of the diff but still have comments, then the
+  // files code navigation opened.
   const feedFiles = useMemo<FeedFile[]>(
     () => [
       ...filesOf(buildTree(filter.shown, (f) => f.path)).map((entry) => ({ path: entry.path, entry, orphan: false })),
-      ...filter.shownOrphans.map((f) => ({ path: f.path, entry: undefined, orphan: true })),
+      ...filter.shownOrphans.map((f) => ({ path: f.path, entry: undefined, orphan: !outsideNav.has(f.path), nav: outsideNav.has(f.path) })),
+      ...[...outsideNav]
+        .filter((p) => !filter.shownOrphans.some((f) => f.path === p))
+        .map((path) => ({ path, entry: undefined, orphan: false, nav: true })),
     ],
-    [filter.shown, filter.shownOrphans],
+    [filter.shown, filter.shownOrphans, outsideNav],
   );
 
   // «Next unviewed file» has to mean the next one the feed shows.
@@ -197,6 +224,9 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
       onRunScripts: runScripts,
       zen,
       onZen,
+      navFile: outsideNav.has(path),
+      lineReveal: pendingLineProp && pendingLine?.path === path ? pendingLineProp : null,
+      onLineRevealed: markLineRevealed,
     };
   };
 
@@ -218,6 +248,8 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
           onCurrentFile={review.setCurrentFile}
           reveal={pendingReveal}
           onRevealed={markRevealed}
+          lineReveal={pendingLine}
+          onLineRevealed={markLineRevealed}
           editor={editor}
           actions={actions}
           fileProps={(file) => propsFor(file.path, file.entry)}

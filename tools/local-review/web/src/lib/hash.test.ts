@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { Descriptor } from '../api/types';
 import {
   DEFAULT_HASH,
   descriptorFromHash,
   fileFromHash,
   hashFor,
   navigationFor,
+  lineFromHash,
   routeFromHash,
   sameView,
   settingsHash,
@@ -227,5 +229,27 @@ describe('wantsNativeLink', () => {
       expect(wantsNativeLink({ ...plain, button: 0, [key]: true })).toBe(true);
       expect(wantsNativeLink({ ...plain, [key]: true })).toBe(true);
     }
+  });
+});
+
+describe('line in the address (code navigation)', () => {
+  const local: Descriptor = { source: 'local', root: '/r', mode: 'working', base: '' };
+
+  it('rides along with the file', () => {
+    expect(viewHash(local, 'src/a.ts', 12)).toBe('#/local/%2Fr?file=src%2Fa.ts&line=12');
+    expect(lineFromHash(viewHash(local, 'src/a.ts', 12))).toBe(12);
+  });
+
+  it('is dropped without a file or when it is not a positive integer', () => {
+    expect(viewHash(local, null, 12)).toBe('#/local/%2Fr');
+    expect(viewHash(local, 'a.ts', 0)).toBe('#/local/%2Fr?file=a.ts');
+    expect(lineFromHash('#/local/%2Fr?file=a.ts&line=-3')).toBeNull();
+    expect(lineFromHash('#/local/%2Fr?file=a.ts&line=x')).toBeNull();
+    expect(lineFromHash('#/local/%2Fr?line=5')).toBeNull();
+  });
+
+  it('makes Back to the same file a navigation to that line', () => {
+    expect(navigationFor(viewHash(local, 'a.ts', 7), local, 'a.ts')).toEqual({ kind: 'file', file: 'a.ts', line: 7 });
+    expect(navigationFor(viewHash(local, 'b.ts', 3), local, 'a.ts')).toEqual({ kind: 'file', file: 'b.ts', line: 3 });
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -14,6 +14,8 @@ import { CommentsPanel } from '../comments/CommentsPanel';
 import { selHi, selLo } from '../review/commitSelection';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
+import { CodeNavContext, type CodeNav, type CodeNavKeys } from '../nav/codeNav';
+import { closeLspMenu, definitionAtCaret, navKeysBlocked } from '../diff/cm/lsp';
 import '../diff/diff.css';
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
@@ -144,14 +146,16 @@ type Props = {
   /** Long lines wrap in every file. */
   wrap: boolean;
   onWrap: (on: boolean) => void;
+  /** Go to definition, Back, Forward. */
+  navKeys: CodeNavKeys;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap }: Props) {
-  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed } =
+export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap, navKeys }: Props) {
+  const { state, activeFile, loading, loadError, reload, commitsEmpty, commitsMode, commitsLoading, toggleActiveViewed, descriptor, lsp, navHistory } =
     useReview();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
   const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
@@ -166,6 +170,38 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [viewedKey, toggleActiveViewed]);
+
+  // The shown text goes to the language server when it is not the working
+  // tree: the index (staged) or a commit range. Base compares against the
+  // working tree, so its new side is on disk.
+  const sendText = descriptor.source === 'local' && (descriptor.mode === 'staged' || descriptor.mode === 'commits');
+  const codeNav = useMemo<CodeNav>(
+    () => ({ session: lsp, history: navHistory, keys: navKeys, sendText }),
+    [lsp, navHistory, navKeys, sendText],
+  );
+
+  // F12 (or its replacement) and Alt+←/→. F12 may open DevTools first: the
+  // browser decides that, not the page — Ctrl+click and the menu always work.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (navKeysBlocked(e)) return;
+      if (matchesEvent(navKeys.definition, e)) {
+        if (definitionAtCaret()) e.preventDefault();
+        return;
+      }
+      // With nothing to go back to inside the review, the key stays the browser's.
+      if (matchesEvent(navKeys.navBack, e)) {
+        if (navHistory.back()) e.preventDefault();
+        return;
+      }
+      if (matchesEvent(navKeys.navForward, e) && navHistory.forward()) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      closeLspMenu();
+    };
+  }, [navKeys, navHistory]);
 
   if (!state && loading) {
     return (
@@ -233,16 +269,18 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
       <div className={`rv-diff-layout${loading ? ' is-loading' : ''}`} aria-busy={loading}>
         <FileSidebar filter={filter} />
         <main className="rv-content">
-          <DiffPane
-            zen={zen}
-            onZen={onZen}
-            panelOpen={commentsPanel}
-            viewMode={viewMode}
-            renderAllFiles={renderAllFiles}
-            wrap={wrap}
-            onWrap={onWrap}
-            filter={filter}
-          />
+          <CodeNavContext.Provider value={codeNav}>
+            <DiffPane
+              zen={zen}
+              onZen={onZen}
+              panelOpen={commentsPanel}
+              viewMode={viewMode}
+              renderAllFiles={renderAllFiles}
+              wrap={wrap}
+              onWrap={onWrap}
+              filter={filter}
+            />
+          </CodeNavContext.Provider>
         </main>
         {commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />}
         {loading && (

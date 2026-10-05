@@ -692,3 +692,220 @@ body.rv-dragging-lines * {
   border: var(--borderWidth-thin) solid var(--borderColor-default);
   border-radius: var(--borderRadius-small, 3px);
 }
+
+/* ---------------------------------------------------------------------------
+   Code navigation (diff/cm/lsp.ts): ← → in the header, the LSP indicator,
+   Ctrl+hover links, the hover tooltip, the context menu, files opened by a
+   jump.
+   --------------------------------------------------------------------------- */
+
+.rv-nav-buttons {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: calc(-1 * var(--base-size-8));
+}
+
+.rv-lsp-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 999px;
+  background: var(--bgColor-default);
+  cursor: default;
+}
+.rv-lsp-indicator__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fgColor-success);
+}
+.rv-lsp-indicator.is-busy .rv-lsp-indicator__dot {
+  background: var(--fgColor-attention);
+  animation: rv-lsp-pulse 1s ease-in-out infinite;
+}
+.rv-lsp-indicator.is-idle .rv-lsp-indicator__dot {
+  background: var(--fgColor-muted);
+}
+.rv-lsp-indicator.is-off .rv-lsp-indicator__dot {
+  background: transparent;
+  border: 1.5px solid var(--fgColor-muted);
+}
+.rv-lsp-indicator.is-error .rv-lsp-indicator__dot {
+  background: var(--fgColor-danger);
+}
+@keyframes rv-lsp-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv-lsp-indicator.is-busy .rv-lsp-indicator__dot {
+    animation: none;
+  }
+}
+
+.rv-nav-badge {
+  padding: 0 6px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-small);
+  background: var(--bgColor-default);
+}
+
+.rv-nav-banner {
+  padding: var(--base-size-8) var(--base-size-16);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-default);
+  background: var(--bgColor-accent-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-top: none;
+}
+
+/* Ctrl/Cmd held over a symbol: it reads as a link. */
+.rv-lsp-link {
+  color: var(--fgColor-accent) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rv-lsp-link * {
+  color: inherit !important;
+}
+.rv-lsp-mod .cm-content {
+  cursor: pointer;
+}
+.rv-lsp-pending .cm-content {
+  cursor: progress;
+}
+
+/* The hover tooltip. CodeMirror draws the box; we only restyle it. */
+.rv-diff-editor .cm-tooltip.cm-tooltip-hover {
+  max-width: min(560px, calc(100vw - 16px));
+  color: var(--fgColor-default);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  box-shadow: var(--shadow-floating-small);
+}
+.rv-lsp-tip {
+  font-family: var(--fontStack-system);
+  font-size: var(--text-body-size-small);
+}
+.rv-lsp-tip__code {
+  margin: 0;
+  padding: var(--base-size-8) var(--base-size-12);
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-tip__doc {
+  margin: 0;
+  padding: var(--base-size-8) var(--base-size-12) 0;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.rv-lsp-tip__doc:last-of-type {
+  padding-bottom: var(--base-size-8);
+}
+.rv-lsp-tip__doc code {
+  padding: 0 3px;
+  font-family: var(--fontStack-monospace);
+  font-size: 90%;
+  background: var(--bgColor-neutral-muted);
+  border-radius: 3px;
+}
+.rv-lsp-tip__acts {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: 4px 6px;
+  background: var(--bgColor-muted);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+  border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
+}
+.rv-lsp-tip__acts button {
+  padding: 2px 6px;
+  font: inherit;
+  color: var(--fgColor-accent);
+  background: none;
+  border: 0;
+  border-radius: var(--borderRadius-small);
+  cursor: pointer;
+}
+.rv-lsp-tip__acts button:hover {
+  background: var(--bgColor-accent-muted);
+}
+.rv-lsp-tip__hint {
+  margin-left: auto;
+  color: var(--fgColor-muted);
+}
+
+/* The context menu on a symbol: fixed at the pointer, outside the editor. */
+.rv-lsp-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 260px;
+  padding: 4px;
+  font-family: var(--fontStack-system);
+  font-size: var(--text-body-size-medium);
+  color: var(--fgColor-default);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-large);
+  box-shadow: var(--shadow-floating-large);
+}
+.rv-lsp-menu hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+.rv-lsp-menu__item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--base-size-16);
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--borderRadius-medium);
+  cursor: pointer;
+}
+.rv-lsp-menu__item:hover:not(:disabled),
+.rv-lsp-menu__item:focus-visible {
+  background: var(--control-transparent-bgColor-hover, var(--bgColor-neutral-muted));
+  outline: none;
+}
+.rv-lsp-menu__item:disabled {
+  color: var(--fgColor-disabled);
+  cursor: default;
+}
+.rv-lsp-menu__item kbd {
+  padding: 0 5px;
+  font: 11px var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  background: var(--bgColor-muted);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-bottom-width: 2px;
+  border-radius: var(--borderRadius-small);
+}
+.rv-lsp-menu__note {
+  max-width: 320px;
+  padding: 4px 8px 2px;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}

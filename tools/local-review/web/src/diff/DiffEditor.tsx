@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, lineNumbers } from '@codemirror/view';
 import { unifiedMergeView } from '@codemirror/merge';
 import type { Hunk } from '../api/types';
 import { failureMessage } from '../api/client';
@@ -13,11 +13,12 @@ import { chunkInfo, pureInsertions } from './cm/chunks';
 import { PortalRegistry, blocksField, setBlocks, type Block } from './cm/blocks';
 import { pinBlocks } from './cm/blockPin';
 import { selectedLines, setSelectedLines } from './cm/selection';
-import { foldUnchanged } from './cm/collapse';
+import { foldUnchanged, unfoldAt } from './cm/collapse';
 import { diffGutters, lineAtY } from './cm/gutters';
 import { githubHighlight, githubTheme } from './cm/theme';
 import { languageFor } from './cm/language';
 import { occurrences as occurrenceHighlight, type OccurrenceHub } from './cm/occurrences';
+import { lspNavigation, type LspHub } from './cm/lsp';
 
 type Props = {
   path: string;
@@ -35,12 +36,23 @@ type Props = {
   renderBlock: (key: string) => ReactNode;
   /** A click or drag over line numbers finished on this range. */
   onSelectLines: (range: LineRange) => void;
-  /** Scroll these lines to the middle and flash them; a new `nonce` asks again. */
-  reveal?: { from: number; to: number; nonce: number } | null;
+  /**
+   * Scroll these lines to the middle and flash them; a new `nonce` asks again.
+   * `ch` (a column of `from`, zero-based) also puts the caret there, which
+   * highlights the word it lands on — the symbol a jump led to.
+   */
+  reveal?: { from: number; to: number; nonce: number; ch?: number } | null;
   /** The reveal with this nonce is done — the caller stops passing it. */
   onRevealed?: (nonce: number) => void;
   /** Where the highlight of a clicked word's occurrences is reported (the file header). */
   occurrences: OccurrenceHub;
+  /** Hover, Ctrl+click and the context menu of code navigation. */
+  lsp: LspHub;
+  /**
+   * A whole file outside the diff (opened by code navigation): `newText` is
+   * the file, there is no old side, nothing is folded, one column of numbers.
+   */
+  full?: boolean;
 };
 
 const FLASH_MS = 1600;
@@ -66,6 +78,8 @@ export function DiffEditor({
   reveal = null,
   onRevealed,
   occurrences,
+  lsp,
+  full = false,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -88,8 +102,15 @@ export function DiffEditor({
     if (!v || !r) return;
     const doc = v.state.doc;
     const line = doc.line(Math.min(Math.max(1, r.from), doc.lines));
+    // A line in a folded run of unchanged lines is shown first.
+    const unfold = unfoldAt(v.state, line.from);
     v.dispatch({
-      effects: [EditorView.scrollIntoView(line.from, { y: 'center' }), setSelectedLines.of({ from: r.from, to: r.to })],
+      effects: [
+        ...(unfold ? [unfold] : []),
+        EditorView.scrollIntoView(line.from, { y: 'center' }),
+        setSelectedLines.of({ from: r.from, to: r.to }),
+      ],
+      ...(r.ch !== undefined ? { selection: { anchor: line.from + Math.min(Math.max(0, r.ch), line.length) } } : {}),
     });
     // The comment's card under the line is drawn a moment later (a React
     // portal). Near the end of the file it would land below the fold, so the
@@ -181,31 +202,38 @@ export function DiffEditor({
 
     const create = (lang: Extension) => {
       // Both texts keep their final newline (see cm/lastLine.ts).
+      const diffOnly: Extension[] = full
+        ? [lineNumbers()]
+        : [
+            // Before the merge view: its deletion blocks are highlighted with
+            // the language that is active when they are first drawn.
+            lang,
+            unifiedMergeView({
+              original: oldText,
+              mergeControls: false,
+              gutter: false,
+              highlightChanges: true,
+              syntaxHighlightDeletions: true,
+              // Line structure from git's hunks, so blocks match `git diff`.
+              diffConfig: { override: gitDiffOverride(hunks) },
+            }),
+            chunkInfo,
+            pureInsertions(unpairedAddedLines(hunks)),
+          ];
       const state = EditorState.create({
         doc: newText,
         extensions: [
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
-          // Before the merge view: its deletion blocks are highlighted with
-          // the language that is active when they are first drawn.
-          lang,
-          unifiedMergeView({
-            original: oldText,
-            mergeControls: false,
-            gutter: false,
-            highlightChanges: true,
-            syntaxHighlightDeletions: true,
-            // Line structure from git's hunks, so blocks match `git diff`.
-            diffConfig: { override: gitDiffOverride(hunks) },
-          }),
-          chunkInfo,
-          pureInsertions(unpairedAddedLines(hunks)),
+          full ? lang : [],
+          diffOnly,
           blocksField(registry),
           pinBlocks,
           selectedLines,
-          foldUnchanged,
+          full ? [] : foldUnchanged,
           occurrenceHighlight(occurrences),
-          diffGutters({ onLineMouseDown }),
+          lspNavigation(lsp),
+          full ? [] : diffGutters({ onLineMouseDown }),
           githubTheme,
           githubHighlight,
           finalEmptyLine(deletedFile || /[\r\n]$/.test(newText)),
@@ -248,7 +276,7 @@ export function DiffEditor({
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences, lsp, full]);
 
   useEffect(() => {
     if (reveal) applyReveal();

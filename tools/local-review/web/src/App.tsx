@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
 import { api, failureMessage, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
 import { DEFAULT_HASH, hashFor, routeFromHash } from './lib/hash';
@@ -66,6 +66,12 @@ export function App({ theme, onTheme }: Props) {
   }, []);
   // «Код» / «Просмотр» as one switch for every file, or one per file.
   const [renderAllFiles, setRenderAllFiles] = useState(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
+
+  // A new object only when one of the three changes: every file of the feed reads it.
+  const navKeys = useMemo(
+    () => ({ definition: keys.definition, navBack: keys.navBack, navForward: keys.navForward }),
+    [keys.definition, keys.navBack, keys.navForward],
+  );
 
   const route = routeFromHash(hash);
   const onSettings = route.screen === 'settings';
@@ -196,6 +202,7 @@ export function App({ theme, onTheme }: Props) {
             renderAllFiles={renderAllFiles}
             wrap={wrap}
             onWrap={setWrap}
+            navKeys={navKeys}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />
