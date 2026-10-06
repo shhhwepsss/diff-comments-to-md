@@ -36,6 +36,7 @@ import {
 import type { EditorAnchor, NavTarget } from '../review/ReviewContext';
 import type { ActiveDiff } from '../review/diffStore';
 import { failureMessage } from '../api/client';
+import { copyToClipboard } from '../lib/clipboard';
 import { useToast } from '../lib/toast';
 import type { Comment, DiffResponse, FileEntry } from '../api/types';
 import { DiffEditor } from './DiffEditor';
@@ -474,6 +475,11 @@ export const FileDiff = memo(function FileDiff({
     [path, actions],
   );
 
+  const copyPath = async () => {
+    const ok = await copyToClipboard(path);
+    toast(ok ? 'Путь скопирован' : 'Не удалось скопировать', !ok);
+  };
+
   const oldPath = diff?.oldPath ?? entry?.oldPath ?? null;
   // The folder is read once, the name every time: the name stands out.
   const cut = path.lastIndexOf('/') + 1;
@@ -503,7 +509,14 @@ export const FileDiff = memo(function FileDiff({
             onClick={() => onCollapse(path, !collapsed)}
           />
         )}
-        <div className="rv-file-header__path" title={oldPath ? `${oldPath} → ${path}` : path}>
+        {/* A click copies the path as the repository has it; of a renamed file, the new one. */}
+        <button
+          type="button"
+          className="rv-file-header__path"
+          title={`${oldPath ? `${oldPath} → ${path}` : path} — клик копирует путь`}
+          aria-label={`Скопировать путь ${path}`}
+          onClick={() => void copyPath()}
+        >
           {oldPath && oldPath !== path ? (
             <>
               <span className="rv-file-header__old">{oldPath}</span>
@@ -514,7 +527,7 @@ export const FileDiff = memo(function FileDiff({
             {dir && <span className="rv-file-header__dir">{dir}</span>}
             <span className="rv-file-header__base">{base}</span>
           </span>
-        </div>
+        </button>
         {navFile && diff?.fullFile && (
           <span className="rv-nav-badge" title="Файл не входит в дифф: открыт переходом по коду или в нём есть комментарии">
             вне диффа
