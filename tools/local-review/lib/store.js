@@ -35,6 +35,43 @@ function normalizeCommit(commit) {
   };
 }
 
+const REF_KINDS = ['thread', 'comment', 'review', 'description'];
+const REF_QUOTE_LIMIT = 4000;
+const REF_CODE_LIMIT = 2000;
+
+function clip(text, limit) {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function plainText(value) {
+  return String(value || '').replace(/\r\n/g, '\n');
+}
+
+/**
+ * { kind, id, author, url, quote, code? } — the remark on GitHub this comment
+ * answers. The quote is a snapshot taken when the comment was written: the
+ * export must say the same thing after the remark is edited or deleted, and
+ * with no network at all. `code` is the piece of the diff a review thread
+ * hangs under. A comment written anywhere but under such a remark has no ref
+ * and is stored exactly as before.
+ */
+function normalizeRef(ref) {
+  if (!ref || typeof ref !== 'object' || !REF_KINDS.includes(ref.kind)) return null;
+  const quote = clip(plainText(ref.quote).trim(), REF_QUOTE_LIMIT);
+  if (!quote) return null;
+  const out = {
+    kind: ref.kind,
+    id: ref.id ? String(ref.id).slice(0, 200) : '',
+    author: ref.author ? String(ref.author).slice(0, 100) : '',
+    url: ref.url ? String(ref.url).slice(0, 500) : '',
+    quote,
+  };
+  // Not trimmed at the start: a diff line begins with its own space, `+` or `-`.
+  const code = clip(plainText(ref.code).trimEnd(), REF_CODE_LIMIT);
+  if (code.trim()) out.code = code;
+  return out;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -111,7 +148,7 @@ class CommentStore {
     return counts;
   }
 
-  add({ file, startLine, endLine, text, commit }) {
+  add({ file, startLine, endLine, text, commit, ref }) {
     const now = new Date().toISOString();
     const comment = {
       id: crypto.randomUUID(),
@@ -137,6 +174,8 @@ class CommentStore {
       const ctx = normalizeCommit(commit);
       if (ctx) comment.commit = ctx;
     }
+    const remark = normalizeRef(ref);
+    if (remark) comment.ref = remark;
     this.data.comments.push(comment);
     this.save();
     return comment;
@@ -240,4 +279,4 @@ class CommentStore {
   }
 }
 
-module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment, normalizeCommit };
+module.exports = { CommentStore, STORE_DIR, STORE_FILE, isGeneralComment, normalizeCommit, normalizeRef };

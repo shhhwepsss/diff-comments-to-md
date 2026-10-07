@@ -1,0 +1,195 @@
+/* The PR's conversation page: takes the place of the diff layout. */
+.rv-conv {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.rv-conv__scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.rv-conv__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--base-size-32);
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--base-size-24);
+}
+
+.rv-conv__feed {
+  flex: 999 1 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-16);
+}
+
+.rv-conv__card {
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-default);
+  /* The rounded corners clip the head's background and the code block. */
+  overflow: hidden;
+}
+
+.rv-conv__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-height: 36px;
+  padding: var(--base-size-4) var(--base-size-12);
+  font-size: var(--text-body-size-small);
+}
+
+.rv-conv__card > .rv-conv__head {
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+/* A collapsed resolved thread, or a review with no words: the head is all there is. */
+.rv-conv__card > .rv-conv__head:last-child {
+  border-bottom: none;
+}
+
+.rv-conv__when {
+  color: var(--fgColor-muted);
+}
+
+.rv-conv__spacer {
+  flex: 1;
+}
+
+.rv-conv__gh {
+  display: inline-flex;
+  padding: var(--base-size-4);
+  color: var(--fgColor-muted);
+}
+
+.rv-conv__path {
+  font-family: var(--fontStack-monospace);
+  overflow-wrap: anywhere;
+}
+
+/* markdown.css sizes a whole rendered file; a remark is a paragraph or two. */
+.rv-conv__md.rv-markdown {
+  max-width: none;
+  padding: var(--base-size-12);
+  font-size: var(--text-body-size-medium);
+}
+
+.rv-conv__empty {
+  padding: var(--base-size-8) var(--base-size-12);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-conv__code {
+  margin: 0;
+  padding: var(--base-size-4) 0;
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  line-height: 20px;
+  overflow-x: auto;
+}
+
+.rv-conv__code-line {
+  padding: 0 var(--base-size-12);
+  white-space: pre;
+  /* A long line scrolls the block, and its background goes with it. */
+  min-width: max-content;
+}
+
+.rv-conv__code-line.is-add {
+  background: var(--bgColor-success-muted);
+}
+
+.rv-conv__code-line.is-del {
+  background: var(--bgColor-danger-muted);
+}
+
+.rv-conv__reply + .rv-conv__reply {
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+/* The reviewer's own comments for the agent: set apart from what GitHub has. */
+.rv-conv__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  padding: var(--base-size-12);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-default);
+  background: var(--bgColor-accent-muted);
+}
+
+.rv-conv__notes .rv-comment + .rv-comment,
+.rv-conv__notes .rv-comment + .rv-comment-form {
+  margin-top: 0;
+}
+
+.rv-conv__notes .rv-comment,
+.rv-conv__notes .rv-comment-form {
+  max-width: none;
+}
+
+.rv-conv__more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}
+
+.rv-conv__side {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-body-size-small);
+}
+
+.rv-conv__side > section {
+  padding-bottom: var(--base-size-16);
+}
+
+.rv-conv__side > section + section {
+  padding-top: var(--base-size-16);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+.rv-conv__side-title {
+  margin: 0 0 var(--base-size-8);
+  font-size: var(--text-body-size-small);
+  font-weight: var(--base-text-weight-semibold, 600);
+  color: var(--fgColor-muted);
+}
+
+.rv-conv__side .rv-conv__empty {
+  padding: 0;
+}
+
+.rv-conv__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8);
+  padding: 2px 0;
+}
+
+.rv-conv__row > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-conv__labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-4);
+}

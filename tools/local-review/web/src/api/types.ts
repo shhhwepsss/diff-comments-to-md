@@ -264,6 +264,70 @@ export type PrCloneStatus = {
 /** Commit range a comment was written against; omitted for the latest-commit-only selection. */
 export type CommitContext = { from: string; to: string; label: string };
 
+/**
+ * The remark on GitHub a comment answers (lib/store.js normalizeRef). The quote
+ * is a snapshot from when the comment was written; `code` is the piece of the
+ * diff a review thread hangs under.
+ */
+export type CommentRef = {
+  kind: 'thread' | 'comment' | 'review' | 'description';
+  /** The thread, comment or review on GitHub; the PR's url for its description. */
+  id: string;
+  author: string;
+  url: string;
+  quote: string;
+  code?: string;
+};
+
+/** GET /api/pr/conversation (lib/pr-conversation.js): what was written on the PR at GitHub. */
+export type ConversationRemark = { id: string; url: string; author: string; body: string; at: string };
+
+export type ConversationTimelineItem =
+  | (ConversationRemark & { kind: 'comment' })
+  | (ConversationRemark & { kind: 'review'; state: string });
+
+export type ConversationThread = {
+  id: string;
+  path: string;
+  /** null: the line is not in the PR's current diff any more. */
+  line: number | null;
+  startLine: number | null;
+  originalLine: number | null;
+  resolved: boolean;
+  outdated: boolean;
+  /** The last lines of the diff hunk the thread hangs under, with their +/-/space prefix. */
+  hunk: string[];
+  /** When its first comment was written. */
+  at: string;
+  comments: ConversationRemark[];
+  /** Replies GitHub did not send (a thread longer than one page). */
+  more: number;
+};
+
+/** `through`: when the last entry of the page was created, even one the server left out. */
+export type ConversationList<T> = { items: T[]; cursor: string | null; done: boolean; through: string | null };
+
+export type ConversationCheck = { name: string; state: string; url: string | null };
+
+export type ConversationMeta = {
+  url: string;
+  body: string;
+  author: string;
+  createdAt: string;
+  labels: { name: string; color: string | null }[];
+  reviewers: { login: string; state: string }[];
+  /** Asked for a review and have not answered yet. */
+  requested: string[];
+  checks: { state: string | null; items: ConversationCheck[]; more: number };
+};
+
+/** `meta` comes with the first page only; a list only when it was asked for. */
+export type ConversationPage = {
+  meta?: ConversationMeta;
+  timeline?: ConversationList<ConversationTimelineItem>;
+  threads?: ConversationList<ConversationThread>;
+};
+
 export type Comment = {
   id: string;
   /** null for a general comment about the whole review, not tied to a file. */
@@ -274,6 +338,8 @@ export type Comment = {
   createdAt: string;
   updatedAt: string;
   commit?: CommitContext;
+  /** Written under a remark on the conversation page. */
+  ref?: CommentRef;
 };
 
 export type Commit = {

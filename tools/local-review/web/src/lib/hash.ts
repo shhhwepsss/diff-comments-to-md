@@ -7,9 +7,10 @@ import type { Descriptor, Mode } from '../api/types';
 //   #/local, #/pr — the picker screens
 //   #/settings, #/settings/<encoded hash to go back to> — the settings page
 // A diff route also carries the open view as a query, so another tab reproduces it:
-//   ?mode=working|staged|base|commits&base=<ref>&from=<sha>&to=<sha>&file=<path>&line=<n>
+//   ?mode=working|staged|base|commits&base=<ref>&from=<sha>&to=<sha>&file=<path>&line=<n>&view=conversation
 // `line` is set by code navigation (go to definition, Back/Forward), so the
 // browser's own history returns to the line a jump started from.
+// `view=conversation` (a PR only) shows the conversation page over that diff.
 // Only the route part identifies the review (`hashFor`): the query never
 // remounts it. A parameter that is unknown, half-written or meaningless for
 // the route falls back to the default instead of breaking the screen. The
@@ -86,8 +87,31 @@ export function hashFor(d: Descriptor | null): string {
   return `#/pr/${d.host}/${d.owner}/${d.repo}/${d.number}`;
 }
 
-/** The full address of what is on screen: the review, its view, the open file and maybe a line in it. */
-export function viewHash(d: Descriptor | null, file: string | null, line?: number | null): string {
+/** `view=conversation`: the PR's conversation page is open instead of its diff. */
+const CONVERSATION = 'conversation';
+
+/** The address asks for the conversation page. Only a PR has one. */
+export function conversationFromHash(hash: string): boolean {
+  if (routeParts(hash)[0] !== 'pr') return false;
+  return new URLSearchParams(splitHash(hash).query).get('view') === CONVERSATION;
+}
+
+/** The same address with the conversation page opened or closed; the rest of its query is kept. */
+export function conversationHash(hash: string, on: boolean): string {
+  const { route, query } = splitHash(hash);
+  const q = new URLSearchParams(query);
+  if (on) q.set('view', CONVERSATION);
+  else q.delete('view');
+  const next = q.toString();
+  return next ? `${route}?${next}` : route;
+}
+
+/**
+ * The full address of what is on screen: the review, its view, the open file
+ * and maybe a line in it. `conversation` keeps the page of a PR's conversation
+ * open across a rewrite of the address.
+ */
+export function viewHash(d: Descriptor | null, file: string | null, line?: number | null, conversation = false): string {
   const route = hashFor(d);
   if (!d || !route) return '';
   const q = new URLSearchParams();
@@ -105,6 +129,7 @@ export function viewHash(d: Descriptor | null, file: string | null, line?: numbe
   }
   if (file) q.set('file', file);
   if (file && line && Number.isInteger(line) && line > 0) q.set('line', String(line));
+  if (conversation && d.source === 'pr') q.set('view', CONVERSATION);
   const query = q.toString();
   return query ? `${route}?${query}` : route;
 }

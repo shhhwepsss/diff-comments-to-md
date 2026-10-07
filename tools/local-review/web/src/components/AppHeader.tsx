@@ -246,9 +246,23 @@ type Props = ViewProps & {
   /** The panel is on screen: open, and not behind the navigation panel. Defaults to `commentsPanel`. */
   commentsShown?: boolean;
   onCommentsPanel: (open: boolean) => void;
+  /** The PR's conversation page is open in place of the diff. */
+  conversation: boolean;
+  onConversation: (open: boolean) => void;
+  /** «Перечитать PR» re-reads an opened conversation as well. */
+  onReloadConversation: () => void;
 };
 
-export function AppHeader({ route, commentsPanel, commentsShown = commentsPanel, onCommentsPanel, ...view }: Props) {
+export function AppHeader({
+  route,
+  commentsPanel,
+  commentsShown = commentsPanel,
+  onCommentsPanel,
+  conversation,
+  onConversation,
+  onReloadConversation,
+  ...view
+}: Props) {
   const review = useOptionalReview();
   const source = route.screen === 'diff' ? route.descriptor.source : route.screen;
   const local = review && review.descriptor.source === 'local' ? review.descriptor : null;
@@ -329,9 +343,19 @@ export function AppHeader({ route, commentsPanel, commentsShown = commentsPanel,
             ))}
           </SegmentedControl>
         ) : (
-          <SegmentedControl aria-label="Режим диффа" size="small" onChange={(i) => review.setPrCommitsView(i === 1)}>
-            <SegmentedControl.Button selected={!commitsTab}>Все изменения</SegmentedControl.Button>
-            <SegmentedControl.Button selected={commitsTab}>Коммиты</SegmentedControl.Button>
+          // «Обсуждение» is a page over the diff, not a third diff: leaving it
+          // comes back to whichever of the other two was on screen.
+          <SegmentedControl
+            aria-label="Раздел PR-а"
+            size="small"
+            onChange={(i) => {
+              onConversation(i === 0);
+              if (i > 0) review.setPrCommitsView(i === 2);
+            }}
+          >
+            <SegmentedControl.Button selected={conversation}>Обсуждение</SegmentedControl.Button>
+            <SegmentedControl.Button selected={!conversation && !commitsTab}>Все изменения</SegmentedControl.Button>
+            <SegmentedControl.Button selected={!conversation && commitsTab}>Коммиты</SegmentedControl.Button>
           </SegmentedControl>
         )}
         {local?.mode === 'base' && <BaseInput value={local.base} onCommit={review.setBase} />}
@@ -340,7 +364,10 @@ export function AppHeader({ route, commentsPanel, commentsShown = commentsPanel,
           aria-label={local ? 'Перечитать дифф' : 'Перечитать PR'}
           size="small"
           variant="invisible"
-          onClick={review.reload}
+          onClick={() => {
+            review.reload();
+            onReloadConversation();
+          }}
         />
 
         <div className="rv-header__spacer" />
