@@ -611,8 +611,7 @@ async function lspChecks(call, home) {
   const prq = 'source=pr&host=github.com&owner=o&repo=r&number=7';
   const prLsp = await lsp({ method: 'definition', path: 'src/a.ts', line: 0, character: 0 }, prq);
   eq([prLsp.status, prLsp.body.ok, prLsp.body.reason], [200, false, 'no-clone'], 'POST /api/lsp для PR -> no-clone');
-  const prStatus = await call(`/api/lsp/status?${prq}`);
-  eq([prStatus.body.available, prStatus.body.reason], [false, 'no-clone'], 'статус для PR: LSP недоступен, нет клона');
+  const prStatus = await call(`/api/lsp/status?${prq}`);  eq([prStatus.body.available, prStatus.body.reason], [false, 'no-clone'], 'статус для PR: LSP недоступен, нет клона');
   eq((await call(`/api/file?${prq}&path=src/a.ts`)).status, 409, 'GET /api/file для PR -> 409');
   const bare = await call('/api/lsp/status?source=local');
   eq(bare.status, 400, 'статус с битым дескриптором -> 400');
@@ -1013,6 +1012,280 @@ async function prCloneChecks(call, home) {
 }
 
 // -------------------------------------------------------------------- suite
+
+/**
+ * The conversation page: what GitHub wrote comes through one gh run per page,
+ * a comment under a remark carries the remark into the export, and an export
+ * with no such comment is what it has always been.
+ */
+async function conversationChecks(call, home) {
+  const { conversationArgs, mapConversation, hunkTail } = require('./lib/pr-conversation');
+  const { renderMarkdown, quoteOf } = require('./lib/export');
+  const { normalizeRef } = require('./lib/store');
+  const d = { source: 'pr', host: 'github.com', owner: 'o', repo: 'conv', number: 31 };
+  const q = 'source=pr&host=github.com&owner=o&repo=conv&number=31';
+
+  const comment = (id, at, body, login) => ({ id, url: `https://github.com/o/conv/pull/31#${id}`, body, createdAt: at, author: login ? { login } : null });
+  const firstPage = {
+    data: {
+      repository: {
+        pullRequest: {
+          url: 'https://github.com/o/conv/pull/31',
+          body: 'Описание PR-а',
+          createdAt: '2026-01-01T10:00:00Z',
+          author: { login: 'misha' },
+          labels: { nodes: [{ name: 'billing', color: 'ff0000' }] },
+          latestOpinionatedReviews: { nodes: [{ state: 'CHANGES_REQUESTED', author: { login: 'dima' } }] },
+          reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'anna' } }, { requestedReviewer: { __typename: 'Team', name: 'core' } }, { requestedReviewer: null }] },
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    state: 'FAILURE',
+                    contexts: {
+                      totalCount: 4,
+                      nodes: [
+                        { __typename: 'CheckRun', name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'https://ci/1' },
+                        { __typename: 'CheckRun', name: 'unit', status: 'IN_PROGRESS', conclusion: null, detailsUrl: null },
+                        { __typename: 'StatusContext', context: 'lint', state: 'FAILURE', targetUrl: 'https://ci/3' },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          timelineItems: {
+            pageInfo: { hasNextPage: true, endCursor: 'T1' },
+            nodes: [
+              { __typename: 'PullRequestReview', ...comment('R0', '2026-01-02T09:00:00Z', '', 'dima'), state: 'COMMENTED' },
+              { __typename: 'IssueComment', ...comment('C1', '2026-01-02T10:00:00Z', 'Нужна миграция?', 'anna') },
+              { __typename: 'PullRequestReview', ...comment('R1', '2026-01-02T11:00:00Z', '', 'dima'), state: 'CHANGES_REQUESTED' },
+              { __typename: 'PullRequestReview', ...comment('R2', '2026-01-02T12:00:00Z', 'черновик', 'me'), state: 'PENDING' },
+              { __typename: 'IssueComment', ...comment('C2', '2026-01-02T13:00:00Z', 'от удалённого аккаунта', null) },
+              // The page's last entry is one the feed leaves out: it still says how far the list was read.
+              { __typename: 'PullRequestReview', ...comment('R3', '2026-01-02T14:00:00Z', '', 'dima'), state: 'COMMENTED' },
+            ],
+          },
+          reviewThreads: {
+            pageInfo: { hasNextPage: false, endCursor: 'H1' },
+            nodes: [
+              {
+                id: 'TH1',
+                isResolved: false,
+                isOutdated: false,
+                path: 'src/retry.ts',
+                line: 42,
+                startLine: 41,
+                originalLine: 40,
+                head: { nodes: [{ diffHunk: '@@ -1,6 +1,7 @@\n a\n b\n c\n-d\n+e\n+f' }] },
+                comments: { totalCount: 2, nodes: [comment('TC1', '2026-01-02T09:00:01Z', 'Нужен cap', 'dima'), comment('TC2', '2026-01-02T15:00:00Z', 'Ограничу', 'misha')] },
+              },
+              {
+                id: 'TH2',
+                isResolved: true,
+                isOutdated: true,
+                path: 'src/old.ts',
+                line: null,
+                startLine: null,
+                originalLine: 7,
+                head: { nodes: [{ diffHunk: '@@ -1 +1 @@\n-x\n+y' }] },
+                comments: { totalCount: 130, nodes: [comment('TC3', '2026-01-02T09:30:00Z', 'Уже не актуально', 'dima')] },
+              },
+              { id: 'TH3', isResolved: false, isOutdated: false, path: 'x', line: 1, head: { nodes: [] }, comments: { totalCount: 0, nodes: [] } },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const secondPage = {
+    data: {
+      repository: {
+        pullRequest: {
+          timelineItems: {
+            pageInfo: { hasNextPage: false, endCursor: 'T2' },
+            nodes: [{ __typename: 'IssueComment', ...comment('C3', '2026-01-03T10:00:00Z', 'Последний', 'anna') }],
+          },
+        },
+      },
+    },
+  };
+
+  const firstArgs = conversationArgs(d, {});
+  const moreArgs = conversationArgs(d, { timelineAfter: 'T1' });
+  ok(firstArgs[0] === 'api' && firstArgs[1] === 'graphql', 'обсуждение читается через gh api graphql');
+  ok(!firstArgs.join(' ').includes('mutation'), 'в запросе обсуждения нет mutation: в GitHub ничего не пишется');
+  ok(firstArgs.includes('meta=true') && firstArgs.includes('timeline=true') && firstArgs.includes('threads=true'), 'первая страница: описание и оба списка');
+  ok(
+    moreArgs.includes('meta=false') && moreArgs.includes('timeline=true') && moreArgs.includes('threads=false') && moreArgs.includes('timelineAfter=T1'),
+    'следующая страница: только тот список, у которого есть продолжение',
+    moreArgs.slice(0, -1).join(' ')
+  );
+
+  const callLog = path.join(home, `gh-calls-conversation-${Date.now()}.log`);
+  const before = { bin: process.env.LOCAL_REVIEW_GH_BIN, fixtures: process.env.LOCAL_REVIEW_GH_FIXTURES, log: process.env.LOCAL_REVIEW_GH_CALL_LOG };
+  ghFixtures(
+    {
+      [firstArgs.join(' ')]: { code: 0, stdout: JSON.stringify(firstPage) },
+      [moreArgs.join(' ')]: { code: 0, stdout: JSON.stringify(secondPage) },
+    },
+    home
+  );
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = callLog;
+  const runs = () => (fs.existsSync(callLog) ? fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length : 0);
+
+  try {
+    const first = await call(`/api/pr/conversation?${q}`);
+    eq(first.status, 200, 'GET /api/pr/conversation -> 200');
+    eq(runs(), 1, 'первая страница обсуждения — один запуск gh');
+    const meta = first.body.meta;
+    eq([meta.author, meta.body, meta.url], ['misha', 'Описание PR-а', 'https://github.com/o/conv/pull/31'], 'описание PR-а и его автор');
+    eq(meta.reviewers, [{ login: 'dima', state: 'CHANGES_REQUESTED' }], 'вердикты ревьюеров');
+    eq(meta.requested, ['anna', 'core'], 'ожидаемые ревьюеры: люди и команды, без пустых');
+    eq(meta.labels, [{ name: 'billing', color: 'ff0000' }], 'метки');
+    eq(
+      meta.checks,
+      {
+        state: 'FAILURE',
+        items: [
+          { name: 'build', state: 'SUCCESS', url: 'https://ci/1' },
+          { name: 'unit', state: 'IN_PROGRESS', url: null },
+          { name: 'lint', state: 'FAILURE', url: 'https://ci/3' },
+        ],
+        more: 1,
+      },
+      'проверки: check run и commit status в одном виде, незавершённая — по статусу'
+    );
+    eq(
+      first.body.timeline.items.map((i) => `${i.kind}:${i.id}:${i.author}`),
+      ['comment:C1:anna', 'review:R1:dima', 'comment:C2:ghost'],
+      'лента: пустое ревью-конверт и чужой черновик не показываются, удалённый автор — ghost'
+    );
+    eq(first.body.timeline.items[1].state, 'CHANGES_REQUESTED', 'ревью без текста, но с вердиктом остаётся в ленте');
+    eq(
+      [first.body.timeline.cursor, first.body.timeline.done, first.body.timeline.through],
+      ['T1', false, '2026-01-02T14:00:00Z'],
+      'лента: курсор и момент последней записи страницы, даже скрытой'
+    );
+    const [t1, t2] = first.body.threads.items;
+    eq(first.body.threads.items.length, 2, 'тред без единого комментария не показывается');
+    eq([t1.path, t1.line, t1.startLine, t1.resolved, t1.outdated, t1.at], ['src/retry.ts', 42, 41, false, false, '2026-01-02T09:00:01Z'], 'тред: файл, строки, время первого комментария');
+    eq(t1.hunk, [' c', '-d', '+e', '+f'],'тред: последние строки hunk-а без заголовка @@');
+    eq(t1.comments.map((c) => `${c.author}:${c.body}`), ['dima:Нужен cap', 'misha:Ограничу'], 'тред: реплики по порядку');
+    eq([t2.line, t2.resolved, t2.outdated, t2.more], [null, true, true, 129], 'устаревший тред без строки; недополученные реплики посчитаны');
+    eq([first.body.threads.done, first.body.threads.through], [true, '2026-01-02T09:30:00Z'], 'треды дочитаны до конца');
+
+    await call(`/api/pr/conversation?${q}`);
+    eq(runs(), 1, 'повторный запрос той же страницы берётся из кэша: gh не запускается');
+
+    const more = await call(`/api/pr/conversation?${q}&timelineAfter=T1`);
+    eq(more.status, 200, 'следующая страница -> 200');
+    eq(Object.keys(more.body), ['timeline'], 'следующая страница несёт только запрошенный список');
+    eq([more.body.timeline.items.map((i) => i.id), more.body.timeline.done], [['C3'], true], 'следующая страница ленты — до конца');
+    eq(runs(), 2, 'следующая страница — ещё один запуск gh');
+
+    await call(`/api/pr/conversation?${q}&fresh=1`);
+    eq(runs(), 3, '«Перечитать PR» (fresh=1) идёт мимо кэша');
+    await call(`/api/pr/conversation?${q}&timelineAfter=T1`);
+    eq(runs(), 4, 'после fresh и следующие страницы читаются заново');
+
+    const local = await call('/api/pr/conversation?source=local&root=x');
+    eq(local.status, 400, 'обсуждение есть только у PR-а: локальный дескриптор -> 400');
+
+    process.env.LOCAL_REVIEW_GH_FIXTURES = ghFixtures({ '*': { code: 1, stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 99.' } }, home);
+    const missing = await call('/api/pr/conversation?source=pr&host=github.com&owner=o&repo=conv&number=99');
+    eq(missing.status, 404, 'несуществующий PR -> 404 с понятным текстом');
+    ok(typeof missing.body.error === 'string' && missing.body.error.length > 0, 'сбой gh приходит как { error }', JSON.stringify(missing.body));
+  } finally {
+    for (const [name, value] of [
+      ['LOCAL_REVIEW_GH_BIN', before.bin],
+      ['LOCAL_REVIEW_GH_FIXTURES', before.fixtures],
+      ['LOCAL_REVIEW_GH_CALL_LOG', before.log],
+    ]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+
+  let noPr = null;
+  try {
+    mapConversation({ data: { repository: { pullRequest: null } } });
+  } catch (e) {
+    noPr = e;
+  }
+  ok(noPr && noPr.userFacing && noPr.status === 404, 'ответ без PR-а — ошибка для человека, а не падение');
+  eq(hunkTail(''), [''], 'пустой hunk не роняет разбор');
+
+  // ---- a comment for the agent under a remark
+  const threadRef = { kind: 'thread', id: 'TH1', author: 'dima', url: 'https://github.com/o/conv/pull/31#TC1', quote: 'Нужен cap\n\n@misha: Ограничу', code: ' c\n-d\n+e' };
+  const onLine = await call(`/api/comments?${q}`, json('POST', { file: 'src/retry.ts', startLine: 41, endLine: 42, text: 'Сделай MAX_DELAY_MS', ref: threadRef }));
+  eq(onLine.status, 201, 'комментарий агенту под тредом создаётся');
+  eq([onLine.body.comment.file, onLine.body.comment.startLine, onLine.body.comment.endLine], ['src/retry.ts', 41, 42], 'он привязан к файлу и строкам треда');
+  eq(onLine.body.comment.ref, threadRef, 'и несёт ссылку на замечание со снимком цитаты');
+
+  const outdated = await call(`/api/comments?${q}`, json('POST', { file: 'src/old.ts', startLine: null, endLine: null, text: 'Проверь, что это убрано', ref: { ...threadRef, id: 'TH2', quote: 'Уже не актуально', code: '-x\n+y' } }));
+  eq([outdated.status, outdated.body.comment.startLine], [201, null], 'под устаревшим тредом — комментарий к файлу без строки');
+
+  const general = await call(`/api/comments?${q}`, json('POST', { general: true, text: 'Ответь в описании', ref: { kind: 'comment', id: 'C1', author: 'anna', url: 'https://github.com/o/conv/pull/31#C1', quote: 'Нужна миграция?' } }));
+  eq([general.status, general.body.comment.file, general.body.comment.ref.id], [201, null, 'C1'], 'под общим комментарием GitHub — общий комментарий со ссылкой');
+
+  const plain = await call(`/api/comments?${q}`, json('POST', { file: 'src/retry.ts', startLine: 5, endLine: 5, text: 'Без ссылки', ref: { kind: 'nonsense', quote: 'x' } }));
+  ok(plain.status === 201 && plain.body.comment.ref === undefined, 'ссылка неизвестного вида отбрасывается, комментарий сохраняется обычным', JSON.stringify(plain.body));
+  eq(normalizeRef({ kind: 'thread', id: 'x', quote: '   ' }), null, 'ссылка без цитаты — не ссылка');
+  eq(normalizeRef({ kind: 'thread', id: 'x', quote: 'я'.repeat(5000) }).quote.length, 4001, 'длинная цитата обрезается');
+
+  const exported = (await call(`/api/export/text?${q}`)).body;
+  eq(
+    exported,
+    [
+      '## Общие комментарии',
+      '',
+      '> Замечание @anna — https://github.com/o/conv/pull/31#C1',
+      '> Нужна миграция?',
+      'Ответь в описании',
+      '',
+      '## Комментарии к коду',
+      '',
+      'src/old.ts',
+      '> Замечание @dima — https://github.com/o/conv/pull/31#TC1',
+      '> ```',
+      '> -x',
+      '> +y',
+      '> ```',
+      '> Уже не актуально',
+      'Проверь, что это убрано',
+      '',
+      'src/retry.ts:L5',
+      'Без ссылки',
+      '',
+      'src/retry.ts:L41-L42',
+      '> Замечание @dima — https://github.com/o/conv/pull/31#TC1',
+      '> Нужен cap',
+      '>',
+      '> @misha: Ограничу',
+      'Сделай MAX_DELAY_MS',
+      '',
+    ].join('\n'),
+    'экспорт: цитата между якорем и текстом; код треда — только когда строки нет'
+  );
+
+  // The quote is a snapshot: the store never asks GitHub again.
+  const stored = JSON.parse(fs.readFileSync(path.join(home, 'pr', 'github.com__o__conv__31.json'), 'utf8')).comments;
+  eq(stored.find((c) => c.ref && c.ref.id === 'TH1').ref.quote, 'Нужен cap\n\n@misha: Ограничу', 'цитата лежит в хранилище, а не читается с GitHub при экспорте');
+  eq(quoteOf({ file: 'a', startLine: 1, text: 'x' }), null, 'у комментария без ссылки цитаты нет');
+  eq(
+    renderMarkdown([{ id: '1', file: 'a.ts', startLine: 3, endLine: 3, text: 'как раньше', createdAt: 'x' }]),
+    'a.ts:L3\nкак раньше\n',
+    'экспорт комментария без ссылки не изменился'
+  );
+  eq(
+    quoteOf({ file: null, startLine: null, text: 'x', ref: { kind: 'description', id: 'u', author: 'misha', url: 'https://u', quote: 'Описание' } }),
+    '> Описание PR-а @misha — https://u\n> Описание',
+    'цитата описания PR-а подписана как описание'
+  );
+}
 
 async function main() {
   // Never touch the real ~/.local-review: the whole home config goes to a
@@ -3204,6 +3477,10 @@ async function main() {
     JSON.parse(fs.readFileSync(path.join(home, 'pr', 'github.com__o__r__26.json'), 'utf8')).comments[0].file === null,
     'PR: общий комментарий лежит в PR-хранилище'
   );
+
+  // ------------------------------------------------- обсуждение PR-а
+  console.log('\nобсуждение PR-а (страница Conversation)');
+  await conversationChecks(call, home);
 
   // ------------------------------------------------------ copy prompt (#28)
   console.log('\nпромпт при копировании');

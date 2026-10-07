@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
 import { api, failureMessage, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
-import { DEFAULT_HASH, hashFor, routeFromHash, viewHash } from './lib/hash';
+import { conversationFromHash, conversationHash, DEFAULT_HASH, hashFor, routeFromHash, viewHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
 import { isTypingTarget, keybindingsFrom, matchesEvent, KEYBINDING_DEFAULTS, type Keybindings } from './lib/keybindings';
@@ -50,6 +50,20 @@ export function App({ theme, onTheme }: Props) {
     setCommentsPanelState(open);
     writeCommentsPanel(open);
   }, []);
+
+  // A PR's conversation page. The address says whether it is open, and is the
+  // history step that opens it; the state is here as well because the review
+  // moves the address without an event when it opens a file (pushState), and
+  // that must be able to close the page.
+  const [conversation, setConversationState] = useState(() => conversationFromHash(hash));
+  useEffect(() => setConversationState(conversationFromHash(hash)), [hash]);
+  const setConversation = useCallback((open: boolean) => {
+    setConversationState(open);
+    const next = conversationHash(window.location.hash, open);
+    if (next !== window.location.hash) window.location.hash = next;
+  }, []);
+  const [conversationReload, setConversationReload] = useState(0);
+  const reloadConversation = useCallback(() => setConversationReload((n) => n + 1), []);
 
   // Long lines wrap in every file; switched from the «Вид» menu or a file's «⋯».
   const [wrap, setWrapState] = useState(readWrap);
@@ -195,6 +209,9 @@ export function App({ theme, onTheme }: Props) {
           commentsPanel={commentsPanel}
           commentsShown={commentsPanel && !(route.screen === 'diff' && navPanelOpen)}
           onCommentsPanel={setCommentsPanel}
+          conversation={conversation}
+          onConversation={setConversation}
+          onReloadConversation={reloadConversation}
           viewMode={viewMode}
           onViewMode={setViewMode}
           wrap={wrap}
@@ -217,6 +234,9 @@ export function App({ theme, onTheme }: Props) {
             onWrap={setWrap}
             navKeys={navKeys}
             onNavPanel={setNavPanelOpen}
+            conversation={conversation}
+            onConversation={setConversation}
+            conversationReload={conversationReload}
           />
         ) : route.screen === 'settings' ? (
           <SettingsScreen back={route.back} />

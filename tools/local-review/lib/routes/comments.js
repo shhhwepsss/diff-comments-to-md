@@ -53,7 +53,7 @@ async function create(req, res, ctx, url) {
     return;
   }
   const comment = general
-    ? store.add({ file: null, startLine: null, endLine: null, text: String(body.text).trim() })
+    ? store.add({ file: null, startLine: null, endLine: null, text: String(body.text).trim(), ref: body.ref })
     : store.add({
         file: body.file,
         startLine: body.startLine === undefined ? null : body.startLine,
@@ -62,6 +62,8 @@ async function create(req, res, ctx, url) {
         // The client only sends this when the selection is not just the
         // latest commit (see docs on lib/store.js's normalizeCommit).
         commit: body.commit,
+        // The remark on GitHub this answers (the conversation page).
+        ref: body.ref,
       });
   sendJson(res, 201, { comment });
 }

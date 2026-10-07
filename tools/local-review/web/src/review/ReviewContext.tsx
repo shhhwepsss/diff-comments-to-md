@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ApiError, api, commitsListDescriptor, errorMessage, failureMessage } from '../api/client';
 import type {
   Comment,
+  CommentRef,
   Commit,
   Descriptor,
   DiffResponse,
@@ -15,7 +16,7 @@ import type {
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
-import { descriptorFromHash, fileFromHash, hashFor, lineFromHash, navigationFor, viewHash } from '../lib/hash';
+import { conversationFromHash, descriptorFromHash, fileFromHash, hashFor, lineFromHash, navigationFor, viewHash } from '../lib/hash';
 import { LspSession } from '../lsp/session';
 import { NavHistory, type StorageLike } from '../nav/history';
 import { createDraftStore, type DraftStore } from './drafts';
@@ -208,12 +209,20 @@ export type Review = {
   createComment: (text: string) => Promise<boolean>;
   /** A comment about the whole review; needs no editor anchor. */
   createGeneralComment: (text: string) => Promise<boolean>;
+  /**
+   * A comment under a remark on the conversation page. `anchor` is the file
+   * and line of a review thread (a null line: the thread is outdated); with
+   * no anchor it is a general comment. The remark goes along as `ref`.
+   */
+  createRemarkComment: (anchor: RemarkAnchor | null, text: string, ref: CommentRef) => Promise<boolean>;
   updateComment: (id: string, text: string) => Promise<boolean>;
   deleteComment: (id: string) => Promise<void>;
   copyAll: () => Promise<void>;
   exportMd: () => Promise<void>;
   clearAll: () => Promise<void>;
 };
+
+export type RemarkAnchor = { file: string; startLine: number | null; endLine: number | null };
 
 const ReviewContext = createContext<Review | null>(null);
 
@@ -586,7 +595,8 @@ export function ReviewProvider({
     if (hashFor(descriptorFromHash(current)) !== hashFor(descriptor)) return;
     // The line a jump put in the address stays while its file is the open one.
     const line = activeFile && fileFromHash(current) === activeFile ? lineFromHash(current) : null;
-    const next = viewHash(descriptor, activeFile, line);
+    // The conversation page is App's: whether it is open rides along untouched.
+    const next = viewHash(descriptor, activeFile, line, conversationFromHash(current));
     if (next !== current) window.history.replaceState(window.history.state, '', next);
   }, [state, descriptor, activeFile, loading]);
 
@@ -1060,6 +1070,26 @@ export function ReviewProvider({
     [descriptor, fail, refreshComments, toast],
   );
 
+  const createRemarkComment = useCallback(
+    async (anchor: RemarkAnchor | null, text: string, ref: CommentRef) => {
+      const value = text.trim();
+      if (!value) {
+        toast('Пустой комментарий не сохраняю', true);
+        return false;
+      }
+      try {
+        if (anchor) await api.createComment(descriptor, { ...anchor, text: value, ref });
+        else await api.createGeneralComment(descriptor, value, ref);
+        await refreshComments();
+        return true;
+      } catch (e) {
+        fail(e);
+        return false;
+      }
+    },
+    [descriptor, fail, refreshComments, toast],
+  );
+
   const updateComment = useCallback(
     async (id: string, text: string) => {
       const value = text.trim();
@@ -1209,6 +1239,7 @@ export function ReviewProvider({
       cancelEdit,
       createComment,
       createGeneralComment,
+      createRemarkComment,
       updateComment,
       deleteComment,
       copyAll,
@@ -1277,6 +1308,7 @@ export function ReviewProvider({
       cancelEdit,
       createComment,
       createGeneralComment,
+      createRemarkComment,
       updateComment,
       deleteComment,
       copyAll,

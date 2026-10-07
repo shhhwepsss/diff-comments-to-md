@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, Link, Spinner, StateLabel } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } from '@primer/octicons-react';
@@ -19,7 +19,12 @@ import { diffTexts } from '../nav/textSources';
 import { CloneBar } from '../pr/CloneBar';
 import { NavPanel } from '../nav/NavPanel';
 import { closeLspMenu, definitionAtCaret, navKeysBlocked, panelAtCaret } from '../diff/cm/lsp';
+import { useConversation } from '../conversation/useConversation';
+import { conversationFromHash } from '../lib/hash';
 import '../diff/diff.css';
+
+// The conversation page brings the markdown parser along; most reviews never open it.
+const ConversationPage = lazy(() => import('../conversation/ConversationPage'));
 
 function prStatus(pr: PrMeta): 'pullOpened' | 'pullClosed' | 'pullMerged' | 'draft' {
   if (pr.isDraft) return 'draft';
@@ -153,13 +158,33 @@ type Props = {
   navKeys: CodeNavKeys;
   /** The navigation panel opened or closed: the header's «Комментарии» is not «on» behind it. */
   onNavPanel?: (open: boolean) => void;
+  /** The PR's conversation page is open in place of the diff. */
+  conversation: boolean;
+  onConversation: (open: boolean) => void;
+  /** Goes up on «Перечитать PR»: an opened conversation is read again. */
+  conversationReload: number;
 };
 
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
 
-export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedKey, viewMode, renderAllFiles, wrap, onWrap, navKeys, onNavPanel }: Props) {
+export function DiffScreen({
+  zen,
+  onZen,
+  commentsPanel,
+  onCommentsPanel,
+  viewedKey,
+  viewMode,
+  renderAllFiles,
+  wrap,
+  onWrap,
+  navKeys,
+  onNavPanel,
+  conversation,
+  onConversation,
+  conversationReload,
+}: Props) {
   const {
     state,
     activeFile,
@@ -175,7 +200,26 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
     navHistory,
     clone,
     diffs,
+    reveal,
   } = useReview();
+
+  // Only a PR has a conversation; the address may ask for one anywhere.
+  const conversationOpen = conversation && descriptor.source === 'pr';
+  const conversationData = useConversation(descriptor, conversationOpen, conversationReload);
+
+  // Going to code from the conversation page — a comment picked in the
+  // comments panel, «Открыть» on one — leaves the page: the diff is where
+  // that code is. Opening a file takes the page out of the address (the
+  // review writes it without `view`); a file that changes while the address
+  // still asks for the page is Back returning to it, not a move away.
+  const cameWith = useRef({ activeFile, reveal });
+  useEffect(() => {
+    const before = cameWith.current;
+    cameWith.current = { activeFile, reveal };
+    if (!conversationOpen) return;
+    const fileOpened = before.activeFile !== activeFile && !conversationFromHash(window.location.hash);
+    if (fileOpened || before.reveal !== reveal) onConversation(false);
+  }, [conversationOpen, activeFile, reveal, onConversation]);
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
   const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
 
@@ -312,6 +356,23 @@ export function DiffScreen({ zen, onZen, commentsPanel, onCommentsPanel, viewedK
           <Blankslate.Description>{loadError}</Blankslate.Description>
           <Blankslate.PrimaryAction onClick={reload}>Повторить</Blankslate.PrimaryAction>
         </Blankslate>
+      </div>
+    );
+  }
+
+  if (conversationOpen) {
+    return (
+      <div className="rv-diff-screen">
+        {state.pr && <PrHeader pr={state.pr} />}
+        <Suspense
+          fallback={
+            <div className="rv-center">
+              <Spinner size="large" />
+            </div>
+          }
+        >
+          <ConversationPage conversation={conversationData} commentsPanel={commentsPanel} onCommentsPanel={onCommentsPanel} />
+        </Suspense>
       </div>
     );
   }

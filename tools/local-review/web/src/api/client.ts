@@ -3,7 +3,9 @@ import type {
   PrCloneStatus,
   BrowseResponse,
   Comment,
+  CommentRef,
   CommitContext,
+  ConversationPage,
   CommitsResponse,
   Descriptor,
   DiffResponse,
@@ -176,10 +178,10 @@ export const api = {
   comments: (d: Descriptor) => request<{ comments: Comment[] }>(`/api/comments?${descriptorQuery(d)}`),
   createComment: (
     d: Descriptor,
-    body: { file: string; startLine: number | null; endLine: number | null; text: string; commit?: CommitContext },
+    body: { file: string; startLine: number | null; endLine: number | null; text: string; commit?: CommitContext; ref?: CommentRef },
   ) => request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', body)),
-  createGeneralComment: (d: Descriptor, text: string) =>
-    request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', { general: true, text })),
+  createGeneralComment: (d: Descriptor, text: string, ref?: CommentRef) =>
+    request<{ comment: Comment }>(`/api/comments?${descriptorQuery(d)}`, jsonBody('POST', { general: true, text, ref })),
   updateComment: (d: Descriptor, id: string, text: string) =>
     request<{ comment: Comment }>(`/api/comments/${encodeURIComponent(id)}?${descriptorQuery(d)}`, jsonBody('PUT', { text })),
   deleteComment: (d: Descriptor, id: string) =>
@@ -243,6 +245,15 @@ export const api = {
   prCloneSet: (d: Descriptor, body: { action: 'link'; dir: string } | { action: 'trust'; trusted: boolean } | { action: 'unlink' }) =>
     request<PrCloneStatus>(`/api/pr/clone?${descriptorQuery(d)}`, jsonBody('POST', body)),
   prCloneJob: (id: string) => request<{ job: CloneJob }>(`/api/pr/clone/job?id=${encodeURIComponent(id)}`),
+
+  /** No cursor: the first page. A cursor continues the list it belongs to. */
+  conversation: (d: Descriptor, cursors: { timelineAfter?: string | null; threadsAfter?: string | null } = {}, fresh = false) => {
+    const extra: Record<string, string> = {};
+    if (cursors.timelineAfter) extra.timelineAfter = cursors.timelineAfter;
+    if (cursors.threadsAfter) extra.threadsAfter = cursors.threadsAfter;
+    if (fresh) extra.fresh = '1';
+    return request<ConversationPage>(`/api/pr/conversation?${descriptorQuery(d, extra)}`);
+  },
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),
   repos: () => request<RepoListResponse>('/api/gh/repos'),

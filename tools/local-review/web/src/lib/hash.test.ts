@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Descriptor } from '../api/types';
 import {
+  conversationFromHash,
+  conversationHash,
   DEFAULT_HASH,
   descriptorFromHash,
   fileFromHash,
@@ -251,5 +253,43 @@ describe('line in the address (code navigation)', () => {
   it('makes Back to the same file a navigation to that line', () => {
     expect(navigationFor(viewHash(local, 'a.ts', 7), local, 'a.ts')).toEqual({ kind: 'file', file: 'a.ts', line: 7 });
     expect(navigationFor(viewHash(local, 'b.ts', 3), local, 'a.ts')).toEqual({ kind: 'file', file: 'b.ts', line: 3 });
+  });
+});
+
+describe('the conversation page in the address', () => {
+  const pr: Descriptor = { source: 'pr', host: 'github.com', owner: 'o', repo: 'r', number: 7 };
+  const local: Descriptor = { source: 'local', root: '/r', mode: 'working', base: '' };
+  const open = '#/pr/github.com/o/r/7?file=a.ts&view=conversation';
+
+  it('is read from a PR address only', () => {
+    expect(conversationFromHash(open)).toBe(true);
+    expect(conversationFromHash('#/pr/github.com/o/r/7?file=a.ts')).toBe(false);
+    expect(conversationFromHash('#/pr/github.com/o/r/7?view=other')).toBe(false);
+    expect(conversationFromHash('#/local/%2Fr?view=conversation')).toBe(false);
+  });
+
+  it('opens and closes without touching the rest of the address', () => {
+    expect(conversationHash('#/pr/github.com/o/r/7?file=a.ts', true)).toBe(open);
+    expect(conversationHash(open, false)).toBe('#/pr/github.com/o/r/7?file=a.ts');
+    expect(conversationHash('#/pr/github.com/o/r/7', true)).toBe('#/pr/github.com/o/r/7?view=conversation');
+    expect(conversationHash('#/pr/github.com/o/r/7?view=conversation', false)).toBe('#/pr/github.com/o/r/7');
+  });
+
+  it('survives a rewrite of the address only when asked to', () => {
+    expect(viewHash(pr, 'a.ts', null, true)).toBe(open);
+    expect(viewHash(pr, 'a.ts')).toBe('#/pr/github.com/o/r/7?file=a.ts');
+    expect(viewHash(local, null, null, true)).toBe('#/local/%2Fr');
+  });
+
+  it('does not change which review or which diff the address names', () => {
+    expect(routeFromHash(open)).toEqual({ screen: 'diff', descriptor: pr, file: 'a.ts' });
+    // Opening the page is not a navigation for the review: same diff, same file.
+    expect(navigationFor(open, pr, 'a.ts')).toEqual({ kind: 'ignore' });
+  });
+
+  it('is left by a link to a line of the diff', () => {
+    const link = viewHash(pr, 'b.ts', 42);
+    expect(conversationFromHash(link)).toBe(false);
+    expect(navigationFor(link, pr, 'a.ts')).toEqual({ kind: 'file', file: 'b.ts', line: 42 });
   });
 });

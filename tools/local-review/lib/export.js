@@ -50,6 +50,33 @@ function commitLineOf(comment) {
   return ctx.label ? `${range} · ${ctx.label}` : range;
 }
 
+const REF_HEADING = { thread: 'Замечание', comment: 'Замечание', review: 'Замечание', description: 'Описание PR-а' };
+
+/**
+ * The remark on GitHub a comment answers, as a markdown quote that goes right
+ * above the comment's text: who wrote it and where, then what they wrote.
+ * The code the thread hangs under is added only when the comment has no line
+ * to point at (the thread is outdated) — otherwise the anchor already says
+ * where to look. null for a comment with no `ref`: its block stays as it was.
+ */
+function quoteOf(comment) {
+  const ref = comment.ref;
+  if (!ref || !ref.quote) return null;
+  const who = ref.author ? ` @${ref.author}` : '';
+  const where = ref.url ? ` — ${ref.url}` : '';
+  const lines = [`${REF_HEADING[ref.kind] || REF_HEADING.comment}${who}${where}`];
+  const lineless = comment.startLine === null || comment.startLine === undefined;
+  if (ref.code && lineless && comment.file) lines.push('```', ...ref.code.split('\n'), '```');
+  lines.push(...ref.quote.split('\n'));
+  return lines.map((line) => (line ? `> ${line}` : '>')).join('\n');
+}
+
+/** A comment's text, under the remark it answers when there is one. */
+function bodyOf(comment) {
+  const quote = quoteOf(comment);
+  return quote ? `${quote}\n${textOf(comment)}` : textOf(comment);
+}
+
 /**
  * Without general comments the output is exactly what it has always been:
  * `anchor\ntext` blocks, nothing else. General comments, when there are any,
@@ -65,13 +92,13 @@ function renderMarkdown(comments) {
     .map((c) => {
       const commitLine = commitLineOf(c);
       const head = commitLine ? `${anchorOf(c)}\n${commitLine}` : anchorOf(c);
-      return `${head}\n${textOf(c)}`;
+      return `${head}\n${bodyOf(c)}`;
     })
     .join('\n\n');
 
   if (!general.length) return codeBlocks + (code.length ? '\n' : '');
 
-  const sections = [`${GENERAL_HEADING}\n\n${general.map(textOf).join('\n\n')}`];
+  const sections = [`${GENERAL_HEADING}\n\n${general.map(bodyOf).join('\n\n')}`];
   if (code.length) sections.push(`${CODE_HEADING}\n\n${codeBlocks}`);
   return sections.join('\n\n') + '\n';
 }
@@ -110,4 +137,4 @@ function writeMarkdownFile(repoRoot, markdown, date) {
   return { name, path: abs };
 }
 
-module.exports = { anchorOf, commitLineOf, renderMarkdown, exportMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, quoteOf, renderMarkdown, exportMarkdown, writeMarkdownFile, sortComments, stamp };
