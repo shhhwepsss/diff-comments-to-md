@@ -20,9 +20,10 @@ function PrIcon({ item }: { item: PrItem }) {
   return <GitPullRequestIcon className="rv-pr-icon rv-pr-icon--open" aria-label="open" />;
 }
 
-function openPr(item: PrItem) {
-  if (!item.owner || !item.repo) return;
-  window.location.hash = hashFor({ source: 'pr', host: item.host || 'github.com', owner: item.owner, repo: item.repo, number: item.number });
+/** The address of a PR's diff, or null when the search did not say which repository it is in. */
+function prHash(item: PrItem): string | null {
+  if (!item.owner || !item.repo) return null;
+  return hashFor({ source: 'pr', host: item.host || 'github.com', owner: item.owner, repo: item.repo, number: item.number });
 }
 
 type Result = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ok'; items: PrItem[]; homeDir: string; storedPrs: number };
@@ -322,31 +323,52 @@ export function PrSearch() {
               {result.kind === 'ok' && result.items.length === 0 && <li className="rv-list__empty">Ничего не найдено</li>}
               {result.kind === 'ok' &&
                 result.items.map((item) => {
-                  const canOpen = Boolean(item.owner && item.repo);
+                  const href = prHash(item);
+                  const main = (
+                    <>
+                      <PrIcon item={item} />
+                      <span className="rv-pr-row">
+                        <span className="rv-pr-row__title">
+                          {item.title} <span className="rv-pr-row__number">#{item.number}</span>
+                        </span>
+                        <span className="rv-pr-row__meta">
+                          {[
+                            item.owner && item.repo ? `${item.owner}/${item.repo}` : '',
+                            item.author || '',
+                            // Branch is unknown for a global search: gh search prs does not return it.
+                            item.headRefName || '',
+                            formatDate(item.updatedAt),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                      </span>
+                    </>
+                  );
+                  // Real links, not buttons that set the hash: a plain click
+                  // still opens the PR here, and the middle button, Ctrl+click
+                  // and the context menu open it in another tab — the browser
+                  // does all of it, the same way as for a file in the tree.
                   return (
                     <li key={`${item.owner}/${item.repo}#${item.number}`} className="rv-row rv-row--pr">
-                      <button type="button" className="rv-row__main" disabled={!canOpen} onClick={() => openPr(item)}>
-                        <PrIcon item={item} />
-                        <span className="rv-pr-row">
-                          <span className="rv-pr-row__title">
-                            {item.title} <span className="rv-pr-row__number">#{item.number}</span>
-                          </span>
-                          <span className="rv-pr-row__meta">
-                            {[
-                              item.owner && item.repo ? `${item.owner}/${item.repo}` : '',
-                              item.author || '',
-                              // Branch is unknown for a global search: gh search prs does not return it.
-                              item.headRefName || '',
-                              formatDate(item.updatedAt),
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </span>
-                        </span>
-                      </button>
-                      <Button size="small" disabled={!canOpen} onClick={() => openPr(item)}>
-                        Открыть
-                      </Button>
+                      {href ? (
+                        <a className="rv-row__main" href={href}>
+                          {main}
+                        </a>
+                      ) : (
+                        <button type="button" className="rv-row__main" disabled>
+                          {main}
+                        </button>
+                      )}
+                      {href ? (
+                        <Button as="a" href={href} size="small">
+                          Открыть
+                        </Button>
+                      ) : (
+                        <Button size="small" disabled>
+                          Открыть
+                        </Button>
+                      )}
                     </li>
                   );
                 })}

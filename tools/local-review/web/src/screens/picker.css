@@ -105,7 +105,13 @@
   color: var(--fgColor-default);
   font: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
+}
+
+/* A PR row is a link; the row's own hover background is its affordance. */
+.rv-row__main:hover {
+  text-decoration: none;
 }
 
 .rv-row__main:disabled {
