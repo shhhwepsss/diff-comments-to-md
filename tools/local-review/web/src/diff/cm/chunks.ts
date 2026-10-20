@@ -1,13 +1,20 @@
 import { getChunks, getOriginalDoc } from '@codemirror/merge';
-import { StateField, type EditorState, type Range } from '@codemirror/state';
+import { Facet, StateField, type EditorState, type Range, type Text } from '@codemirror/state';
 import { Decoration, EditorView } from '@codemirror/view';
 import { oldLineNumbers, type LineChunk } from '../lineMap';
 
-/** The merge chunks of a unified view, in line numbers. */
+/**
+ * The old text of the new side of a split view. A unified view keeps it in
+ * the merge extension (getOriginalDoc); in a split view it is the other
+ * editor's document, so the new side is given it here.
+ */
+export const splitOriginal = Facet.define<Text, Text | null>({ combine: (v) => v[0] ?? null });
+
+/** The merge chunks of a unified view, or of a split view's new side, in line numbers. */
 export function lineChunksOf(state: EditorState): LineChunk[] {
   const info = getChunks(state);
   if (!info) return [];
-  const a = getOriginalDoc(state);
+  const a = state.facet(splitOriginal) ?? getOriginalDoc(state);
   const b = state.doc;
   // `from` may point one past the end when a chunk sits after the last line.
   const lineOf = (doc: typeof a, pos: number) => (pos > doc.length ? doc.lines + 1 : doc.lineAt(pos).number);

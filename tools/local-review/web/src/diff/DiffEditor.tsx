@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Text, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { unifiedMergeView } from '@codemirror/merge';
+import { MergeView, unifiedMergeView } from '@codemirror/merge';
 import type { Hunk } from '../api/types';
 import { failureMessage } from '../api/client';
 import { useToast } from '../lib/toast';
 import { orderedRange, type LineRange } from './lineMap';
 import { finalEmptyLine } from './cm/lastLine';
-import { gitDiffOverride, unpairedAddedLines } from './gitDiff';
-import { chunkInfo, pureInsertions } from './cm/chunks';
+import { gitDiffOverride, unpairedAddedLines, unpairedDeletedLines } from './gitDiff';
+import { chunkInfo, pureInsertions, splitOriginal } from './cm/chunks';
 import { PortalRegistry, blocksField, setBlocks, type Block } from './cm/blocks';
 import { pinBlocks } from './cm/blockPin';
 import { selectedLines, setSelectedLines } from './cm/selection';
-import { folding, unfoldAt, type FoldHub } from './cm/collapse';
-import { diffGutters, fullFileGutter, lineAtY } from './cm/gutters';
+import { collapseFold, expandFold, folding, unfoldAt, type FoldHub } from './cm/collapse';
+import { diffGutters, fullFileGutter, lineAtY, splitNewGutters } from './cm/gutters';
+import { SplitMirror, mirrorField, oldSide } from './cm/split';
 import { githubHighlight, githubTheme } from './cm/theme';
 import { languageFor } from './cm/language';
 import { occurrences as occurrenceHighlight, type OccurrenceHub } from './cm/occurrences';
@@ -56,6 +57,11 @@ type Props = {
    * folded, one column of numbers — clickable for comments like the diff's.
    */
   full?: boolean;
+  /**
+   * The old version on the left, the new one on the right (cm/split.ts),
+   * instead of one column. Comments still go on the new side only.
+   */
+  split?: boolean;
 };
 
 const FLASH_MS = 1600;
@@ -63,9 +69,10 @@ const FLASH_MS = 1600;
 const SETTLE_MS = 500;
 
 /**
- * One read-only unified diff of a file: the new text is the document, the old
- * text is the merge view's original. Comments render inside it as React
- * portals.
+ * One read-only diff of a file. Unified: the new text is the document, the
+ * old text is the merge view's original. Split: two editors side by side, the
+ * new one (the one this component drives) on the right. Comments render
+ * inside the new text as React portals.
  */
 export function DiffEditor({
   path,
@@ -84,9 +91,14 @@ export function DiffEditor({
   lsp,
   folds,
   full = false,
+  split = false,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
+  /** The editor of the new text: the only one in a unified view, the right one in a split view. */
   const view = useRef<EditorView | null>(null);
+  /** The split view holding `view`, or null. */
+  const merge = useRef<MergeView | null>(null);
+  const twoColumns = split && !full;
   const registry = useMemo(() => new PortalRegistry(), []);
   const wrapConf = useMemo(() => new Compartment(), []);
   const toast = useToast();
@@ -204,11 +216,21 @@ export function DiffEditor({
       paint(orderedRange(anchor, line));
     };
 
+    const mirror = new SplitMirror();
+
     const create = (lang: Extension) => {
       // Both texts keep their final newline (see cm/lastLine.ts).
       const diffOnly: Extension[] = full
         ? [fullFileGutter({ onLineMouseDown })]
-        : [
+        : twoColumns
+          ? [
+              // The merge chunks come from MergeView, the old text is the other editor's.
+              splitOriginal.of(Text.of(oldText.split(/\r\n|\r|\n/))),
+              chunkInfo,
+              pureInsertions(unpairedAddedLines(hunks)),
+              mirror.newSide,
+            ]
+          : [
             // Before the merge view: its deletion blocks are highlighted with
             // the language that is active when they are first drawn.
             lang,
@@ -224,12 +246,10 @@ export function DiffEditor({
             chunkInfo,
             pureInsertions(unpairedAddedLines(hunks)),
           ];
-      const state = EditorState.create({
-        doc: newText,
-        extensions: [
+      const newExtensions: Extension[] = [
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
-          full ? lang : [],
+          full || twoColumns ? lang : [],
           diffOnly,
           blocksField(registry),
           pinBlocks,
@@ -237,15 +257,46 @@ export function DiffEditor({
           full ? [] : folding(folds),
           occurrenceHighlight(occurrences),
           lspNavigation(lsp),
-          full ? [] : diffGutters({ onLineMouseDown }),
+          full ? [] : twoColumns ? splitNewGutters({ onLineMouseDown }) : diffGutters({ onLineMouseDown }),
           githubTheme,
           githubHighlight,
           finalEmptyLine(deletedFile || /[\r\n]$/.test(newText)),
           wrapConf.of(latest.current.wrap ? EditorView.lineWrapping : []),
-        ],
-      });
+      ];
 
-      const v = new EditorView({ state, parent });
+      let v: EditorView;
+      if (twoColumns) {
+        const mv = new MergeView({
+          a: {
+            doc: oldText,
+            extensions: [
+              EditorState.readOnly.of(true),
+              EditorView.editable.of(false),
+              lang,
+              oldSide(unpairedDeletedLines(hunks)),
+              mirror.oldSide,
+              // A press on a fold bar of the old side folds / unfolds the new side.
+              mirrorField((open, range) => view.current?.dispatch({ effects: open ? collapseFold(range) : expandFold(range) })),
+              githubTheme,
+              githubHighlight,
+              finalEmptyLine(oldText === '' || /[\r\n]$/.test(oldText)),
+              wrapConf.of(latest.current.wrap ? EditorView.lineWrapping : []),
+            ],
+          },
+          b: { doc: newText, extensions: newExtensions },
+          parent,
+          highlightChanges: true,
+          gutter: false,
+          // Line structure from git's hunks, as in the unified view.
+          diffConfig: { override: gitDiffOverride(hunks) },
+        });
+        merge.current = mv;
+        v = mv.b;
+        // An empty reconfigure only schedules MergeView's measuring.
+        mirror.attach(mv.a, mv.b, () => mv.reconfigure({}));
+      } else {
+        v = new EditorView({ state: EditorState.create({ doc: newText, extensions: newExtensions }), parent });
+      }
       view.current = v;
       registry.view = v;
       occurrences.attach(v);
@@ -277,12 +328,15 @@ export function DiffEditor({
       drag.current = null;
       if (view.current) occurrences.detach(view.current);
       if (view.current) folds.detach(view.current);
-      view.current?.destroy();
+      mirror.destroy();
+      if (merge.current) merge.current.destroy();
+      else view.current?.destroy();
+      merge.current = null;
       view.current = null;
       registry.view = null;
       registry.destroy();
     };
-  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences, lsp, folds, full]);
+  }, [path, oldText, newText, hunks, deletedFile, registry, wrapConf, toast, applyReveal, occurrences, lsp, folds, full, twoColumns]);
 
   useEffect(() => {
     if (reveal) applyReveal();
@@ -299,7 +353,9 @@ export function DiffEditor({
   }, [selectedKey]);
 
   useEffect(() => {
-    view.current?.dispatch({ effects: wrapConf.reconfigure(wrap ? EditorView.lineWrapping : []) });
+    const effects = wrapConf.reconfigure(wrap ? EditorView.lineWrapping : []);
+    view.current?.dispatch({ effects });
+    merge.current?.a.dispatch({ effects });
   }, [wrap, wrapConf]);
 
   useSyncExternalStore(registry.subscribe, registry.getSnapshot);
@@ -328,7 +384,7 @@ export function DiffEditor({
           }}
         />
       </div>
-      <div ref={host} className="rv-diff-editor" />
+      <div ref={host} className={twoColumns ? 'rv-diff-editor is-split' : 'rv-diff-editor'} />
       {registry.entries().map(([key, el]) => createPortal(renderBlock(key), el, key))}
     </>
   );

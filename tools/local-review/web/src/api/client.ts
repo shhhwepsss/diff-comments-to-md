@@ -29,6 +29,7 @@ import type {
   StateResponse,
   ValidateResponse,
   ViewMode,
+  DiffLayout,
 } from './types';
 import type { PrAuthorFilter } from '../lib/prAuthor';
 import { keybindingsFrom } from '../lib/keybindings';
@@ -41,6 +42,14 @@ export function viewModeFrom(value: unknown): ViewMode {
   return value === 'single' || value === 'all' ? value : DEFAULT_VIEW_MODE;
 }
 
+/** How a file's diff is drawn when neither the browser nor the server says. */
+export const DEFAULT_DIFF_LAYOUT: DiffLayout = 'unified';
+
+/** Whatever came back from the server as a diff layout; anything else is the default. */
+export function diffLayoutFrom(value: unknown): DiffLayout {
+  return value === 'unified' || value === 'split' ? value : DEFAULT_DIFF_LAYOUT;
+}
+
 /** Whether «Код» / «Просмотр» is one switch for every file, when the server does not say. */
 export const DEFAULT_RENDER_MODE_FOR_ALL_FILES = true;
 
@@ -51,7 +60,7 @@ export function renderModeForAllFilesFrom(value: unknown): boolean {
 
 /**
  * /api/settings as the rest of the app may rely on it: a complete keybindings
- * map, a valid view mode and a boolean render mode switch, even from an older
+ * map, a valid view mode and diff layout and a boolean render mode switch, even from an older
  * server or a hand-edited settings.json.
  */
 export function normalizeSettings(s: Settings): Settings {
@@ -59,6 +68,7 @@ export function normalizeSettings(s: Settings): Settings {
     ...s,
     keybindings: keybindingsFrom(s.keybindings),
     defaultViewMode: viewModeFrom(s.defaultViewMode),
+    defaultDiffLayout: diffLayoutFrom(s.defaultDiffLayout),
     renderModeForAllFiles: renderModeForAllFilesFrom(s.renderModeForAllFiles),
   };
 }

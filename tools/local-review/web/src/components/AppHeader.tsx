@@ -21,6 +21,7 @@ import type { Mode } from '../api/types';
 import { settingsHash, type Route } from '../lib/hash';
 import type { ThemePref } from '../lib/theme';
 import type { ViewMode } from '../lib/viewMode';
+import type { DiffLayout } from '../lib/diffLayout';
 import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview, type Review } from '../review/ReviewContext';
 import { generalComments } from '../review/generalComments';
@@ -44,6 +45,11 @@ const THEMES: { value: ThemePref; label: string; icon: typeof SunIcon }[] = [
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'single', label: 'Один файл' },
   { value: 'all', label: 'Все файлы' },
+];
+
+const DIFF_LAYOUTS: { value: DiffLayout; label: string }[] = [
+  { value: 'unified', label: 'Одна колонка' },
+  { value: 'split', label: 'Две колонки' },
 ];
 
 function BaseInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
@@ -175,6 +181,8 @@ function ReviewMenu({ review }: { review: Review }) {
 type ViewProps = {
   viewMode: ViewMode | null;
   onViewMode: (mode: ViewMode) => void;
+  diffLayout: DiffLayout | null;
+  onDiffLayout: (layout: DiffLayout) => void;
   wrap: boolean;
   onWrap: (on: boolean) => void;
   onZen: (on: boolean) => void;
@@ -189,7 +197,7 @@ type ViewProps = {
  * wrap, Zen, the theme. Set once and left alone, so all of it is one click away
  * instead of on screen.
  */
-function ViewMenu({ viewMode, onViewMode, wrap, onWrap, onZen, zenKey, theme, onTheme }: ViewProps) {
+function ViewMenu({ viewMode, onViewMode, diffLayout, onDiffLayout, wrap, onWrap, onZen, zenKey, theme, onTheme }: ViewProps) {
   const [open, setOpen] = useState(false);
   return (
     <AnchoredOverlay
@@ -206,6 +214,15 @@ function ViewMenu({ viewMode, onViewMode, wrap, onWrap, onZen, zenKey, theme, on
           {VIEW_MODES.map((m) => (
             <SegmentedControl.Button key={m.value} selected={m.value === viewMode}>
               {m.label}
+            </SegmentedControl.Button>
+          ))}
+        </SegmentedControl>
+
+        <div className="rv-view-menu__label">Дифф</div>
+        <SegmentedControl aria-label="Вид диффа" size="small" fullWidth onChange={(i) => onDiffLayout(DIFF_LAYOUTS[i].value)}>
+          {DIFF_LAYOUTS.map((l) => (
+            <SegmentedControl.Button key={l.value} selected={l.value === diffLayout}>
+              {l.label}
             </SegmentedControl.Button>
           ))}
         </SegmentedControl>

@@ -5,6 +5,7 @@ import { AlertIcon, HistoryIcon, LinkExternalIcon, ScreenNormalIcon, XIcon } fro
 import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile, PrMeta } from '../api/types';
 import type { ViewMode } from '../lib/viewMode';
+import type { DiffLayout } from '../lib/diffLayout';
 import { useFileFilter } from '../diff/useFileFilter';
 import { FileSidebar } from '../diff/FileSidebar';
 import { DiffPane } from '../diff/DiffPane';
@@ -154,6 +155,10 @@ type Props = {
   /** Long lines wrap in every file. */
   wrap: boolean;
   onWrap: (on: boolean) => void;
+  /** One column or two in every file. */
+  diffLayout: DiffLayout;
+  onDiffLayout: (layout: DiffLayout) => void;
+  diffLayoutKey: string;
   /** Go to definition, Back, Forward. */
   navKeys: CodeNavKeys;
   /** The navigation panel opened or closed: the header's «Комментарии» is not «on» behind it. */
@@ -179,6 +184,9 @@ export function DiffScreen({
   renderAllFiles,
   wrap,
   onWrap,
+  diffLayout,
+  onDiffLayout,
+  diffLayoutKey,
   navKeys,
   onNavPanel,
   conversation,
@@ -409,6 +417,9 @@ export function DiffScreen({
               renderAllFiles={renderAllFiles}
               wrap={wrap}
               onWrap={onWrap}
+              diffLayout={diffLayout}
+              onDiffLayout={onDiffLayout}
+              diffLayoutKey={diffLayoutKey}
               filter={filter}
             />
           </CodeNavContext.Provider>

@@ -6,7 +6,10 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
   type RefObject,
@@ -22,6 +25,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CodeIcon,
+  ColumnsIcon,
   CommentIcon,
   EyeClosedIcon,
   EyeIcon,
@@ -30,6 +34,7 @@ import {
   FoldIcon,
   KebabHorizontalIcon,
   QuestionIcon,
+  RowsIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
 } from '@primer/octicons-react';
@@ -50,6 +55,7 @@ import { LspHub } from './cm/lsp';
 import { CodeNavContext, type CodeNav } from '../nav/codeNav';
 import { indicatorFor } from '../lsp/session';
 import { displayBinding } from '../lib/keybindings';
+import { effectiveDiffLayout, splitFits, type DiffLayout } from '../lib/diffLayout';
 
 /**
  * «word N of M» with ↑/↓ in the file header. Its own component, subscribed to
@@ -132,6 +138,67 @@ function NavButtons({ nav }: { nav: CodeNav }) {
       />
     </span>
   );
+}
+
+/**
+ * «Одна колонка» / «Две колонки» in the file header. One choice for every
+ * file; `fellBack` says two columns were chosen but this file is too narrow
+ * for them, so it shows one.
+ */
+function LayoutToggle({
+  layout,
+  fellBack,
+  shortcut,
+  onChange,
+}: {
+  layout: DiffLayout;
+  fellBack: boolean;
+  shortcut: string;
+  onChange: (layout: DiffLayout) => void;
+}) {
+  const hint = (label: string) => (shortcut ? `${label} (переключить: ${shortcut})` : label);
+  return (
+    <>
+      {fellBack && (
+        <span className="rv-file-header__fallback" title="Для двух колонок файлу не хватает ширины">
+          Не помещается — одна колонка
+        </span>
+      )}
+      <SegmentedControl aria-label="Вид диффа" size="small" onChange={(i) => onChange(i === 1 ? 'split' : 'unified')}>
+        <SegmentedControl.IconButton
+          icon={RowsIcon}
+          aria-label="Одна колонка"
+          description={hint('Одна колонка')}
+          selected={layout === 'unified'}
+        />
+        <SegmentedControl.IconButton
+          icon={ColumnsIcon}
+          aria-label="Две колонки"
+          description={hint('Две колонки')}
+          selected={layout === 'split'}
+        />
+      </SegmentedControl>
+    </>
+  );
+}
+
+/**
+ * Whether two columns fit the element (lib/diffLayout.ts splitFits), followed
+ * as its width changes. Measured before the first paint, so a narrow file is
+ * never built in two columns first; true until then.
+ */
+function useSplitFits(ref: RefObject<HTMLElement | null>): boolean {
+  const [fits, setFits] = useState(true);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setFits((fitted) => splitFits(el.clientWidth, fitted));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return fits;
 }
 
 /** «LSP · tsserver» / «индексация…» / «LSP не найден» for this file's language; nothing for a file no server handles. */
@@ -274,6 +341,11 @@ export type FileDiffProps = {
   draft: RefObject<FormDraft>;
   wrap: boolean;
   onWrap: (next: boolean) => void;
+  /** One column or two (lib/diffLayout.ts); the same for every file. */
+  diffLayout: DiffLayout;
+  onDiffLayout: (layout: DiffLayout) => void;
+  /** The shortcut that switches it, as the settings spell it; '' when none is bound. */
+  diffLayoutKey: string;
   /** Rendered markdown / html instead of the source diff. */
   rendered: boolean;
   /** The reviewer used the «Код» / «Просмотр» switch; other files may follow (renderMode.ts). */
@@ -329,6 +401,9 @@ export const FileDiff = memo(function FileDiff({
   draft,
   wrap,
   onWrap,
+  diffLayout,
+  onDiffLayout,
+  diffLayoutKey,
   rendered: renderedChoice,
   onRendered,
   onFileRendered,
@@ -358,6 +433,12 @@ export const FileDiff = memo(function FileDiff({
   const docLines = showsEditor && diff ? lineCount(diff.newText ?? '') : 0;
   const preview = diff ? previewToRender(path, diff) : null;
   const rendered = Boolean(preview && renderedChoice);
+  // Two columns only where there is room for them, and only for a real diff:
+  // a whole file outside the diff has no old side.
+  const sectionRef = useRef<HTMLElement>(null);
+  const fits = useSplitFits(sectionRef);
+  const hasTwoSides = showsEditor && !diff?.fullFile;
+  const shownLayout = effectiveDiffLayout(diffLayout, fits);
 
   const { anchored, unanchored, blocks, selected, editorInDoc } = useMemo(
     () => fileLayout({ comments, commentsHidden, editingId, showsEditor, docLines, rendered, editor }),
@@ -496,7 +577,7 @@ export const FileDiff = memo(function FileDiff({
       : null;
 
   return (
-    <section className={collapsed ? 'rv-file is-collapsed' : 'rv-file'} data-path={path}>
+    <section ref={sectionRef} className={collapsed ? 'rv-file is-collapsed' : 'rv-file'} data-path={path}>
       <div className="rv-file-header">
         {nav && !collapsed && <NavButtons nav={nav} />}
         {onCollapse && (
@@ -552,6 +633,14 @@ export const FileDiff = memo(function FileDiff({
         {!collapsed && !rendered && <FoldAllButton hub={folds} />}
         {!collapsed && !rendered && <OccurrenceCounter hub={occurrences} />}
         {nav && !collapsed && <LspIndicator nav={nav} path={path} />}
+        {!collapsed && !rendered && hasTwoSides && (
+          <LayoutToggle
+            layout={diffLayout}
+            fellBack={diffLayout !== shownLayout}
+            shortcut={displayBinding(diffLayoutKey)}
+            onChange={onDiffLayout}
+          />
+        )}
         {!collapsed && preview && (
           <SegmentedControl aria-label="Вид файла" size="small" onChange={(i) => onRendered(path, i === 1)}>
             <SegmentedControl.IconButton icon={CodeIcon} aria-label="Код" selected={!rendered} />
@@ -727,6 +816,7 @@ export const FileDiff = memo(function FileDiff({
             lsp={lsp}
             folds={folds}
             full={Boolean(diff.fullFile)}
+            split={shownLayout === 'split'}
           />
         </div>
       )}

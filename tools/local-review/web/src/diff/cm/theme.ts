@@ -51,6 +51,28 @@ export const githubTheme = EditorView.theme({
   // block was purely added or purely removed.
   '&.cm-merge-b .rv-pure-add .cm-changedText': { background: 'none' },
   '.cm-deletedChunk:not(:has(+ .cm-changedLine)) .cm-deletedText': { background: 'none' },
+  // The old side of a split view (cm/split.ts): its changed lines are deleted ones.
+  '&.cm-merge-a .cm-changedLine': {
+    backgroundColor: 'var(--diffBlob-deletionLine-bgColor)',
+  },
+  '&.cm-merge-a .cm-changedLine::before': { content: '"-"' },
+  '&.cm-merge-a .cm-changedText': {
+    background: 'var(--diffBlob-deletionWord-bgColor)',
+    borderRadius: '2px',
+  },
+  '&.cm-merge-a .rv-pure-del .cm-changedText': { background: 'none' },
+  // MergeView wraps the old side's changed lines in a deletion mark that the
+  // unified view styles as a line of its own: here it is only text.
+  '&.cm-merge-a .cm-deletedLine': { padding: '0', position: 'static' },
+  '&.cm-merge-a .cm-deletedLine::before': { content: 'none' },
+  // Room MergeView leaves where one side has more lines than the other.
+  '.cm-mergeSpacer': {
+    backgroundColor: 'var(--bgColor-muted)',
+    backgroundImage:
+      'repeating-linear-gradient(135deg, transparent 0 6px, var(--borderColor-muted) 6px 7px)',
+  },
+  // Beside a comment card of the new side.
+  '.rv-split-gap': { backgroundColor: 'var(--bgColor-muted)' },
   '.cm-deletedChunk': {
     backgroundColor: 'var(--diffBlob-deletionLine-bgColor)',
     paddingLeft: '0',
@@ -111,6 +133,9 @@ export const githubTheme = EditorView.theme({
     fontWeight: '600',
     zIndex: '2',
   },
+  // The old side of a split view takes no comments: no "+" and no hand.
+  '&.cm-merge-a .cm-gutterElement': { cursor: 'default' },
+  '&.cm-merge-a .cm-lineNumbers .cm-gutterElement:hover::after': { content: 'none' },
   '.cm-gutterElement.rv-gutter-selected': {
     backgroundColor: 'var(--bgColor-attention-muted) !important',
   },

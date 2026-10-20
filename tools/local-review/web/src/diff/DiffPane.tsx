@@ -4,6 +4,7 @@ import { useReview } from '../review/ReviewContext';
 import { useFileDiff } from '../review/useFileDiff';
 import type { Comment, FileEntry } from '../api/types';
 import type { ViewMode } from '../lib/viewMode';
+import type { DiffLayout } from '../lib/diffLayout';
 import { Empty, FileDiff, type FileDiffActions, type FormDraft } from './FileDiff';
 import { FileFeed, type FeedFile } from './FileFeed';
 import { buildTree, filesOf } from './fileTree';
@@ -28,6 +29,11 @@ type Props = {
   /** Long lines wrap; one switch for every file, in the header's «Вид» menu. */
   wrap: boolean;
   onWrap: (on: boolean) => void;
+  /** One column or two; one switch for every file. */
+  diffLayout: DiffLayout;
+  onDiffLayout: (layout: DiffLayout) => void;
+  /** Its shortcut, shown in the switch's tooltip; '' when none is bound. */
+  diffLayoutKey: string;
   /** The sidebar's search and rules: the feed shows the same files. */
   filter: FileFilter;
 };
@@ -37,7 +43,19 @@ type Props = {
  * made per file, the unsaved form text, which «scroll to this comment» request
  * is already done — and hands each file its own slice of the review.
  */
-export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap, onWrap, filter }: Props) {
+export function DiffPane({
+  zen,
+  onZen,
+  panelOpen,
+  viewMode,
+  renderAllFiles,
+  wrap,
+  onWrap,
+  diffLayout,
+  onDiffLayout,
+  diffLayoutKey,
+  filter,
+}: Props) {
   const single = viewMode === 'single';
   const review = useReview();
   const { activeFile, diffs, comments, editor, editingId, state, staleIds, age, reveal, currentCommentId, navFiles, lineReveal, filesReadable } = review;
@@ -215,6 +233,9 @@ export function DiffPane({ zen, onZen, panelOpen, viewMode, renderAllFiles, wrap
       draft,
       wrap,
       onWrap,
+      diffLayout,
+      onDiffLayout,
+      diffLayoutKey,
       // Only for a file that has a rendered view: the common switch must not
       // re-render every other file of the feed.
       rendered: previewKind(path) !== null && isRendered(renderChoice, path, renderAllFiles),
