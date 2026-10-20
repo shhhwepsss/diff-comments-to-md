@@ -105,6 +105,27 @@ export function fullFileGutter(handlers: GutterHandlers): Extension {
   return lineNumbers({ domEventHandlers: { mousedown: numberMouseDown(handlers) } });
 }
 
+/** Background of the numbers of added / changed new lines. */
+const addedLines = gutterLineClass.compute([chunkInfo], (state) => {
+  const marks: Range<GutterMarker>[] = [];
+  const doc = state.doc;
+  for (const c of state.field(chunkInfo).chunks) {
+    for (let n = c.newFrom; n < c.newFrom + c.newCount && n <= doc.lines; n++) marks.push(addedClass.range(doc.line(n).from));
+  }
+  return RangeSet.of(marks, true);
+});
+
+/**
+ * The new side of a split view: one column of new numbers, clickable for
+ * comments. The old numbers are in the other editor.
+ */
+export function splitNewGutters(handlers: GutterHandlers): Extension {
+  return [lineNumbers({ domEventHandlers: { mousedown: numberMouseDown(handlers) } }), addedLines];
+}
+
+/** The class that colors the number of a deleted line. */
+export const deletedLineClass: GutterMarker = deletedClass;
+
 export function diffGutters(handlers: GutterHandlers): Extension {
   const mousedown = numberMouseDown(handlers);
 
@@ -121,15 +142,6 @@ export function diffGutters(handlers: GutterHandlers): Extension {
     lineMarkerChange: (update) => update.startState.field(chunkInfo) !== update.state.field(chunkInfo),
     initialSpacer: (view) => new NumberMarker(Math.max(getOriginalDoc(view.state).lines, 9)),
     domEventHandlers: { mousedown },
-  });
-
-  const addedLines = gutterLineClass.compute([chunkInfo], (state) => {
-    const marks: Range<GutterMarker>[] = [];
-    const doc = state.doc;
-    for (const c of state.field(chunkInfo).chunks) {
-      for (let n = c.newFrom; n < c.newFrom + c.newCount && n <= doc.lines; n++) marks.push(addedClass.range(doc.line(n).from));
-    }
-    return RangeSet.of(marks, true);
   });
 
   const deletedWidgets = gutterWidgetClass.of((view, widget, block) =>

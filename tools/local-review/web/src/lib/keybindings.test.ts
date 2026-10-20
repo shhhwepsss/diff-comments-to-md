@@ -138,6 +138,7 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      diffLayout: 'Alt+S',
       definition: 'F12',
       references: 'Shift+F12',
       implementation: 'Ctrl+F12',
@@ -153,6 +154,7 @@ describe('keybindingsFrom', () => {
       commentsPanel: '',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      diffLayout: 'Alt+S',
       definition: 'F12',
       references: 'Shift+F12',
       implementation: 'Ctrl+F12',
@@ -169,6 +171,7 @@ describe('keybindingsFrom', () => {
       commentsPanel: 'Alt+C',
       viewedFile: 'Alt+V',
       viewMode: 'Alt+A',
+      diffLayout: 'Alt+S',
       definition: 'F12',
       references: 'Shift+F12',
       implementation: 'Ctrl+F12',
@@ -182,6 +185,12 @@ describe('keybindingsFrom', () => {
     expect(KEYBINDING_DEFAULTS.viewMode).toBe('Alt+A');
     expect(keybindingsFrom({}).viewMode).toBe('Alt+A');
     expect(keybindingsFrom({ viewMode: '' }).viewMode).toBe('');
+  });
+
+  it('ships the diff layout switch bound to Alt+S, and keeps it cleared once cleared', () => {
+    expect(KEYBINDING_DEFAULTS.diffLayout).toBe('Alt+S');
+    expect(keybindingsFrom({}).diffLayout).toBe('Alt+S');
+    expect(keybindingsFrom({ diffLayout: '' }).diffLayout).toBe('');
   });
 
   it('ships no two actions on the same shortcut', () => {

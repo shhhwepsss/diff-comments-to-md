@@ -954,3 +954,15 @@ body.rv-dragging-lines * {
   font-size: var(--text-body-size-small);
   color: var(--fgColor-muted);
 }
+
+/* Split view (cm/split.ts): a rule between the old and the new column. */
+.rv-diff-editor.is-split .cm-mergeViewEditor + .cm-mergeViewEditor {
+  border-left: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+/* «Две колонки не помещаются» in the file header. */
+.rv-file-header__fallback {
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}

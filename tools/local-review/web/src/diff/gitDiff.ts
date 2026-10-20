@@ -123,6 +123,18 @@ export function unpairedAddedLines(hunks: readonly Hunk[]): number[] {
   return lines;
 }
 
+/**
+ * Old-file lines that were deleted without an added counterpart: the old side
+ * of a split view draws them without word highlighting, like GitHub.
+ */
+export function unpairedDeletedLines(hunks: readonly Hunk[]): number[] {
+  const lines: number[] = [];
+  for (const run of changedRuns(hunks)) {
+    for (let n = run.oldFrom + run.paired; n < run.oldTo; n++) lines.push(n);
+  }
+  return lines;
+}
+
 // Without hunks the whole file goes through CodeMirror's diff. A file of a
 // large PR comes that way (GitHub leaves its patch out), megabytes long and
 // mostly rewritten: unbounded, that diff froze the page for minutes. The scan

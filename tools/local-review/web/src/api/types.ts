@@ -413,6 +413,9 @@ export type Gitignore = {
 /** How the diff screen lays files out: one file on screen, or all of them stacked. */
 export type ViewMode = 'single' | 'all';
 
+/** How a file's diff is drawn: one column, or the old and the new version side by side. */
+export type DiffLayout = 'unified' | 'split';
+
 /** ~/.local-review/settings.json. */
 export type Settings = {
   /** Appended after the comments in both exports; empty = comments alone. */
@@ -423,6 +426,8 @@ export type Settings = {
   keybindings: Keybindings;
   /** View mode a browser starts in while it has no remembered choice: one file, or all files in a feed. */
   defaultViewMode: ViewMode;
+  /** How a file's diff is drawn while the browser has no remembered choice: one column or two. */
+  defaultDiffLayout: DiffLayout;
   /** «Код» / «Просмотр» switched in one file switches every file that has a rendered view; off = each file on its own. */
   renderModeForAllFiles: boolean;
 };

@@ -16,6 +16,7 @@ const KEYBINDING_DEFAULTS = {
   commentsPanel: '',
   viewedFile: 'Alt+V',
   viewMode: 'Alt+A',
+  diffLayout: 'Alt+S',
   definition: 'F12',
   references: 'Shift+F12',
   implementation: 'Ctrl+F12',
@@ -25,6 +26,8 @@ const KEYBINDING_DEFAULTS = {
 };
 /** How the diff screen lays files out: one at a time, or all of them in a feed. */
 const VIEW_MODES = ['single', 'all'];
+/** How a file's diff is drawn: one column (unified) or old and new side by side (split). */
+const DIFF_LAYOUTS = ['unified', 'split'];
 const KEYBINDING_ACTIONS = Object.keys(KEYBINDING_DEFAULTS);
 
 /** LOCAL_REVIEW_HOME lets the smoke test point the whole config elsewhere. */
@@ -90,6 +93,8 @@ function writeState(next) {
  * '' — cleared is a choice, not a gap.
  * `defaultViewMode` is the view mode ('single' or 'all', see VIEW_MODES) a
  * browser starts in while it has no remembered choice of its own.
+ * `defaultDiffLayout` is the same for how a file's diff is drawn ('unified' or
+ * 'split', see DIFF_LAYOUTS).
  * `renderModeForAllFiles` says whether «Код» / «Просмотр» switched in one file
  * switches every file that has a rendered view (true, the default) or only
  * that file (false, the historical behaviour).
@@ -103,6 +108,7 @@ const SETTINGS_DEFAULTS = {
   gitignoreTarget: 'project',
   keybindings: defaultKeybindings(),
   defaultViewMode: 'all',
+  defaultDiffLayout: 'unified',
   renderModeForAllFiles: true,
 };
 
@@ -134,6 +140,10 @@ function readSettings() {
         parsed && VIEW_MODES.includes(parsed.defaultViewMode)
           ? parsed.defaultViewMode
           : SETTINGS_DEFAULTS.defaultViewMode,
+      defaultDiffLayout:
+        parsed && DIFF_LAYOUTS.includes(parsed.defaultDiffLayout)
+          ? parsed.defaultDiffLayout
+          : SETTINGS_DEFAULTS.defaultDiffLayout,
       renderModeForAllFiles:
         parsed && typeof parsed.renderModeForAllFiles === 'boolean'
           ? parsed.renderModeForAllFiles
@@ -193,4 +203,5 @@ module.exports = {
   GITIGNORE_TARGETS,
   KEYBINDING_ACTIONS,
   VIEW_MODES,
+  DIFF_LAYOUTS,
 };

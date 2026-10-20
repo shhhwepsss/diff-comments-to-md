@@ -52,6 +52,13 @@ async function put(req, res) {
     }
     patch.defaultViewMode = body.defaultViewMode;
   }
+  if (body.defaultDiffLayout !== undefined) {
+    if (!config.DIFF_LAYOUTS.includes(body.defaultDiffLayout)) {
+      sendJson(res, 400, { error: 'defaultDiffLayout должен быть unified или split' });
+      return;
+    }
+    patch.defaultDiffLayout = body.defaultDiffLayout;
+  }
   if (body.renderModeForAllFiles !== undefined) {
     if (typeof body.renderModeForAllFiles !== 'boolean') {
       sendJson(res, 400, { error: 'renderModeForAllFiles должен быть true или false' });
@@ -62,7 +69,7 @@ async function put(req, res) {
   if (Object.keys(patch).length === 0) {
     sendJson(res, 400, {
       error:
-        'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings, defaultViewMode или renderModeForAllFiles',
+        'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings, defaultViewMode, defaultDiffLayout или renderModeForAllFiles',
     });
     return;
   }

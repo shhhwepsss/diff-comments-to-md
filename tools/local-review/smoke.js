@@ -3492,8 +3492,8 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","definition":"F12","references":"Shift+F12","implementation":"Ctrl+F12","callHierarchy":"Alt+Shift+H","navBack":"Alt+Left","navForward":"Alt+Right"}',
-    'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра и навигации по коду');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","diffLayout":"Alt+S","definition":"F12","references":"Shift+F12","implementation":"Ctrl+F12","callHierarchy":"Alt+Shift+H","navBack":"Alt+Left","navForward":"Alt+Right"}',
+    'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра, вида диффа и навигации по коду');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -3504,7 +3504,7 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
     'клавиша панели комментариев сохраняется рядом с Zen');
   const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
   eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
@@ -3530,8 +3530,9 @@ async function main() {
     {
       copyPrompt: '',
       gitignoreTarget: 'project',
-      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
       defaultViewMode: 'single',
+      defaultDiffLayout: 'unified',
       renderModeForAllFiles: true,
     },
     'режим просмотра читается обратно и не трогает остальные настройки'
@@ -3545,6 +3546,28 @@ async function main() {
   eq((await call('/api/settings')).body.defaultViewMode, 'all', 'чужое значение в settings.json читается как умолчание');
   fs.writeFileSync(settingsFile, settingsOnDisk, 'utf8');
   await call('/api/settings', json('PUT', { defaultViewMode: 'all', keybindings: { viewMode: 'Alt+A' } }));
+
+  // ------------------------------------------------ вид диффа по умолчанию
+  eq(settings0.body.defaultDiffLayout, 'unified', 'GET /api/settings: по умолчанию дифф в одну колонку');
+  for (const bad of ['columns', '', 42, null]) {
+    const res = await call('/api/settings', json('PUT', { defaultDiffLayout: bad }));
+    ok(
+      res.status === 400 && /defaultDiffLayout/.test(res.body.error),
+      `PUT /api/settings: defaultDiffLayout ${JSON.stringify(bad)} -> 400`,
+      JSON.stringify(res.body)
+    );
+  }
+  eq((await call('/api/settings')).body.defaultDiffLayout, 'unified', 'отклонённое значение вид диффа не поменяло');
+  const toSplit = await call('/api/settings', json('PUT', { defaultDiffLayout: 'split' }));
+  ok(toSplit.status === 200 && toSplit.body.defaultDiffLayout === 'split', 'PUT /api/settings: split сохранён',
+    JSON.stringify(toSplit.body));
+  await call('/api/settings', json('PUT', { defaultViewMode: 'single' }));
+  eq((await call('/api/settings')).body.defaultDiffLayout, 'split', 'патч другой настройки вид диффа не сбрасывает');
+  const layoutOnDisk = fs.readFileSync(settingsFile, 'utf8');
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(layoutOnDisk), defaultDiffLayout: 'columns' }), 'utf8');
+  eq((await call('/api/settings')).body.defaultDiffLayout, 'unified', 'чужой вид диффа в settings.json читается как умолчание');
+  fs.writeFileSync(settingsFile, layoutOnDisk, 'utf8');
+  await call('/api/settings', json('PUT', { defaultViewMode: 'all', defaultDiffLayout: 'unified' }));
 
   // ------------------------------------------------ вид файла: для всех файлов
   eq(settings0.body.renderModeForAllFiles, true, 'GET /api/settings: по умолчанию вид файла общий для всех файлов');

@@ -11,6 +11,8 @@ import {
   NO_RESPONSE,
   normalizeSettings,
   renderModeForAllFilesFrom,
+  diffLayoutFrom,
+  DEFAULT_DIFF_LAYOUT,
   responseErrorMessage,
   viewModeFrom,
 } from './client';
@@ -49,6 +51,7 @@ describe('normalizeSettings', () => {
     gitignoreTarget: 'project' as const,
     keybindings: { ...KEYBINDING_DEFAULTS },
     defaultViewMode: 'single' as const,
+    defaultDiffLayout: 'split' as const,
     renderModeForAllFiles: false,
   };
 
@@ -62,6 +65,15 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings(older as Settings).defaultViewMode).toBe('all');
     expect(normalizeSettings({ ...full, defaultViewMode: 'grid' } as unknown as Settings).defaultViewMode).toBe('all');
     expect(viewModeFrom(null)).toBe(DEFAULT_VIEW_MODE);
+  });
+
+  it('keeps a valid diff layout, and falls back to unified when it is missing or bad', () => {
+    expect(normalizeSettings(full).defaultDiffLayout).toBe('split');
+    expect(normalizeSettings({ ...full, defaultDiffLayout: 'unified' }).defaultDiffLayout).toBe('unified');
+    const { defaultDiffLayout: _dropped, ...older } = full;
+    expect(normalizeSettings(older as Settings).defaultDiffLayout).toBe('unified');
+    expect(normalizeSettings({ ...full, defaultDiffLayout: 'columns' } as unknown as Settings).defaultDiffLayout).toBe('unified');
+    expect(diffLayoutFrom(null)).toBe(DEFAULT_DIFF_LAYOUT);
   });
 
   it('keeps the shared render mode switch, and turns it on when it is missing or not a boolean', () => {

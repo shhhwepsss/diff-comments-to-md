@@ -12,6 +12,7 @@ import {
 import { isTypingTarget } from '../../lib/keybindings';
 import { portalOpen } from '../../lib/portal';
 import { PortalWidget } from './blocks';
+import { splitOriginal } from './chunks';
 import { isFoldWidget, unfoldAt } from './collapse';
 import {
   compareKeys,
@@ -54,7 +55,9 @@ function occurrencesOf(state: EditorState, word: string): Occurrence[] {
     list.push({ kind: 'doc', from, to: from + word.length, key: { pos: from, side: 1, offset: from } });
   }
   const info = getChunks(state);
-  if (info) {
+  // Deleted lines are part of this document only in a unified view; in a
+  // split view they are the other editor's, which has no word highlight.
+  if (info && !state.facet(splitOriginal)) {
     const a = getOriginalDoc(state);
     const docLength = state.doc.length;
     for (const c of info.chunks) {

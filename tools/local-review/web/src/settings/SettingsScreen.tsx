@@ -12,6 +12,7 @@ import { LspStatusSection } from './LspStatusSection';
 import { descriptorFromHash } from '../lib/hash';
 import { RenderModeSection } from './RenderModeSection';
 import { ViewModeSection } from './ViewModeSection';
+import { DiffLayoutSection } from './DiffLayoutSection';
 import './settings.css';
 
 /**
@@ -168,6 +169,10 @@ export function SettingsScreen({ back }: { back: string }) {
           <ViewModeSection
             value={draft.defaultViewMode}
             onChange={(defaultViewMode) => setDraft({ ...draft, defaultViewMode })}
+          />
+          <DiffLayoutSection
+            value={draft.defaultDiffLayout}
+            onChange={(defaultDiffLayout) => setDraft({ ...draft, defaultDiffLayout })}
           />
           <RenderModeSection
             value={draft.renderModeForAllFiles}

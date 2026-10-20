@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Spinner } from '@primer/react';
-import { api, failureMessage, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
+import { api, failureMessage, DEFAULT_DIFF_LAYOUT, DEFAULT_RENDER_MODE_FOR_ALL_FILES, DEFAULT_VIEW_MODE } from './api/client';
 import { conversationFromHash, conversationHash, DEFAULT_HASH, hashFor, routeFromHash, viewHash } from './lib/hash';
 import { useToast } from './lib/toast';
 import type { ThemePref } from './lib/theme';
@@ -11,6 +11,7 @@ import { readZen, writeZen } from './lib/zen';
 import { readViewMode, resolveViewMode, toggleViewMode, writeViewMode, type ViewMode } from './lib/viewMode';
 import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
 import { readWrap, writeWrap } from './lib/wrap';
+import { readDiffLayout, resolveDiffLayout, toggleDiffLayout, writeDiffLayout, type DiffLayout } from './lib/diffLayout';
 import { ReviewProvider } from './review/ReviewContext';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
@@ -81,6 +82,15 @@ export function App({ theme, onTheme }: Props) {
     setChosenMode(mode);
     writeViewMode(mode);
   }, []);
+  // One column or two in every file; remembered like the view mode, with the
+  // settings page's default until the reviewer picks one.
+  const [chosenLayout, setChosenLayout] = useState(readDiffLayout);
+  const [defaultLayout, setDefaultLayout] = useState<DiffLayout | null>(null);
+  const diffLayout = resolveDiffLayout(chosenLayout, defaultLayout);
+  const setDiffLayout = useCallback((layout: DiffLayout) => {
+    setChosenLayout(layout);
+    writeDiffLayout(layout);
+  }, []);
   // «Код» / «Просмотр» as one switch for every file, or one per file.
   const [renderAllFiles, setRenderAllFiles] = useState(DEFAULT_RENDER_MODE_FOR_ALL_FILES);
 
@@ -127,9 +137,14 @@ export function App({ theme, onTheme }: Props) {
         if (!alive) return;
         setKeys(keybindingsFrom(s.keybindings));
         setDefaultMode(s.defaultViewMode);
+        setDefaultLayout(s.defaultDiffLayout);
         setRenderAllFiles(s.renderModeForAllFiles);
       })
-      .catch(() => alive && setDefaultMode((mode) => mode ?? DEFAULT_VIEW_MODE));
+      .catch(() => {
+        if (!alive) return;
+        setDefaultMode((mode) => mode ?? DEFAULT_VIEW_MODE);
+        setDefaultLayout((layout) => layout ?? DEFAULT_DIFF_LAYOUT);
+      });
     return () => {
       alive = false;
     };
@@ -156,13 +171,33 @@ export function App({ theme, onTheme }: Props) {
         setViewMode(toggleViewMode(viewMode));
         return;
       }
+      if (matchesEvent(keys.diffLayout, e)) {
+        if (!diffLayout) return;
+        e.preventDefault();
+        setDiffLayout(toggleDiffLayout(diffLayout));
+        return;
+      }
       if (!matchesEvent(keys.zen, e)) return;
       e.preventDefault();
       setZen(!zen);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [diffScreen, keys.zen, keys.commentsPanel, keys.viewMode, setZen, zen, commentsPanel, setCommentsPanel, viewMode, setViewMode]);
+  }, [
+    diffScreen,
+    keys.zen,
+    keys.commentsPanel,
+    keys.viewMode,
+    keys.diffLayout,
+    setZen,
+    zen,
+    commentsPanel,
+    setCommentsPanel,
+    viewMode,
+    setViewMode,
+    diffLayout,
+    setDiffLayout,
+  ]);
 
   useEffect(() => {
     if (booted) return;
@@ -189,9 +224,10 @@ export function App({ theme, onTheme }: Props) {
   }, [booted, toast]);
 
   // The review opens its first file differently in the two view modes, so it
-  // waits for the mode. With a remembered choice there is nothing to wait for;
-  // without one it is a single local request, and a failure falls back.
-  if (!booted || (diffScreen && viewMode === null)) {
+  // waits for the mode; and for the diff layout, so no file is drawn twice.
+  // With remembered choices there is nothing to wait for; without them it is a
+  // single local request, and a failure falls back.
+  if (!booted || (diffScreen && (viewMode === null || diffLayout === null))) {
     return (
       <div className="rv-center">
         <Spinner size="large" />
@@ -214,6 +250,8 @@ export function App({ theme, onTheme }: Props) {
           onReloadConversation={reloadConversation}
           viewMode={viewMode}
           onViewMode={setViewMode}
+          diffLayout={diffLayout}
+          onDiffLayout={setDiffLayout}
           wrap={wrap}
           onWrap={setWrap}
           onZen={setZen}
@@ -232,6 +270,9 @@ export function App({ theme, onTheme }: Props) {
             renderAllFiles={renderAllFiles}
             wrap={wrap}
             onWrap={setWrap}
+            diffLayout={diffLayout ?? DEFAULT_DIFF_LAYOUT}
+            onDiffLayout={setDiffLayout}
+            diffLayoutKey={keys.diffLayout}
             navKeys={navKeys}
             onNavPanel={setNavPanelOpen}
             conversation={conversation}

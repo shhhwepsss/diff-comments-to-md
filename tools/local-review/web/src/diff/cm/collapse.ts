@@ -49,6 +49,27 @@ function describe(verb: string, range: LineRange): string {
   return `${verb} ${count} ${plural(count)} (${range.from}–${range.to})`;
 }
 
+/**
+ * The bar of a fold drawn on the old side of a split view, in front of the
+ * same lines of the old file (`shown`, the numbers its label gives). A press
+ * acts on the fold of the new side, `range`.
+ */
+export function mirrorBar(open: boolean, shown: LineRange, onPress: () => void): HTMLElement {
+  return open
+    ? bar('rv-fold rv-fold--open', 'Скрыть развёрнутые строки', describe('Скрыть', shown), FOLD_ICON, onPress)
+    : bar('rv-fold', 'Показать скрытые строки', describe('Показать', shown), UNFOLD_ICON, onPress);
+}
+
+/** Unfold the folded lines `range` (new line numbers). */
+export function expandFold(range: LineRange): StateEffect<LineRange> {
+  return expandRange.of(range);
+}
+
+/** Fold back the unfolded lines `range` (new line numbers). */
+export function collapseFold(range: LineRange): StateEffect<LineRange> {
+  return collapseRange.of(range);
+}
+
 /** Folded lines: one bar in their place. */
 export class FoldWidget extends WidgetType {
   constructor(readonly range: LineRange) {

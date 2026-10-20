@@ -38,6 +38,7 @@ export const KEYBINDING_ACTIONS = [
   { id: 'commentsPanel', label: 'Панель всех комментариев' },
   { id: 'viewedFile', label: 'Отметить файл просмотренным и открыть следующий' },
   { id: 'viewMode', label: 'Переключить режим: один файл / все файлы' },
+  { id: 'diffLayout', label: 'Переключить вид диффа: одна колонка / две колонки' },
   { id: 'definition', label: 'Перейти к определению (слово под курсором)' },
   { id: 'references', label: 'Найти ссылки (слово под курсором)' },
   { id: 'implementation', label: 'Реализации (слово под курсором)' },
@@ -55,6 +56,7 @@ export const KEYBINDING_DEFAULTS: Keybindings = {
   commentsPanel: '',
   viewedFile: 'Alt+V',
   viewMode: 'Alt+A',
+  diffLayout: 'Alt+S',
   // F12 is also DevTools in every browser; Ctrl+click and the context menu
   // are the ways that always work, this is for those who rebind DevTools.
   definition: 'F12',
