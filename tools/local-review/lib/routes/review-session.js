@@ -164,6 +164,33 @@ async function cleanup(req, res, ctx) {
 }
 
 /**
+ * The same deletion before any session exists: the search screen asks about
+ * old comments ahead of starting one, and «Удалить» there must not need a
+ * session to act through. `items` names each PR with `before`, the ISO time
+ * its comments must predate to go (omitted: every comment on it now).
+ */
+async function deleteOld(req, res, ctx) {
+  const body = await readJsonBody(req);
+  const { owner, repo } = splitRepo(`${body.owner || ''}/${body.repo || ''}`);
+  const host = body.host || 'github.com';
+  if (!Array.isArray(body.items)) throw bad('items должен быть списком');
+  const now = new Date().toISOString();
+  const removed = {};
+  let total = 0;
+  for (const item of body.items) {
+    const number = Number(item && item.number);
+    if (!Number.isInteger(number) || number <= 0) throw bad('Некорректный номер PR');
+    if (item.before !== undefined && Number.isNaN(Date.parse(item.before))) throw bad('before — время в формате ISO');
+  }
+  for (const item of body.items) {
+    const store = storeFor({ source: 'pr', host, owner, repo, number: Number(item.number) }, ctx.homeDir);
+    removed[item.number] = store.removeBefore(item.before || now);
+    total += removed[item.number];
+  }
+  sendJson(res, 200, { removed: total, perPr: removed });
+}
+
+/**
  * Comments already on the PRs of one repository — for the search screen, which
  * asks before any session exists. `before` (an ISO time) limits it to the
  * older ones; without it every comment counts, since a session started now
@@ -188,4 +215,4 @@ async function oldComments(req, res, ctx, url) {
   sendJson(res, 200, { counts });
 }
 
-module.exports = { get, post, put, finish, addGeneral, updateGeneral, removeGeneral, exportText, exportFile, cleanup, oldComments };
+module.exports = { get, post, put, finish, addGeneral, updateGeneral, removeGeneral, exportText, exportFile, cleanup, deleteOld, oldComments };

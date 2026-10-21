@@ -130,6 +130,15 @@ function promptOf(value) {
 
 const SHORT_SHA = 7;
 
+/** «1 PR», «2 PR-а», «5 PR-ов»: the noun after a count, by the Russian rule for 1 / 2–4 / the rest. */
+function prCount(n) {
+  const last = n % 10;
+  const tens = n % 100;
+  if (last === 1 && tens !== 11) return `${n} PR`;
+  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) return `${n} PR-а`;
+  return `${n} PR-ов`;
+}
+
 /** Why a PR with no comments is in the export at all: what the reviewer said about it. */
 const NO_COMMENTS_LINE = {
   lgtm: 'Без замечаний (LGTM).',
@@ -185,7 +194,7 @@ function exportSession({ session, scope, number, commentsByPr, copyPrompt, orche
     return renderSessionPr(session, pr, commentsByPr[pr.number] || [], { level: 1, copyPrompt }).join('\n\n') + '\n';
   }
 
-  const parts = [`# Ревью: ${session.prs.length} PR-ов · ${session.owner}/${session.repo}`];
+  const parts = [`# Ревью: ${prCount(session.prs.length)} · ${session.owner}/${session.repo}`];
   const forOrchestrator = (session.general || [])
     .slice()
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -216,10 +225,18 @@ function stamp(date) {
  * export is written the same way under its own prefix (`session`).
  */
 function writeMarkdownFile(repoRoot, markdown, date, prefix = 'review') {
-  const name = `${prefix}-${stamp(date)}.md`;
-  const abs = path.join(repoRoot, name);
-  fs.writeFileSync(abs, markdown, 'utf8');
-  return { name, path: abs };
+  // The stamp is to the minute: a second export in the same minute is a new
+  // file (`…-2.md`, `…-3.md`), never an overwrite of the first one.
+  for (let n = 1; ; n += 1) {
+    const name = `${prefix}-${stamp(date)}${n > 1 ? `-${n}` : ''}.md`;
+    const abs = path.join(repoRoot, name);
+    try {
+      fs.writeFileSync(abs, markdown, { encoding: 'utf8', flag: 'wx' });
+      return { name, path: abs };
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+    }
+  }
 }
 
-module.exports = { anchorOf, commitLineOf, quoteOf, renderMarkdown, exportMarkdown, exportSession, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, quoteOf, renderMarkdown, exportMarkdown, exportSession, prCount, writeMarkdownFile, sortComments, stamp };

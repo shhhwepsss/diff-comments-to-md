@@ -56,7 +56,7 @@ function gitStatusOfProject(root) {
   return git(['status', '--porcelain'], root)
     .split('\n')
     .filter(Boolean)
-    .filter((l) => !/\.local-review|review-\d{4}-\d{2}-\d{2}-\d{4}\.md|\.gitignore/.test(l));
+    .filter((l) => !/\.local-review|review-\d{4}-\d{2}-\d{2}-\d{4}(-\d+)?\.md|\.gitignore/.test(l));
 }
 
 function write(root, rel, content) {
@@ -1422,7 +1422,7 @@ async function reviewSessionChecks(call, home) {
     'Исправь замечания.',
   ];
   const expectedAll = [
-    '# Ревью: 3 PR-ов · o/r',
+    '# Ревью: 3 PR-а · o/r',
     '',
     '## Для оркестратора',
     '',
@@ -1492,7 +1492,7 @@ async function reviewSessionChecks(call, home) {
   ok((await call('/api/review-session/export')).body.includes('## Для оркестратора\n\nРаздай по агентам.\n\n## PR #501'), 'без общих комментариев раздел «Для оркестратора» — только промпт');
   await call('/api/settings', json('PUT', { orchestratorPrompt: '  \r\n ' }));
   const exBare = (await call('/api/review-session/export')).body;
-  ok(!exBare.includes('Для оркестратора') && exBare.startsWith('# Ревью: 3 PR-ов · o/r\n\n## PR #501'), 'ни общих комментариев, ни промпта: раздела «Для оркестратора» нет');
+  ok(!exBare.includes('Для оркестратора') && exBare.startsWith('# Ревью: 3 PR-а · o/r\n\n## PR #501'), 'ни общих комментариев, ни промпта: раздела «Для оркестратора» нет');
   await call('/api/settings', json('PUT', { copyPrompt: '' }));
   ok(!(await call('/api/review-session/export')).body.includes('Исправь замечания.'), 'без промпта при копировании хвоста у PR-а нет');
   eq((await call('/api/settings', json('PUT', { orchestratorPrompt: 5 }))).status, 400, 'orchestratorPrompt не строка -> 400');
@@ -1544,12 +1544,28 @@ async function reviewSessionChecks(call, home) {
   eq(fresh.body.counts[501], { total: 1, old: 1 }, 'комментарии прежней сессии для новой — «прошлая сессия»');
   eq(sessionFiles().length, 3, 'завершённые сессии не удаляются');
 
+  // --- чистка до начала сессии: без активной сессии, по времени каждого PR-а ---
+  await newComment(502, { file: 'src/b.js', startLine: 1, endLine: 1, text: 'Для чистки' });
+  eq((await post('/api/review-session/delete-old', { owner: 'o', repo: 'r', items: [{ number: 502, before: '2000-01-01T00:00:00Z' }] })).body.removed, 0, 'delete-old: before раньше комментария — ничего не удалено');
+  eq((await post('/api/review-session/delete-old', { owner: 'o', repo: 'r', items: [{ number: 'x' }] })).status, 400, 'delete-old: плохой номер -> 400');
+  eq((await post('/api/review-session/delete-old', { owner: 'o', repo: 'r', items: [{ number: 502 }] })).body, { removed: 1, perPr: { 502: 1 } }, 'delete-old без before удаляет всё, что уже лежит на PR-е');
+
   // --- завершение ---
   const done = await post('/api/review-session/finish', {});
   ok(done.status === 200 && done.body.session.finishedAt, 'POST /api/review-session/finish проставляет finishedAt');
   eq((await call('/api/review-session')).body.session, null, 'после завершения активной сессии нет');
   eq(sessionFiles().length, 3, 'завершение не удаляет файл');
   eq((await post('/api/review-session/general', { text: 'x' })).status, 404, 'общий комментарий без активной сессии -> 404');
+
+  // --- мелочи вокруг экспорта ---
+  const { prCount, writeMarkdownFile } = require('./lib/export');
+  eq([1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 111].map(prCount), ['1 PR', '2 PR-а', '4 PR-а', '5 PR-ов', '11 PR-ов', '12 PR-ов', '14 PR-ов', '21 PR', '22 PR-а', '25 PR-ов', '111 PR-ов'], 'склонение «N PR…»');
+  const sameMinute = fs.mkdtempSync(path.join(os.tmpdir(), 'local-review-md-'));
+  const stampDate = new Date(2026, 9, 21, 11, 5);
+  const names = [writeMarkdownFile(sameMinute, 'a', stampDate), writeMarkdownFile(sameMinute, 'b', stampDate), writeMarkdownFile(sameMinute, 'c', stampDate)].map((w) => w.name);
+  eq(names, ['review-2026-10-21-1105.md', 'review-2026-10-21-1105-2.md', 'review-2026-10-21-1105-3.md'], '.md в ту же минуту не затирает прежний: суффикс -2, -3');
+  eq(fs.readFileSync(path.join(sameMinute, names[0]), 'utf8'), 'a', 'первый .md остался как был');
+  fs.rmSync(sameMinute, { recursive: true, force: true });
 
   delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
 }

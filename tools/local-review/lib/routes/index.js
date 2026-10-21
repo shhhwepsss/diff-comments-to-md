@@ -40,6 +40,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/review-session/export', handle: reviewSession.exportText },
   { method: 'POST', path: '/api/review-session/export-file', handle: reviewSession.exportFile },
   { method: 'POST', path: '/api/review-session/cleanup', handle: reviewSession.cleanup },
+  { method: 'POST', path: '/api/review-session/delete-old', handle: reviewSession.deleteOld },
   { method: 'GET', path: '/api/review-session/old-comments', handle: reviewSession.oldComments },
   { method: 'GET', path: '/api/settings', handle: settings.get },
   { method: 'PUT', path: '/api/settings', handle: settings.put },
