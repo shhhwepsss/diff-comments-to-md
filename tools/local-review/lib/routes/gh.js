@@ -37,6 +37,9 @@ async function search(req, res, ctx, url) {
     items: result.items,
     homeDir: config.homeDir(),
     storedPrs: config.countStoredPrs(),
+    // Review sessions are kept in the home directory as well and never cleaned.
+    sessionsDir: config.sessionsDir(),
+    storedSessions: config.countSessions(),
   });
 }
 

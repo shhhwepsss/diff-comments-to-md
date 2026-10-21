@@ -1287,6 +1287,273 @@ async function conversationChecks(call, home) {
   );
 }
 
+// ---------------------------------------------------- сессия ревью PR-ов
+
+async function reviewSessionChecks(call, home) {
+  console.log('\nсессия ревью PR-ов');
+  const sessionsDir = path.join(home, 'sessions');
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+  const SHA_C = 'c'.repeat(40);
+  const prq = (n) => `source=pr&host=github.com&owner=o&repo=r&number=${n}`;
+  const post = (pathname, payload) => call(pathname, json('POST', payload));
+  const newComment = (n, payload) => call(`/api/comments?${prq(n)}`, json('POST', payload));
+  const pause = () => sleep(15);
+  const sessionFiles = () => (fs.existsSync(sessionsDir) ? fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.json')) : []);
+  const onDisk = () => sessionFiles().map((f) => JSON.parse(fs.readFileSync(path.join(sessionsDir, f), 'utf8')));
+
+  const listKey =
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,headRefOid,baseRefName,updatedAt,url,state,isDraft --state open';
+  const viewKey = (n) => `pr view ${n} --repo o/r --json number,title,author,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,url`;
+  const callLog = path.join(home, `gh-calls-session-${Date.now()}.log`);
+  process.env.LOCAL_REVIEW_GH_CALL_LOG = callLog;
+  ghFixtures(
+    {
+      [listKey]: {
+        code: 0,
+        stdout: JSON.stringify([
+          { number: 501, title: 'Первый PR', author: { login: 'octocat' }, headRefName: 'feat/a', headRefOid: SHA_A, baseRefName: 'main', state: 'OPEN', isDraft: false, updatedAt: '2026-10-01T10:00:00Z', url: 'https://github.com/o/r/pull/501' },
+        ]),
+      },
+      [viewKey(503)]: {
+        code: 0,
+        stdout: JSON.stringify({ number: 503, title: 'Третий PR (из gh)', author: { login: 'octocat' }, state: 'OPEN', isDraft: false, headRefName: 'feat/c', baseRefName: 'main', headRefOid: SHA_C, baseRefOid: 'dead', url: 'https://github.com/o/r/pull/503' }),
+      },
+    },
+    home
+  );
+
+  // --- поиск знает head, а экран поиска — где лежат сессии ---
+  const found = await call('/api/pr/search?repo=o/r');
+  eq(found.body.items[0].headSha, SHA_A, 'поиск PR-ов отдаёт head-коммит из списка gh');
+  eq([found.body.sessionsDir, found.body.storedSessions], [sessionsDir, 0], 'поиск PR-ов называет каталог сессий и их число');
+
+  // --- без сессии ---
+  const none = await call('/api/review-session');
+  eq([none.status, none.body.session], [200, null], 'GET /api/review-session без сессии -> session: null');
+  eq((await call('/api/review-session/export')).status, 404, 'экспорт без сессии -> 404');
+  eq((await call('/api/review-session', json('PUT', { current: 0 }))).status, 404, 'правка без сессии -> 404');
+  eq((await post('/api/review-session/finish', {})).status, 404, 'завершение без сессии -> 404');
+
+  // --- комментарии, оставленные до сессии ---
+  await newComment(501, { file: 'src/a.js', startLine: 3, endLine: 3, text: 'Старое замечание' });
+  await newComment(501, { general: true, text: 'Старое общее' });
+  await pause();
+  const olds = await call('/api/review-session/old-comments?owner=o&repo=r&numbers=501,502,503');
+  eq(olds.body, { counts: { 501: 2 } }, 'комментарии, что уже лежат на PR-ах: считаются все, нулевые не названы');
+  eq((await call(`/api/review-session/old-comments?owner=o&repo=r&numbers=501&before=2000-01-01T00:00:00Z`)).body, { counts: {} }, 'old-comments?before: считаются только написанные раньше');
+  eq((await call('/api/review-session/old-comments?owner=o&numbers=1')).status, 400, 'old-comments без repo -> 400');
+
+  // --- создание ---
+  const pr = (number, extra) => Object.assign({ number }, extra);
+  const prs = [pr(501, { title: 'Первый PR', headRefName: 'feat/a', headSha: SHA_A }), pr(502, { title: 'Второй PR', headRefName: 'fix/b', headSha: SHA_B }), pr(503)];
+  eq((await post('/api/review-session', { owner: 'o', repo: 'r', prs: [] })).status, 400, 'сессия без PR-ов -> 400');
+  eq((await post('/api/review-session', { owner: 'o', repo: 'r', prs: [pr(501), pr(501)] })).status, 400, 'повтор номера в сессии -> 400');
+  eq((await post('/api/review-session', { owner: 'o', repo: 'r', prs: [pr('x')] })).status, 400, 'номер не число -> 400');
+  eq((await post('/api/review-session', { owner: 'o', prs: [pr(1)] })).status, 400, 'сессия без repo -> 400');
+  eq(sessionFiles().length, 0, 'отказанные запросы не оставили файлов сессии');
+
+  fs.writeFileSync(callLog, '');
+  const created = await post('/api/review-session', { owner: 'o', repo: 'r', prs });
+  const session = created.body.session;
+  eq(created.status, 201, 'POST /api/review-session -> 201');
+  eq(session.prs.map((p) => p.number), [501, 502, 503], 'порядок PR-ов в сессии сохранён');
+  eq(session.prs[2], { number: 503, title: 'Третий PR (из gh)', headRefName: 'feat/c', headSha: SHA_C }, 'чего не прислали — дочитано через gh pr view');
+  eq(
+    fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean),
+    [viewKey(503)],
+    'gh вызван только за PR-ом, о котором ничего не известно'
+  );
+  ok(session.finishedAt === null && session.current === 0 && Object.keys(session.marks).length === 0, 'новая сессия: открыта, на первом PR, без отметок');
+  eq(session.visited, { 501: true }, 'первый PR уже просмотрен');
+  eq(created.body.counts, { 501: { total: 2, old: 2 }, 502: { total: 0, old: 0 }, 503: { total: 0, old: 0 } }, 'ответ называет, сколько комментариев осталось от прошлых сессий');
+  eq(onDisk().map((s) => s.id), [session.id], 'сессия лежит в ~/.local-review/sessions/<id>.json');
+  ok(fs.existsSync(path.join(sessionsDir, `${session.id}.json`)), 'файл сессии назван по её id');
+  eq((await call('/api/pr/search?repo=o/r')).body.storedSessions, 1, 'экран поиска считает сессии на диске');
+
+  const got = await call('/api/review-session');
+  eq(got.body.session, session, 'GET /api/review-session отдаёт активную сессию');
+
+  // --- правка: где остановился, отметки, просмотренные ---
+  const upd = await call('/api/review-session', json('PUT', { current: 1, marks: { 502: 'lgtm' }, visited: [502] }));
+  eq([upd.status, upd.body.session.current, upd.body.session.marks, upd.body.session.visited], [200, 1, { 502: 'lgtm' }, { 501: true, 502: true }], 'PUT: current, marks, visited');
+  eq((await call('/api/review-session', json('PUT', { current: 3 }))).status, 400, 'current за пределами списка -> 400');
+  eq((await call('/api/review-session', json('PUT', { marks: { 999: 'lgtm' } }))).status, 400, 'отметка PR-у не из сессии -> 400');
+  eq((await call('/api/review-session', json('PUT', { marks: { 502: 'ok' } }))).status, 400, 'неизвестная отметка -> 400');
+  eq((await call('/api/review-session', json('PUT', { visited: [999] }))).status, 400, 'visited с чужим PR-ом -> 400');
+  eq((await call('/api/review-session', json('PUT', { marks: { 502: null } }))).body.session.marks, {}, 'null снимает отметку');
+  eq((await call('/api/review-session', json('PUT', { marks: { 502: 'lgtm', 503: 'skip' } }))).body.session.marks, { 502: 'lgtm', 503: 'skip' }, 'две отметки разом');
+
+  // --- общие комментарии сессии ---
+  eq((await post('/api/review-session/general', { text: '  ' })).status, 400, 'пустой общий комментарий сессии -> 400');
+  const g1 = await post('/api/review-session/general', { text: '  Прогони smoke.  ' });
+  await pause();
+  const g2 = await post('/api/review-session/general', { text: 'Черновик' });
+  eq([g1.status, g1.body.comment.text], [201, 'Прогони smoke.'], 'общий комментарий сессии сохраняется обрезанным');
+  const edited = await call(`/api/review-session/general/${g2.body.comment.id}`, json('PUT', { text: 'Правка' }));
+  eq([edited.status, edited.body.comment.text], [200, 'Правка'], 'общий комментарий сессии правится');
+  eq((await call('/api/review-session/general/нет', json('PUT', { text: 'x' }))).status, 404, 'правка чужого id -> 404');
+  eq((await call(`/api/review-session/general/${g2.body.comment.id}`, { method: 'DELETE' })).body.session.general.map((g) => g.text), ['Прогони smoke.'], 'общий комментарий сессии удаляется');
+  eq((await call('/api/review-session/general/нет', { method: 'DELETE' })).status, 404, 'удаление чужого id -> 404');
+
+  // --- комментарии, написанные во время сессии ---
+  await newComment(501, { file: 'src/a.js', startLine: 10, endLine: 10, text: 'Новое замечание' });
+  eq((await call('/api/review-session')).body.counts[501], { total: 3, old: 2 }, 'счётчик различает старые и новые комментарии');
+
+  // --- экспорт ---
+  await call('/api/settings', json('PUT', { copyPrompt: 'Исправь замечания.', orchestratorPrompt: 'Раздай по агентам.' }));
+  const PR501 = [
+    '## PR #501 — Первый PR',
+    `Ветка: feat/a · head: ${SHA_A.slice(0, 7)}`,
+    'https://github.com/o/r/pull/501',
+    '',
+    '### Общие комментарии',
+    '',
+    'Старое общее',
+    '',
+    '### Комментарии к коду',
+    '',
+    'src/a.js:L3',
+    'Старое замечание',
+    '',
+    'src/a.js:L10',
+    'Новое замечание',
+    '',
+    'Исправь замечания.',
+  ];
+  const expectedAll = [
+    '# Ревью: 3 PR-ов · o/r',
+    '',
+    '## Для оркестратора',
+    '',
+    'Прогони smoke.',
+    '',
+    'Раздай по агентам.',
+    '',
+    ...PR501,
+    '',
+    '## PR #502 — Второй PR',
+    `Ветка: fix/b · head: ${SHA_B.slice(0, 7)}`,
+    'https://github.com/o/r/pull/502',
+    '',
+    'Без замечаний (LGTM).',
+    '',
+    '## PR #503 — Третий PR (из gh)',
+    `Ветка: feat/c · head: ${SHA_C.slice(0, 7)}`,
+    'https://github.com/o/r/pull/503',
+    '',
+    'Пропущен — не трогать.',
+    '',
+  ].join('\n');
+  const exAll = await call('/api/review-session/export');
+  eq([exAll.status, exAll.body], [200, expectedAll], 'экспорт сессии: заголовок, «Для оркестратора», раздел на каждый PR');
+
+  const exPr = await call('/api/review-session/export?scope=pr&number=501');
+  eq(
+    exPr.body,
+    [
+      '# PR #501 — Первый PR',
+      `Ветка: feat/a · head: ${SHA_A.slice(0, 7)}`,
+      'https://github.com/o/r/pull/501',
+      '',
+      '## Общие комментарии',
+      '',
+      'Старое общее',
+      '',
+      '## Комментарии к коду',
+      '',
+      'src/a.js:L3',
+      'Старое замечание',
+      '',
+      'src/a.js:L10',
+      'Новое замечание',
+      '',
+      'Исправь замечания.',
+      '',
+    ].join('\n'),
+    'экспорт одного PR-а: заголовки на уровень выше, без раздела для оркестратора'
+  );
+  eq(
+    (await call('/api/review-session/export?scope=pr&number=502')).body,
+    ['# PR #502 — Второй PR', `Ветка: fix/b · head: ${SHA_B.slice(0, 7)}`, 'https://github.com/o/r/pull/502', '', 'Без замечаний (LGTM).', ''].join('\n'),
+    'экспорт PR-а без замечаний — одна строка вместо комментариев'
+  );
+  eq((await call('/api/review-session/export?scope=pr&number=999')).status, 400, 'экспорт PR-а не из сессии -> 400');
+  eq((await call('/api/review-session/export?scope=bad')).status, 400, 'неизвестный scope -> 400');
+
+  // Отметка уступает комментариям; без отметки PR «не отмечен».
+  await call('/api/review-session', json('PUT', { marks: { 501: 'lgtm', 503: null } }));
+  const exMarked = (await call('/api/review-session/export')).body;
+  ok(exMarked.includes('Новое замечание') && !exMarked.includes('PR #501 — Первый PR\nВетка: feat/a · head: aaaaaaa\nhttps://github.com/o/r/pull/501\n\nБез замечаний'), 'отметка «без замечаний» на PR-е с комментариями не прячет их');
+  ok(exMarked.endsWith('Не отмечен — не трогать.\n'), 'PR без отметки и без комментариев: «Не отмечен — не трогать.»');
+
+  // Пустые общие комментарии и пустой промпт — раздела нет; промпт без комментариев — раздел из промпта.
+  await call(`/api/review-session/general/${g1.body.comment.id}`, { method: 'DELETE' });
+  ok((await call('/api/review-session/export')).body.includes('## Для оркестратора\n\nРаздай по агентам.\n\n## PR #501'), 'без общих комментариев раздел «Для оркестратора» — только промпт');
+  await call('/api/settings', json('PUT', { orchestratorPrompt: '  \r\n ' }));
+  const exBare = (await call('/api/review-session/export')).body;
+  ok(!exBare.includes('Для оркестратора') && exBare.startsWith('# Ревью: 3 PR-ов · o/r\n\n## PR #501'), 'ни общих комментариев, ни промпта: раздела «Для оркестратора» нет');
+  await call('/api/settings', json('PUT', { copyPrompt: '' }));
+  ok(!(await call('/api/review-session/export')).body.includes('Исправь замечания.'), 'без промпта при копировании хвоста у PR-а нет');
+  eq((await call('/api/settings', json('PUT', { orchestratorPrompt: 5 }))).status, 400, 'orchestratorPrompt не строка -> 400');
+  await call('/api/settings', json('PUT', { copyPrompt: 'Исправь замечания.', orchestratorPrompt: 'Раздай по агентам.' }));
+  await post('/api/review-session/general', { text: 'Прогони smoke.' });
+
+  // --- экспорт ничего не меняет, .md — тот же текст ---
+  const before = JSON.stringify([(await call(`/api/comments?${prq(501)}`)).body, (await call('/api/review-session')).body.session]);
+  const fileAll = await post('/api/review-session/export-file', {});
+  const filePr = await post('/api/review-session/export-file?scope=pr&number=501', {});
+  eq(fileAll.status, 200, 'POST /api/review-session/export-file -> 200');
+  ok(/^session-\d{4}-\d{2}-\d{2}-\d{4}\.md$/.test(fileAll.body.file), 'файл сессии называется session-<штамп>.md', fileAll.body.file);
+  ok(/^session-pr501-\d{4}-\d{2}-\d{2}-\d{4}\.md$/.test(filePr.body.file), 'файл одного PR-а называется session-pr<n>-<штамп>.md', filePr.body.file);
+  eq(path.dirname(fileAll.body.path), path.join(home, 'exports'), '.md сессии пишется в ~/.local-review/exports');
+  const textNow = (await call('/api/review-session/export')).body;
+  eq(fs.readFileSync(fileAll.body.path, 'utf8'), textNow, '.md сессии — тот же текст, что в буфер');
+  eq(fs.readFileSync(filePr.body.path, 'utf8'), (await call('/api/review-session/export?scope=pr&number=501')).body, '.md одного PR-а — тот же текст, что в буфер');
+  eq(JSON.stringify([(await call(`/api/comments?${prq(501)}`)).body, (await call('/api/review-session')).body.session]), before, 'экспорт не меняет ни комментарии, ни сессию');
+
+  // --- чистка комментариев прошлой сессии ---
+  eq((await post('/api/review-session/cleanup', { numbers: [999] })).status, 400, 'чистка PR-а не из сессии -> 400');
+  eq((await post('/api/review-session/cleanup', {})).status, 400, 'чистка без списка -> 400');
+  const cleaned = await post('/api/review-session/cleanup', { numbers: [502, 501] });
+  eq([cleaned.status, cleaned.body.removed, cleaned.body.perPr], [200, 2, { 501: 2, 502: 0 }], 'чистка удаляет только комментарии, написанные до начала сессии');
+  eq(cleaned.body.counts[501], { total: 1, old: 0 }, 'после чистки остался комментарий этой сессии');
+  eq((await call(`/api/comments?${prq(501)}`)).body.comments.map((c) => c.text), ['Новое замечание'], 'комментарий, написанный во время сессии, на месте');
+
+  // --- состав и порядок: новая сессия вместо старой ---
+  const startedAt = session.startedAt;
+  await call('/api/review-session', json('PUT', { current: 1 }));
+  const carried = await post('/api/review-session', { owner: 'o', repo: 'r', carryOver: true, prs: [prs[1], prs[0]] });
+  const next = carried.body.session;
+  eq(next.prs.map((p) => p.number), [502, 501], '«Изменить состав»: новый порядок');
+  eq(
+    [next.startedAt, next.general.map((g) => g.text), next.marks, next.current, next.visited],
+    [startedAt, ['Прогони smoke.'], { 502: 'lgtm', 501: 'lgtm' }, 0, { 501: true, 502: true }],
+    'продолжение сессии помнит начало, общие комментарии, отметки и место'
+  );
+  eq(carried.body.counts[501], { total: 1, old: 0 }, 'написанное в этой же сессии не становится «прошлой сессией»');
+  eq(onDisk().filter((s) => s.finishedAt === null).map((s) => s.id), [next.id], 'открыта ровно одна сессия');
+  eq(onDisk().length, 2, 'прежняя сессия осталась на диске завершённой');
+  ok(onDisk().find((s) => s.id === session.id).finishedAt, 'у прежней сессии проставлено finishedAt');
+
+  // Без carryOver — чистая сессия: всё написанное раньше теперь «прошлая сессия».
+  await pause();
+  const fresh = await post('/api/review-session', { owner: 'o', repo: 'r', prs: [prs[0]] });
+  ok(fresh.body.session.startedAt > startedAt, 'новая сессия начинается заново');
+  eq([fresh.body.session.general, fresh.body.session.marks], [[], {}], 'новая сессия: ни общих комментариев, ни отметок');
+  eq(fresh.body.counts[501], { total: 1, old: 1 }, 'комментарии прежней сессии для новой — «прошлая сессия»');
+  eq(sessionFiles().length, 3, 'завершённые сессии не удаляются');
+
+  // --- завершение ---
+  const done = await post('/api/review-session/finish', {});
+  ok(done.status === 200 && done.body.session.finishedAt, 'POST /api/review-session/finish проставляет finishedAt');
+  eq((await call('/api/review-session')).body.session, null, 'после завершения активной сессии нет');
+  eq(sessionFiles().length, 3, 'завершение не удаляет файл');
+  eq((await post('/api/review-session/general', { text: 'x' })).status, 404, 'общий комментарий без активной сессии -> 404');
+
+  delete process.env.LOCAL_REVIEW_GH_CALL_LOG;
+}
+
 async function main() {
   // Never touch the real ~/.local-review: the whole home config goes to a
   // throwaway directory for the duration of the test.
@@ -2252,7 +2519,7 @@ async function main() {
   // ------------------------------------------------------------ поиск PR-ов
   console.log('\nпоиск PR-ов');
   const listKey =
-    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,headRefOid,baseRefName,updatedAt,url,state,isDraft --state open';
   const searchKey =
     'search prs --involves=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
   // Фильтр «мои» (#19): автор уходит в gh флагом @me, а не в текст запроса.
@@ -2260,7 +2527,7 @@ async function main() {
   const searchMineKey =
     'search prs --author=@me --limit 30 --json number,title,repository,author,state,updatedAt,url,isDraft --state=open';
   const listMineKey =
-    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --search fix --author @me --state open';
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,headRefOid,baseRefName,updatedAt,url,state,isDraft --search fix --author @me --state open';
   ghFixtures(
     {
       [listKey]: {
@@ -3287,7 +3554,7 @@ async function main() {
   // ------------------------- инвариант 9: читаемые сообщения об отказах
   console.log('\nинвариант 9: отказы gh дают читаемое сообщение');
   const SEARCH_KEY =
-    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft --state open';
+    'pr list --repo o/r --limit 30 --json number,title,author,headRefName,headRefOid,baseRefName,updatedAt,url,state,isDraft --state open';
   const stderrFor = (text) => ({ [SEARCH_KEY]: { code: 1, stderr: text } });
 
   const ghCases = [
@@ -3492,8 +3759,8 @@ async function main() {
   eq(emptyPatch.status, 400, 'PUT /api/settings без copyPrompt -> 400');
 
   // ------------------------------------------------------ горячие клавиши (#22)
-  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","diffLayout":"Alt+S","definition":"F12","references":"Shift+F12","implementation":"Ctrl+F12","callHierarchy":"Alt+Shift+H","navBack":"Alt+Left","navForward":"Alt+Right"}',
-    'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра, вида диффа и навигации по коду');
+  eq(JSON.stringify(settings0.body.keybindings), '{"zen":"","commentsPanel":"","viewedFile":"Alt+V","viewMode":"Alt+A","diffLayout":"Alt+S","definition":"F12","references":"Shift+F12","implementation":"Ctrl+F12","callHierarchy":"Alt+Shift+H","navBack":"Alt+Left","navForward":"Alt+Right","sessionPrev":"Alt+Shift+Left","sessionNext":"Alt+Shift+Right"}',
+    'GET /api/settings: по умолчанию заданы клавиши «просмотрено», режима просмотра, вида диффа и навигации по коду и соседних PR-ов сессии');
   eq((await call('/api/settings', json('PUT', { keybindings: { нет: 'Ctrl+K' } }))).status, 400,
     'PUT /api/settings: неизвестное действие -> 400');
   eq((await call('/api/settings', json('PUT', { keybindings: { zen: 42 } }))).status, 400,
@@ -3504,7 +3771,7 @@ async function main() {
   eq(boundZen.body.keybindings.zen, 'Ctrl+Shift+F', 'PUT /api/settings: сочетание сохранено');
   eq((await call('/api/settings')).body.keybindings.zen, 'Ctrl+Shift+F', 'сочетание читается обратно');
   const boundPanel = await call('/api/settings', json('PUT', { keybindings: { commentsPanel: 'Alt+C' } }));
-  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+  eq(boundPanel.body.keybindings, { zen: 'Ctrl+Shift+F', commentsPanel: 'Alt+C', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right', sessionPrev: 'Alt+Shift+Left', sessionNext: 'Alt+Shift+Right' },
     'клавиша панели комментариев сохраняется рядом с Zen');
   const clearedViewed = await call('/api/settings', json('PUT', { keybindings: { viewedFile: '' } }));
   eq(clearedViewed.body.keybindings.viewedFile, '', 'клавишу по умолчанию можно снять');
@@ -3529,8 +3796,9 @@ async function main() {
     (await call('/api/settings')).body,
     {
       copyPrompt: '',
+      orchestratorPrompt: '',
       gitignoreTarget: 'project',
-      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right' },
+      keybindings: { zen: '', commentsPanel: '', viewedFile: 'Alt+V', viewMode: 'Alt+A', diffLayout: 'Alt+S', definition: 'F12', references: 'Shift+F12', implementation: 'Ctrl+F12', callHierarchy: 'Alt+Shift+H', navBack: 'Alt+Left', navForward: 'Alt+Right', sessionPrev: 'Alt+Shift+Left', sessionNext: 'Alt+Shift+Right' },
       defaultViewMode: 'single',
       defaultDiffLayout: 'unified',
       renderModeForAllFiles: true,
@@ -4354,6 +4622,8 @@ async function main() {
 
   const lspDirs = await lspChecks(call, home);
   if (process.platform !== 'win32') lspDirs.push(...(await prCloneChecks(call, home)));
+
+  await reviewSessionChecks(call, home);
 
   await new Promise((resolve) => server.server.close(resolve));
 

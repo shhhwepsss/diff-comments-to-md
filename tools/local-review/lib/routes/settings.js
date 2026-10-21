@@ -18,6 +18,13 @@ async function put(req, res) {
     }
     patch.copyPrompt = body.copyPrompt;
   }
+  if (body.orchestratorPrompt !== undefined) {
+    if (typeof body.orchestratorPrompt !== 'string') {
+      sendJson(res, 400, { error: 'orchestratorPrompt должен быть строкой' });
+      return;
+    }
+    patch.orchestratorPrompt = body.orchestratorPrompt;
+  }
   if (body.gitignoreTarget !== undefined) {
     if (!config.GITIGNORE_TARGETS.includes(body.gitignoreTarget)) {
       sendJson(res, 400, { error: 'gitignoreTarget должен быть project или global' });
@@ -69,7 +76,7 @@ async function put(req, res) {
   if (Object.keys(patch).length === 0) {
     sendJson(res, 400, {
       error:
-        'Нечего сохранять: передай copyPrompt, gitignoreTarget, keybindings, defaultViewMode, defaultDiffLayout или renderModeForAllFiles',
+        'Нечего сохранять: передай copyPrompt, orchestratorPrompt, gitignoreTarget, keybindings, defaultViewMode, defaultDiffLayout или renderModeForAllFiles',
     });
     return;
   }

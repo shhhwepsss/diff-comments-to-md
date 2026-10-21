@@ -6,6 +6,7 @@ const comments = require('./comments');
 const exportRoutes = require('./export');
 const browseRoutes = require('./browse');
 const session = require('./session');
+const reviewSession = require('./review-session');
 const settings = require('./settings');
 const ghRoutes = require('./gh');
 const commitsRoutes = require('./commits');
@@ -31,6 +32,15 @@ const ROUTES = [
   { method: 'POST', path: '/api/local/pick-folder', handle: browseRoutes.pickFolder },
   { method: 'GET', path: '/api/session', handle: session.get },
   { method: 'POST', path: '/api/session', handle: session.post },
+  { method: 'GET', path: '/api/review-session', handle: reviewSession.get },
+  { method: 'POST', path: '/api/review-session', handle: reviewSession.post },
+  { method: 'PUT', path: '/api/review-session', handle: reviewSession.put },
+  { method: 'POST', path: '/api/review-session/finish', handle: reviewSession.finish },
+  { method: 'POST', path: '/api/review-session/general', handle: reviewSession.addGeneral },
+  { method: 'GET', path: '/api/review-session/export', handle: reviewSession.exportText },
+  { method: 'POST', path: '/api/review-session/export-file', handle: reviewSession.exportFile },
+  { method: 'POST', path: '/api/review-session/cleanup', handle: reviewSession.cleanup },
+  { method: 'GET', path: '/api/review-session/old-comments', handle: reviewSession.oldComments },
   { method: 'GET', path: '/api/settings', handle: settings.get },
   { method: 'PUT', path: '/api/settings', handle: settings.put },
   { method: 'GET', path: '/api/gh/status', handle: ghRoutes.status },
@@ -47,6 +57,7 @@ const ROUTES = [
 ];
 
 const COMMENT_ID = /^\/api\/comments\/([^/]+)$/;
+const SESSION_GENERAL_ID = /^\/api\/review-session\/general\/([^/]+)$/;
 
 function createApp(ctx) {
   // ctx.host: the address given with --host, which the Host header may then name too.
@@ -95,6 +106,18 @@ function createApp(ctx) {
       }
       if (req.method === 'DELETE') {
         await comments.removeOne(req, res, ctx, url, id);
+        return;
+      }
+    }
+
+    const generalMatch = SESSION_GENERAL_ID.exec(pathname);
+    if (generalMatch) {
+      if (req.method === 'PUT' || req.method === 'PATCH') {
+        await reviewSession.updateGeneral(req, res, ctx, url, generalMatch[1]);
+        return;
+      }
+      if (req.method === 'DELETE') {
+        await reviewSession.removeGeneral(req, res, ctx, url, generalMatch[1]);
         return;
       }
     }

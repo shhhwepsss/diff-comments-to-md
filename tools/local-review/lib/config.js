@@ -23,6 +23,9 @@ const KEYBINDING_DEFAULTS = {
   callHierarchy: 'Alt+Shift+H',
   navBack: 'Alt+Left',
   navForward: 'Alt+Right',
+  // Alt+←/→ already walk the history of code jumps, so a session's neighbours get Shift on top.
+  sessionPrev: 'Alt+Shift+Left',
+  sessionNext: 'Alt+Shift+Right',
 };
 /** How the diff screen lays files out: one at a time, or all of them in a feed. */
 const VIEW_MODES = ['single', 'all'];
@@ -45,6 +48,11 @@ function settingsPath() {
 
 function exportsDir() {
   return path.join(homeDir(), 'exports');
+}
+
+/** One JSON file per review session (lib/review-session.js). */
+function sessionsDir() {
+  return path.join(homeDir(), 'sessions');
 }
 
 function ensureHome() {
@@ -95,6 +103,8 @@ function writeState(next) {
  * browser starts in while it has no remembered choice of its own.
  * `defaultDiffLayout` is the same for how a file's diff is drawn ('unified' or
  * 'split', see DIFF_LAYOUTS).
+ * `orchestratorPrompt` is free text for the session export only: it follows
+ * the session's general comments in the «Для оркестратора» section.
  * `renderModeForAllFiles` says whether «Код» / «Просмотр» switched in one file
  * switches every file that has a rendered view (true, the default) or only
  * that file (false, the historical behaviour).
@@ -105,6 +115,7 @@ function defaultKeybindings() {
 
 const SETTINGS_DEFAULTS = {
   copyPrompt: '',
+  orchestratorPrompt: '',
   gitignoreTarget: 'project',
   keybindings: defaultKeybindings(),
   defaultViewMode: 'all',
@@ -131,6 +142,10 @@ function readSettings() {
     const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
     return {
       copyPrompt: parsed && typeof parsed.copyPrompt === 'string' ? parsed.copyPrompt : SETTINGS_DEFAULTS.copyPrompt,
+      orchestratorPrompt:
+        parsed && typeof parsed.orchestratorPrompt === 'string'
+          ? parsed.orchestratorPrompt
+          : SETTINGS_DEFAULTS.orchestratorPrompt,
       gitignoreTarget:
         parsed && GITIGNORE_TARGETS.includes(parsed.gitignoreTarget)
           ? parsed.gitignoreTarget
@@ -177,12 +192,21 @@ function addRecent(root) {
   return writeState(state);
 }
 
-function countStoredPrs() {
+function countJsonFiles(dir) {
   try {
-    return fs.readdirSync(path.join(homeDir(), 'pr')).filter((n) => n.endsWith('.json')).length;
+    return fs.readdirSync(dir).filter((n) => n.endsWith('.json')).length;
   } catch {
     return 0;
   }
+}
+
+function countStoredPrs() {
+  return countJsonFiles(path.join(homeDir(), 'pr'));
+}
+
+/** Sessions on disk, finished ones included: nothing cleans them up. */
+function countSessions() {
+  return countJsonFiles(sessionsDir());
 }
 
 module.exports = {
@@ -190,6 +214,7 @@ module.exports = {
   statePath,
   settingsPath,
   exportsDir,
+  sessionsDir,
   ensureHome,
   readState,
   writeState,
@@ -198,6 +223,7 @@ module.exports = {
   setLast,
   addRecent,
   countStoredPrs,
+  countSessions,
   DIR_NAME,
   RECENT_LIMIT,
   GITIGNORE_TARGETS,
