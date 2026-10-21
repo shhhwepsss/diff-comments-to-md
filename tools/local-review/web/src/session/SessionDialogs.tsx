@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Checkbox, CounterLabel, Dialog, SegmentedControl, Spinner } from '@primer/react';
 import { api, failureMessage } from '../api/client';
 import type { Comment, SessionCounts, SessionExportScope } from '../api/types';
@@ -7,7 +7,7 @@ import { announceCommentsChanged } from '../lib/commentsEvent';
 import { useToast } from '../lib/toast';
 import { editDraftKey, NEW_GENERAL_DRAFT } from '../review/drafts';
 import { useSession } from './sessionContext';
-import { cleanupRows, cleanupTotal, shortTitle } from './sessionLogic';
+import { cleanupRows, cleanupTotal, shortTitle, type CleanupRow } from './sessionLogic';
 import './session.css';
 
 type Props = {
@@ -24,7 +24,7 @@ export function SessionDialogs({ dialog, onCloseDialog, cleanup, onCloseCleanup,
     <>
       {dialog === 'general' && <GeneralDialog onClose={onCloseDialog} />}
       {dialog === 'export' && <ExportDialog onClose={onCloseDialog} />}
-      {cleanup && <CleanupDialog onClose={onCloseCleanup} onCleaned={onCleaned} />}
+      {cleanup && <SessionCleanup onClose={onCloseCleanup} onCleaned={onCleaned} />}
     </>
   );
 }
@@ -35,7 +35,7 @@ export function SessionDialogs({ dialog, onCloseDialog, cleanup, onCloseCleanup,
  * the same cards and form, unsaved text kept until it is saved.
  */
 function GeneralDialog({ onClose }: { onClose: () => void }) {
-  const { session, drafts, refresh } = useSession();
+  const { session, drafts, refresh, focusRef } = useSession();
   const toast = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   // Remounting the form is what clears it after a successful save.
@@ -91,6 +91,7 @@ function GeneralDialog({ onClose }: { onClose: () => void }) {
       subtitle="Для оркестратора: контекст, порядок, «пингани, когда всё проверится». В экспорте — раздел «Для оркестратора»."
       position="right"
       width="large"
+      returnFocusRef={focusRef}
       onClose={onClose}
     >
       <div className="rv-general">
@@ -131,7 +132,7 @@ function GeneralDialog({ onClose }: { onClose: () => void }) {
  * nothing is handed to the orchestrator unseen.
  */
 function ExportDialog({ onClose }: { onClose: () => void }) {
-  const { session, index, copy, writeMd } = useSession();
+  const { session, index, copy, writeMd, focusRef } = useSession();
   const [scope, setScope] = useState<SessionExportScope>('all');
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,9 +159,17 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
     <Dialog
       title="Предпросмотр экспорта"
       width="xlarge"
+      returnFocusRef={focusRef}
       onClose={onClose}
       footerButtons={[
-        { buttonType: 'default', content: 'Сгенерировать .md', onClick: () => void writeMd(scope) },
+        {
+          buttonType: 'default',
+          content: 'Сгенерировать .md',
+          onClick: () => {
+            void writeMd(scope);
+            onClose();
+          },
+        },
         {
           buttonType: 'primary',
           content: 'Скопировать',
@@ -183,7 +192,9 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         {error ? (
           <div className="rv-hint rv-sess-export__error">{error}</div>
         ) : text === null ? (
-          <Spinner size="small" />
+          <div className="rv-sess-export__text rv-sess-export__text--wait">
+            <Spinner size="small" />
+          </div>
         ) : (
           <pre className="rv-sess-export__text" tabIndex={0} aria-label="Текст экспорта">
             {text}
@@ -195,22 +206,31 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * Comments that were on the session's PRs before it began would go into its
+ * Comments that were on the PRs before the session began would go into its
  * export with the new ones. Everything is ticked, and the reviewer unticks
  * what to keep; only comments older than the session can be deleted here.
+ * Three ways out: «Оставить» goes on keeping all of them, «Удалить отмеченное»
+ * deletes what is ticked and goes on, Esc and the cross call the whole thing off.
+ * The caller says what «going on» is: starting a session, or just closing.
  */
-function CleanupDialog({ onClose, onCleaned }: { onClose: () => void; onCleaned: (counts: SessionCounts) => void }) {
-  const { session, counts } = useSession();
+export function CleanupDialog({
+  rows,
+  onKeep,
+  onDelete,
+  onCancel,
+  returnFocusRef,
+}: {
+  rows: CleanupRow[];
+  onKeep: () => void;
+  /** Deletes the comments of these PRs; resolves once it is done, rejects with a message to show. */
+  onDelete: (numbers: number[]) => Promise<void>;
+  onCancel: () => void;
+  returnFocusRef?: RefObject<HTMLElement | null>;
+}) {
   const toast = useToast();
   const [kept, setKept] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const rows = useMemo(() => (session ? cleanupRows(session, counts) : []), [session, counts]);
   const total = cleanupTotal(rows, kept);
-
-  // Nothing left to ask about (deleted in another tab): there is no dialog to show.
-  useEffect(() => {
-    if (!busy && rows.length === 0) onClose();
-  }, [busy, rows.length, onClose]);
 
   const toggle = (n: number) => {
     const next = new Set(kept);
@@ -222,11 +242,7 @@ function CleanupDialog({ onClose, onCleaned }: { onClose: () => void; onCleaned:
   const remove = async () => {
     setBusy(true);
     try {
-      const res = await api.cleanupSession(rows.filter((r) => !kept.has(r.number)).map((r) => r.number));
-      onCleaned(res.counts);
-      announceCommentsChanged();
-      toast(`Удалено комментариев: ${res.removed}`);
-      onClose();
+      await onDelete(rows.filter((r) => !kept.has(r.number)).map((r) => r.number));
     } catch (e) {
       toast(failureMessage('Не удалось удалить комментарии', e), true);
       setBusy(false);
@@ -238,9 +254,10 @@ function CleanupDialog({ onClose, onCleaned }: { onClose: () => void; onCleaned:
       title="Остались комментарии прошлой сессии"
       subtitle="Если их оставить, они уйдут в новый экспорт вместе с новыми."
       width="large"
-      onClose={onClose}
+      returnFocusRef={returnFocusRef}
+      onClose={onCancel}
       footerButtons={[
-        { buttonType: 'default', content: 'Оставить', onClick: onClose, autoFocus: true },
+        { buttonType: 'default', content: 'Оставить', onClick: onKeep, disabled: busy, autoFocus: true },
         { buttonType: 'danger', content: `Удалить отмеченное (${total})`, disabled: total === 0 || busy, onClick: () => void remove() },
       ]}
     >
@@ -257,5 +274,36 @@ function CleanupDialog({ onClose, onCleaned }: { onClose: () => void; onCleaned:
         <p className="rv-hint">Удаляются только комментарии, оставленные до начала этой сессии. Отменить нельзя.</p>
       </div>
     </Dialog>
+  );
+}
+
+/** The cleanup of the running session, from its menu. */
+function SessionCleanup({ onClose, onCleaned }: { onClose: () => void; onCleaned: (counts: SessionCounts) => void }) {
+  const { session, counts, focusRef } = useSession();
+  const toast = useToast();
+  const rows = useMemo(() => (session ? cleanupRows(session, counts) : []), [session, counts]);
+  const done = useRef(false);
+
+  // Nothing left to ask about (deleted in another tab): there is no dialog to show.
+  useEffect(() => {
+    if (rows.length === 0 && !done.current) onClose();
+  }, [rows.length, onClose]);
+
+  if (rows.length === 0) return null;
+  return (
+    <CleanupDialog
+      rows={rows}
+      returnFocusRef={focusRef}
+      onKeep={onClose}
+      onCancel={onClose}
+      onDelete={async (numbers) => {
+        done.current = true;
+        const res = await api.cleanupSession(numbers);
+        onCleaned(res.counts);
+        announceCommentsChanged();
+        toast(`Удалено комментариев: ${res.removed}`);
+        onClose();
+      }}
+    />
   );
 }

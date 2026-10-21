@@ -132,7 +132,8 @@
 }
 
 .rv-sess-export__text {
-  max-height: 55vh;
+  /* A fixed height: the text under «Вся сессия» and «Только #n» differs in length, and the dialog must not jump. */
+  height: 55vh;
   margin: 0;
   padding: var(--base-size-12);
   overflow: auto;
@@ -170,4 +171,38 @@
 
 .rv-sess-cleanup p {
   margin: var(--base-size-4) 0 0;
+}
+
+/* The pressed mark has to be seen: green for «без замечаний», a firm grey for «пропущен». */
+.rv-sess-mark--lgtm[aria-pressed='true'] {
+  background: var(--bgColor-success-muted);
+  border-color: var(--borderColor-success-emphasis);
+  color: var(--fgColor-success);
+}
+.rv-sess-mark--skip[aria-pressed='true'] {
+  background: var(--bgColor-neutral-muted);
+  border-color: var(--borderColor-emphasis);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+/* The session list's status for PRs that only carry comments from before. */
+.rv-sess-status--old {
+  color: var(--fgColor-attention);
+}
+
+/* Narrow header: with the session group in it the row would wrap below about
+   1100px, so the group gives up «Сессия » and its arrow, and «Комментарии»
+   keeps its icon and count only. The row stays one line down to ~900px. */
+@media (max-width: 1100px) {
+  .rv-sess-word {
+    display: none;
+  }
+
+  .rv-sess-group [data-component='trailingAction'] {
+    display: none;
+  }
+
+  .rv-header__actions:has(.rv-sess-group) .rv-header__count-word {
+    display: none;
+  }
 }

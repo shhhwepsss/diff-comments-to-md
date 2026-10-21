@@ -1,5 +1,5 @@
 import { ActionList } from '@primer/react';
-import { CheckCircleFillIcon, CircleIcon, CommentIcon, EyeIcon, SkipIcon } from '@primer/octicons-react';
+import { CheckCircleFillIcon, CircleIcon, CommentIcon, EyeIcon, HistoryIcon, SkipIcon } from '@primer/octicons-react';
 import { shortTitle, statusLabel, statusOf, type PrStatus } from './sessionLogic';
 import { useSessionView } from './useSessionView';
 
@@ -9,6 +9,7 @@ const STATUS_ICON: Record<PrStatus, typeof CommentIcon> = {
   skip: SkipIcon,
   seen: EyeIcon,
   todo: CircleIcon,
+  old: HistoryIcon,
 };
 
 /**
@@ -16,13 +17,13 @@ const STATUS_ICON: Record<PrStatus, typeof CommentIcon> = {
  * in the pinned panel. The PR on screen is highlighted; a click opens one.
  */
 export function SessionPrList({ onPick }: { onPick?: () => void }) {
-  const { session, index, totals, go } = useSessionView();
+  const { session, index, counts, go } = useSessionView();
   if (!session) return null;
   return (
     <ActionList className="rv-sess-list" aria-label="PR-ы сессии">
       {session.prs.map((pr, i) => {
-        const total = totals[pr.number] ?? 0;
-        const status = statusOf(session, pr.number, total);
+        const count = counts[pr.number];
+        const status = statusOf(session, pr.number, count);
         const Icon = STATUS_ICON[status];
         return (
           <ActionList.Item
@@ -41,7 +42,7 @@ export function SessionPrList({ onPick }: { onPick?: () => void }) {
               #{pr.number} {shortTitle(pr.title)}
             </span>
             <ActionList.Description variant="block" className={`rv-sess-status rv-sess-status--${status}`}>
-              {statusLabel(status, total)}
+              {statusLabel(status, count, Boolean(session.visited[pr.number]))}
             </ActionList.Description>
           </ActionList.Item>
         );

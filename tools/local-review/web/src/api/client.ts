@@ -306,6 +306,9 @@ export const api = {
     ),
   cleanupSession: (numbers: number[]) =>
     request<{ removed: number; counts: SessionCounts }>('/api/review-session/cleanup', jsonBody('POST', { numbers })),
+  /** The same deletion as the cleanup, before any session exists: each PR with the time its comments must predate (none: all). */
+  deleteOldComments: (repo: { host: string; owner: string; repo: string }, items: { number: number; before?: string }[]) =>
+    request<{ removed: number }>('/api/review-session/delete-old', jsonBody('POST', { ...repo, items })),
   /**
    * Comments already lying on PRs of one repository — all of them, or only
    * those written before `before`; { number: count }, zeros left out.

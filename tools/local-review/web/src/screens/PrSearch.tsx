@@ -11,18 +11,21 @@ import { foundBy, tabForQuery, type SelectTab } from '../lib/tabbedSelect';
 import { useConfirm } from '../lib/confirm';
 import { useToast } from '../lib/toast';
 import { useSession } from '../session/sessionContext';
+import { CleanupDialog } from '../session/SessionDialogs';
 import {
   allOrder,
-  commentTotals,
   doneCount,
   oldBadge,
+  oldCommentScopes,
   pickable,
+  prCountOf,
   positionOf,
   prKey,
   SORT_OPTIONS,
   sessionOrder,
   togglePick,
   togglePickAll,
+  type CleanupRow,
   type SortKey,
 } from '../session/sessionLogic';
 import { MatchText, SelectTabs, TabbedSelect, type TabbedOption } from '../components/TabbedSelect';
@@ -267,10 +270,9 @@ export function PrSearch() {
   }, [refreshSession]);
 
   const items = useMemo(() => (result.kind === 'ok' ? result.items : []), [result]);
-  const since = editing?.startedAt;
-  // Comments the found PRs already have. Next to the session being changed they
-  // are the ones older than it; otherwise every one is, since a session
-  // started now has written none.
+  // Comments the found PRs already have from before. For a PR of the running
+  // session that is what is older than the session — what was written during
+  // it is its own work; for every other PR it is every comment on it.
   useEffect(() => {
     if (items.length === 0) {
       setOldByKey({});
@@ -285,7 +287,13 @@ export function PrSearch() {
       group.numbers.push(item.number);
       groups.set(key, group);
     }
-    Promise.all([...groups.values()].map((g) => api.oldComments(g.repo, g.numbers, since).then((r) => ({ g, counts: r.counts }))))
+    Promise.all(
+      [...groups.values()].flatMap((g) =>
+        oldCommentScopes(session, g.repo, g.numbers).map((scope) =>
+          api.oldComments(g.repo, scope.numbers, scope.before).then((r) => ({ g, counts: r.counts })),
+        ),
+      ),
+    )
       .then((all) => {
         if (!alive) return;
         const next: Record<string, number> = {};
@@ -299,7 +307,7 @@ export function PrSearch() {
     return () => {
       alive = false;
     };
-  }, [items, since]);
+  }, [items, session]);
 
   const pickedItems = useMemo(() => sessionOrder(items, picked, sort), [items, picked, sort]);
   const everyOrder = useMemo(() => allOrder(items, sort), [items, sort]);
@@ -312,24 +320,58 @@ export function PrSearch() {
     setPicked((p) => togglePick(p, key));
   };
 
+  // The cleanup dialog, asked before any session is made: «Оставить» starts,
+  // «Удалить» deletes and starts, Esc and the cross start nothing.
+  const [ask, setAsk] = useState<{ ordered: PrItem[]; rows: CleanupRow[]; items: { number: number; before?: string }[] } | null>(null);
+
+  const launch = async (ordered: PrItem[]) => {
+    const first = ordered[0];
+    if (!first || !first.owner || !first.repo) return;
+    setStarting(true);
+    const prs = ordered.map((i) => ({ number: i.number, title: i.title, headRefName: i.headRefName, headSha: i.headSha }));
+    await sessionApi.start({ host: first.host, owner: first.owner, repo: first.repo }, prs, Boolean(editing));
+    setStarting(false);
+  };
+
   const begin = async (ordered: PrItem[]) => {
     const first = ordered[0];
     if (!first || !first.owner || !first.repo || starting) return;
     // A fresh session replaces the running one: its marks and remarks would
     // go to the finished ones on disk, where nothing in the app opens them.
     if (session && !editing) {
-      const done = doneCount(session, commentTotals(counts));
       const ok = await confirm({
         title: 'Начать новую сессию?',
-        body: `Незаконченная сессия (просмотрено ${done} из ${session.prs.length} PR-ов) будет завершена: её отметки и общие комментарии в приложении больше не откроются. Комментарии к PR-ам останутся на месте.`,
+        body: `Незаконченная сессия (просмотрено ${doneCount(session, counts)} из ${prCountOf(session.prs.length)}) будет завершена: её отметки и общие комментарии в приложении больше не откроются. Комментарии к PR-ам останутся на месте.`,
         confirmLabel: 'Начать новую',
       });
       if (!ok) return;
     }
+    // Comments on these PRs from before the session: asked about now, while
+    // nothing has been made yet. A PR that is already in the session being
+    // changed was asked about when it started, so only what predates it counts.
     setStarting(true);
-    const prs = ordered.map((i) => ({ number: i.number, title: i.title, headRefName: i.headRefName, headSha: i.headSha }));
-    await sessionApi.start({ host: first.host, owner: first.owner, repo: first.repo }, prs, Boolean(editing));
+    let rows: CleanupRow[] = [];
+    const items: { number: number; before?: string }[] = [];
+    try {
+      const repoOf = { host: first.host, owner: first.owner, repo: first.repo };
+      const found: Record<number, number> = {};
+      await Promise.all(
+        oldCommentScopes(editing, repoOf, ordered.map((i) => i.number)).map(async (scope) => {
+          const r = await api.oldComments(repoOf, scope.numbers, scope.before);
+          for (const [n, c] of Object.entries(r.counts)) {
+            found[Number(n)] = c;
+            items.push({ number: Number(n), before: scope.before });
+          }
+        }),
+      );
+      rows = ordered.filter((i) => found[i.number]).map((i) => ({ number: i.number, title: i.title, old: found[i.number] }));
+    } catch (e) {
+      // Without the answer it is safest to keep everything and say so.
+      toast(failureMessage('Не удалось проверить старые комментарии', e), true);
+    }
     setStarting(false);
+    if (rows.length === 0) await launch(ordered);
+    else setAsk({ ordered, rows, items });
   };
 
   const run = () => void search({ repo, q: query, state: prState, author });
@@ -402,7 +444,7 @@ export function PrSearch() {
             <Banner
               variant="info"
               title="Незаконченная сессия ревью"
-              description={`просмотрено ${doneCount(session, commentTotals(counts))} из ${session.prs.length} PR-ов`}
+              description={`просмотрено ${doneCount(session, counts)} из ${prCountOf(session.prs.length)}`}
               className="rv-page__banner"
               primaryAction={<Banner.PrimaryAction onClick={() => sessionApi.go(session.current)}>Продолжить</Banner.PrimaryAction>}
               secondaryAction={<Banner.SecondaryAction onClick={() => void sessionApi.finish()}>Завершить</Banner.SecondaryAction>}
@@ -595,7 +637,7 @@ export function PrSearch() {
                     Ревью всех найденных ({everyOrder.length})
                   </Button>
                   <Button size="small" variant="primary" disabled={pickedItems.length === 0 || starting} onClick={() => void begin(pickedItems)}>
-                    Начать ревью ({pickedItems.length})
+                    {editing ? 'Применить к сессии' : 'Начать ревью'} ({pickedItems.length})
                   </Button>
                 </>
               )}
@@ -637,6 +679,28 @@ export function PrSearch() {
             </>
           )}
         </>
+      )}
+      {ask && (
+        <CleanupDialog
+          rows={ask.rows}
+          onCancel={() => setAsk(null)}
+          onKeep={() => {
+            const { ordered } = ask;
+            setAsk(null);
+            void launch(ordered);
+          }}
+          onDelete={async (numbers) => {
+            const first = ask.ordered[0];
+            const res = await api.deleteOldComments(
+              { host: first.host, owner: first.owner!, repo: first.repo! },
+              ask.items.filter((i) => numbers.includes(i.number)),
+            );
+            toast(`Удалено комментариев: ${res.removed}`);
+            const { ordered } = ask;
+            setAsk(null);
+            await launch(ordered);
+          }}
+        />
       )}
     </div>
   );

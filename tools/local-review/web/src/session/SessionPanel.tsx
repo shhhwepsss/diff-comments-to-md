@@ -17,7 +17,7 @@ export function SessionPanel() {
     <aside className="rv-spanel" aria-label="Сессия ревью">
       <div className="rv-spanel__head">
         <strong>
-          Сессия · {view.done} из {session.prs.length}
+          просмотрено {view.done} из {session.prs.length}
         </strong>
         <IconButton icon={PinSlashIcon} aria-label="Открепить список" size="small" variant="invisible" onClick={() => view.setPinned(false)} />
       </div>

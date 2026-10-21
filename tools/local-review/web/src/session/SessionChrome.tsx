@@ -3,6 +3,7 @@ import { Button, IconButton } from '@primer/react';
 import { ChevronLeftIcon, ChevronRightIcon } from '@primer/octicons-react';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
+import { useOptionalReview } from '../review/ReviewContext';
 import { neighbourIndex } from './sessionLogic';
 import { useSession } from './sessionContext';
 import './session.css';
@@ -71,5 +72,27 @@ export function SessionKeys({ prevKey, nextKey }: { prevKey: string; nextKey: st
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [prevKey, nextKey, step]);
+  return null;
+}
+
+/**
+ * Keeps the session's counts of the open PR equal to what its review holds.
+ * The server's counts were read when the PR was opened; comments written or
+ * deleted since (a single comment, «Очистить всё…») change them under the
+ * reviewer's hands, and the menu, the list and the cleanup dialog read these.
+ * Comments predate the session by their `createdAt`, the rule the server uses.
+ */
+export function SessionCountsSync() {
+  const { session, index, counts, patchCounts } = useSession();
+  const review = useOptionalReview();
+  const comments = review?.state ? review.comments : null;
+  useEffect(() => {
+    if (!session || index < 0 || !comments) return;
+    const number = session.prs[index].number;
+    const limit = Date.parse(session.startedAt);
+    const live = { total: comments.length, old: comments.filter((c) => Date.parse(c.createdAt) < limit).length };
+    const known = counts[number];
+    if (!known || known.total !== live.total || known.old !== live.old) patchCounts(number, live);
+  }, [session, index, comments, counts, patchCounts]);
   return null;
 }

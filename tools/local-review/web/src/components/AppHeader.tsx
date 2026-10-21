@@ -409,7 +409,7 @@ export function AppHeader({
             // the click turns it off, and DiffScreen takes that as «show it».
             onClick={() => onCommentsPanel(!commentsPanel)}
           >
-            Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
+            <span className="rv-header__count-word">Комментарии</span> <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
           </Button>
           {review.commitsMode && review.outsideCount > 0 && (
             <button

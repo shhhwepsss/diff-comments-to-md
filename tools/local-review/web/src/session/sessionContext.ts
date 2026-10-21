@@ -1,5 +1,6 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, type RefObject } from 'react';
 import type { ReviewSession, SessionCounts, SessionExportScope, SessionMark, SessionPrInput } from '../api/types';
+import type { PrCount } from './sessionLogic';
 import type { DraftStore } from '../review/drafts';
 
 /** The repository a session is over. */
@@ -19,12 +20,16 @@ export type SessionApi = {
   setPinned: (on: boolean) => void;
   /** Re-reads the session and the counts. */
   refresh: () => Promise<void>;
+  /** The open PR's comments changed: its counts are what the review holds, not what the server said. */
+  patchCounts: (number: number, count: PrCount) => void;
+  /** The session button of the header; dialogs opened from its menu give focus back to it. */
+  focusRef: RefObject<HTMLElement | null>;
   /**
-   * Starts a session over `prs` in this order and lands on its first PR —
-   * through the cleanup dialog when some of them carry comments of an earlier
-   * session. `carryOver` continues the running session with a new line-up.
+   * Starts a session over `prs` in this order and lands on its first PR.
+   * `carryOver` continues the running session with a new line-up.
    */
   start: (repo: SessionRepo, prs: SessionPrInput[], carryOver: boolean) => Promise<boolean>;
+  /** Asks first; finishing from a PR of the session goes back to the search. */
   finish: () => Promise<void>;
   /** Opens the session's PR at `index`. */
   go: (index: number) => void;

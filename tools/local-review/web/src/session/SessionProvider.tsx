@@ -3,22 +3,21 @@ import { api, failureMessage } from '../api/client';
 import type { Descriptor, SessionCounts, SessionExportScope, SessionMark, SessionOverview, SessionPrInput } from '../api/types';
 import { hashFor } from '../lib/hash';
 import { copyToClipboard } from '../lib/clipboard';
+import { useConfirm } from '../lib/confirm';
 import { useToast } from '../lib/toast';
 import { createDraftStore } from '../review/drafts';
 import { SessionDialogs } from './SessionDialogs';
 import { SessionContextProvider, type SessionApi, type SessionRepo } from './sessionContext';
 import {
-  cleanupRows,
   descriptorOf,
   neighbourIndex,
   sessionIndex,
   toggledMark,
 } from './sessionLogic';
+import { prCount } from './sessionLogic';
 import { readSessionPin, writeSessionPin } from './sessionPin';
 
 type Dialog = 'general' | 'export' | null;
-/** The cleanup dialog; `landOn` is where to go once it is answered (a session that has just started). */
-type Cleanup = { landOn: string | null } | null;
 
 const NO_COUNTS: SessionCounts = {};
 
@@ -34,17 +33,13 @@ const NO_COUNTS: SessionCounts = {};
  */
 export function SessionProvider({ descriptor, children }: { descriptor: Descriptor | null; children: ReactNode }) {
   const toast = useToast();
+  const confirm = useConfirm();
+  const focusRef = useRef<HTMLElement | null>(null);
   const [overview, setOverview] = useState<SessionOverview | null>(null);
   const [pinned, setPinnedState] = useState(readSessionPin);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [cleanup, setCleanupState] = useState<Cleanup>(null);
-  // The dialog can be answered twice over (its button, then the counts it just
-  // changed emptying it); the landing must happen once.
-  const cleanupRef = useRef<Cleanup>(null);
-  const setCleanup = useCallback((next: Cleanup) => {
-    cleanupRef.current = next;
-    setCleanupState(next);
-  }, []);
+  // The cleanup dialog of the session menu («Удалить комментарии прошлой сессии…»).
+  const [cleanup, setCleanup] = useState(false);
   const [drafts] = useState(createDraftStore);
 
   const session = overview?.session ?? null;
@@ -119,32 +114,39 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
       try {
         const res = await api.startReviewSession({ ...repo, prs, carryOver });
         setOverview({ session: res.session, counts: res.counts });
-        const first = res.session.prs[res.session.current];
-        const landOn = hashFor(descriptorOf(res.session, first));
-        // Comments left by an earlier session would go into this export
-        // together with the new ones: ask before the first PR opens.
-        if (cleanupRows(res.session, res.counts).length > 0) setCleanup({ landOn });
-        else window.location.hash = landOn;
+        // The search has already asked about comments left from before (PrSearch).
+        window.location.hash = hashFor(descriptorOf(res.session, res.session.prs[res.session.current]));
         return true;
       } catch (e) {
         toast(failureMessage('Не удалось начать сессию', e), true);
         return false;
       }
     },
-    [toast, setCleanup],
+    [toast],
   );
 
   const finish = useCallback(async () => {
+    const running = live.current.session;
+    if (!running) return;
+    const ok = await confirm({
+      title: 'Завершить сессию?',
+      body: 'Комментарии к PR-ам останутся на месте. Отметки и общие комментарии сессии в приложении больше не откроются (файл сессии остаётся на диске).',
+      confirmLabel: 'Завершить',
+    });
+    if (!ok) return;
+    const onPr = live.current.index >= 0;
     try {
       await api.finishReviewSession();
       setOverview({ session: null, counts: NO_COUNTS });
       setDialog(null);
-      setCleanup(null);
+      setCleanup(false);
       toast('Сессия завершена. Комментарии PR-ов остались на месте.');
+      // A PR of the session is no longer part of anything: back to the search.
+      if (onPr) window.location.hash = '#/pr';
     } catch (e) {
       toast(failureMessage('Не удалось завершить сессию', e), true);
     }
-  }, [toast, setCleanup]);
+  }, [confirm, toast]);
 
   const mark = useCallback(
     async (kind: SessionMark) => {
@@ -178,7 +180,7 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
           ok
             ? scope === 'pr'
               ? `Скопировано: только #${number}`
-              : `Скопировано: вся сессия, ${s.prs.length} PR`
+              : `Скопировано: вся сессия, ${prCount(s.prs.length)}`
             : 'Не удалось скопировать — открой /api/review-session/export',
           !ok,
         );
@@ -202,11 +204,13 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
     [toast],
   );
 
-  const closeCleanup = useCallback(() => {
-    const open = cleanupRef.current;
-    setCleanup(null);
-    if (open?.landOn) window.location.hash = open.landOn;
-  }, [setCleanup]);
+  const patchCounts = useCallback((number: number, count: { total: number; old: number }) => {
+    setOverview((o) => {
+      const was = o?.counts[number];
+      if (!o || (was && was.total === count.total && was.old === count.old)) return o;
+      return { ...o, counts: { ...o.counts, [number]: count } };
+    });
+  }, []);
 
   const api_ = useMemo<SessionApi>(
     () => ({
@@ -217,6 +221,8 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
       pinned,
       setPinned,
       refresh,
+      patchCounts,
+      focusRef,
       start,
       finish,
       go,
@@ -224,12 +230,12 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
       mark,
       openGeneral: () => setDialog('general'),
       openExport: () => setDialog('export'),
-      openCleanup: () => setCleanup({ landOn: null }),
+      openCleanup: () => setCleanup(true),
       copy,
       writeMd,
       drafts,
     }),
-    [overview, session, counts, index, pinned, setPinned, refresh, start, finish, go, step, mark, copy, writeMd, drafts, setCleanup],
+    [overview, session, counts, index, pinned, setPinned, refresh, start, finish, go, step, mark, copy, writeMd, drafts, patchCounts, focusRef],
   );
 
   return (
@@ -239,8 +245,8 @@ export function SessionProvider({ descriptor, children }: { descriptor: Descript
         <SessionDialogs
           dialog={dialog}
           onCloseDialog={() => setDialog(null)}
-          cleanup={cleanup !== null}
-          onCloseCleanup={closeCleanup}
+          cleanup={cleanup}
+          onCloseCleanup={() => setCleanup(false)}
           onCleaned={(next) => setOverview((o) => (o ? { ...o, counts: next } : o))}
         />
       )}

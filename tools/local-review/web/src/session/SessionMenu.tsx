@@ -19,7 +19,7 @@ import {
 import { PR_COMPOSE_HASH } from '../lib/hash';
 import { displayBinding } from '../lib/keybindings';
 import { SessionPrList } from './SessionPrList';
-import { neighbourIndex } from './sessionLogic';
+import { freshCount, neighbourIndex, prCount } from './sessionLogic';
 import { useSessionView } from './useSessionView';
 import './session.css';
 
@@ -31,13 +31,14 @@ import './session.css';
 export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: string }) {
   const view = useSessionView();
   const [open, setOpen] = useState(false);
-  const { session, index, totals, done, counts } = view;
+  const { session, index, done, counts } = view;
   if (!session || index < 0) return null;
 
   const pr = session.prs[index];
   const prev = neighbourIndex(session, index, -1);
   const next = neighbourIndex(session, index, 1);
-  const hasComments = (totals[pr.number] ?? 0) > 0;
+  // Comments written in this session settle the PR's status; a mark is for the rest.
+  const hasComments = freshCount(counts[pr.number]) > 0;
   const mark = session.marks[pr.number];
   const oldTotal = session.prs.reduce((sum, p) => sum + (counts[p.number]?.old ?? 0), 0);
   const hint = (key: string) => (key ? ` (${displayBinding(key)})` : '');
@@ -62,9 +63,11 @@ export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: st
         onOpen={() => setOpen(true)}
         onClose={() => setOpen(false)}
         width="medium"
+        anchorRef={view.focusRef}
         renderAnchor={(props) => (
-          <Button {...props} size="small" trailingAction={TriangleDownIcon} title="Сессия ревью">
-            Сессия {index + 1}/{session.prs.length}
+          <Button {...props} size="small" trailingAction={TriangleDownIcon} title="Сессия ревью" aria-label={`Сессия ${index + 1}/${session.prs.length}`}>
+            <span className="rv-sess-word">Сессия </span>
+            {index + 1}/{session.prs.length}
           </Button>
         )}
       >
@@ -89,7 +92,9 @@ export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: st
             <Button
               size="small"
               leadingVisual={CheckIcon}
+              className="rv-sess-mark rv-sess-mark--lgtm"
               aria-pressed={mark === 'lgtm'}
+              title={mark === 'lgtm' ? 'Нажми ещё раз, чтобы снять отметку' : undefined}
               disabled={hasComments}
               onClick={act(() => view.mark('lgtm'))}
             >
@@ -98,7 +103,9 @@ export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: st
             <Button
               size="small"
               leadingVisual={SkipIcon}
+              className="rv-sess-mark rv-sess-mark--skip"
               aria-pressed={mark === 'skip'}
+              title={mark === 'skip' ? 'Нажми ещё раз, чтобы снять отметку' : undefined}
               disabled={hasComments}
               onClick={act(() => view.mark('skip'))}
             >
@@ -108,7 +115,11 @@ export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: st
           <div className="rv-hint rv-sess-menu__note">
             {hasComments
               ? `У #${pr.number} есть замечания — отметка не нужна`
-              : `Отметка ставится на #${pr.number} и переходит к следующему`}
+              : mark
+                ? `#${pr.number} отмечен — повторный клик снимает отметку`
+                : next === null
+                  ? `Отметка ставится на #${pr.number}`
+                  : `Отметка ставится на #${pr.number} и переходит к следующему`}
           </div>
 
           <ActionList>
@@ -127,7 +138,7 @@ export function SessionMenu({ prevKey, nextKey }: { prevKey: string; nextKey: st
                 <CopyIcon />
               </ActionList.LeadingVisual>
               Скопировать всю сессию
-              <ActionList.TrailingVisual>{session.prs.length} PR</ActionList.TrailingVisual>
+              <ActionList.TrailingVisual>{prCount(session.prs.length)}</ActionList.TrailingVisual>
             </ActionList.Item>
             <ActionList.Item onSelect={act(view.openExport)}>
               <ActionList.LeadingVisual>

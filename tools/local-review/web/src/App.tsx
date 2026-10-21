@@ -14,7 +14,7 @@ import { readWrap, writeWrap } from './lib/wrap';
 import { readDiffLayout, resolveDiffLayout, toggleDiffLayout, writeDiffLayout, type DiffLayout } from './lib/diffLayout';
 import { ReviewProvider } from './review/ReviewContext';
 import { SessionProvider } from './session/SessionProvider';
-import { SessionKeys, SessionZenPill } from './session/SessionChrome';
+import { SessionCountsSync, SessionKeys, SessionZenPill } from './session/SessionChrome';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
 import { LocalPicker } from './screens/LocalPicker';
@@ -239,6 +239,7 @@ export function App({ theme, onTheme }: Props) {
 
   const shell = (
     <div className={zenActive ? 'rv-app is-zen' : 'rv-app'}>
+      <SessionCountsSync />
       <SessionKeys prevKey={keys.sessionPrev} nextKey={keys.sessionNext} />
       {!zenActive && (
         <AppHeader

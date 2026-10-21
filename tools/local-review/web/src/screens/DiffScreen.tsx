@@ -171,6 +171,27 @@ type Props = {
   conversationReload: number;
 };
 
+/**
+ * The pinned session list is 280px wide, taken from the diff. Next to the file
+ * tree it leaves the diff about 270px at 1280px when another right-hand panel
+ * is open too, and nothing at all on a narrow window, so it steps aside then —
+ * the pin preference stays as it was, and the list comes back with the room.
+ */
+const PINNED_MIN_WIDTH = 1100;
+
+function useWideWindow(): boolean {
+  const query = `(min-width: ${PINNED_MIN_WIDTH}px)`;
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const onChange = () => setWide(media.matches);
+    onChange();
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [query]);
+  return wide;
+}
+
 // Stable empties, so the filtering memo doesn't rerun while state is loading.
 const NO_FILES: FileEntry[] = [];
 const NO_ORPHANS: OrphanFile[] = [];
@@ -229,6 +250,7 @@ export function DiffScreen({
     const fileOpened = before.activeFile !== activeFile && !conversationFromHash(window.location.hash);
     if (fileOpened || before.reveal !== reveal) onConversation(false);
   }, [conversationOpen, activeFile, reveal, onConversation]);
+  const wideWindow = useWideWindow();
   // Above both panes: the sidebar edits the filter, the feed of all files obeys it.
   const filter = useFileFilter(state?.files ?? NO_FILES, state?.orphanFiles ?? NO_ORPHANS);
 
@@ -430,8 +452,9 @@ export function DiffScreen({
         ) : (
           commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />
         )}
-        {/* The session's list pinned on the right; Zen shows nothing but the diff. */}
-        {!zen && <SessionPanel />}
+        {/* The session's list pinned on the right; Zen shows nothing but the diff,
+            and the comments or navigation panel already has that side. */}
+        {!zen && wideWindow && !commentsPanel && !navPanel && <SessionPanel />}
         {loading && (
           <div className="rv-reload" role="status">
             <div className="rv-reload__bar" />

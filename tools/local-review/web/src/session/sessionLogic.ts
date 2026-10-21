@@ -101,29 +101,47 @@ export function shortTitle(title: string): string {
   return short || title;
 }
 
-/** What the reviewer has done with a PR of the session. Comments outrank marks, marks outrank having looked. */
-export type PrStatus = 'comments' | 'lgtm' | 'skip' | 'seen' | 'todo';
+/**
+ * What the reviewer has done with a PR of the session. Comments written in
+ * this session outrank a mark, a mark outranks comments left from before the
+ * session, and those outrank having merely looked.
+ */
+export type PrStatus = 'comments' | 'lgtm' | 'skip' | 'old' | 'seen' | 'todo';
+
+/** Comments in a PR's store, and how many of them were written before the session began. */
+export type PrCount = { total: number; old: number };
+
+/** Comments written during the session: the only ones that say the reviewer has been at work. */
+export function freshCount(count: PrCount | undefined): number {
+  return count ? Math.max(count.total - count.old, 0) : 0;
+}
 
 /**
- * A PR with comments is «есть замечания» whatever was marked on it: the
- * comments are exported, so the status says so. The mark stays on record and
- * shows again if the comments are deleted.
+ * A PR with comments of this session is «есть замечания» whatever was marked
+ * on it: the comments are exported, so the status says so. Comments that
+ * predate the session are not the reviewer's work of this session: they do
+ * not make the PR reviewed, and the status says they are there (they are
+ * exported unless deleted). A mark stays on record and shows again if the
+ * comments are deleted.
  */
-export function statusOf(session: ReviewSession, number: number, commentCount: number): PrStatus {
-  if (commentCount > 0) return 'comments';
+export function statusOf(session: ReviewSession, number: number, count: PrCount | undefined): PrStatus {
+  if (freshCount(count) > 0) return 'comments';
   const mark = session.marks[number];
   if (mark) return mark;
+  if ((count?.old ?? 0) > 0) return 'old';
   return session.visited[number] ? 'seen' : 'todo';
 }
 
-export function statusLabel(status: PrStatus, commentCount: number): string {
+export function statusLabel(status: PrStatus, count: PrCount | undefined, visited = false): string {
   switch (status) {
     case 'comments':
-      return `есть замечания · ${commentCount}`;
+      return `есть замечания · ${freshCount(count)}`;
     case 'lgtm':
       return 'без замечаний';
     case 'skip':
       return 'пропущен';
+    case 'old':
+      return `${visited ? 'открыт' : 'не открыт'} · есть старые комментарии (${count?.old ?? 0})`;
     case 'seen':
       return 'открыт, не отмечен';
     default:
@@ -131,19 +149,11 @@ export function statusLabel(status: PrStatus, commentCount: number): string {
   }
 }
 
-/** Comments per PR number. The open PR's count is the live one: the server's was read before the last comment. */
-export function commentTotals(counts: SessionCounts, live?: { number: number; total: number } | null): Record<number, number> {
-  const out: Record<number, number> = {};
-  for (const [n, c] of Object.entries(counts)) out[Number(n)] = c.total;
-  if (live) out[live.number] = live.total;
-  return out;
-}
-
-/** PRs the reviewer is done with: commented on, or marked either way. */
-export function doneCount(session: ReviewSession, totals: Record<number, number>): number {
+/** PRs the reviewer is done with: commented on in this session, or marked. */
+export function doneCount(session: ReviewSession, counts: SessionCounts): number {
   return session.prs.filter((pr) => {
-    const status = statusOf(session, pr.number, totals[pr.number] ?? 0);
-    return status !== 'seen' && status !== 'todo';
+    const status = statusOf(session, pr.number, counts[pr.number]);
+    return status === 'comments' || status === 'lgtm' || status === 'skip';
   }).length;
 }
 
@@ -186,4 +196,38 @@ export function cleanupTotal(rows: CleanupRow[], kept: ReadonlySet<number>): num
 /** The badge on a search row that already has comments on it. */
 export function oldBadge(count: number): string {
   return `${count} комм. из прошлой сессии`;
+}
+
+/** The noun after a count of PRs: «1 PR», «2 PR-а», «5 PR-ов» (the same rule as lib/export.js prCount). */
+export function prCount(n: number): string {
+  const last = n % 10;
+  const tens = n % 100;
+  if (last === 1 && tens !== 11) return `${n} PR`;
+  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) return `${n} PR-а`;
+  return `${n} PR-ов`;
+}
+
+/** The same count after «из»: «из 1 PR», «из 5 PR-ов» — the genitive has no «-а». */
+export function prCountOf(n: number): string {
+  return n % 10 === 1 && n % 100 !== 11 ? `${n} PR` : `${n} PR-ов`;
+}
+
+/**
+ * Which of the found PRs the search asks about, and since when. A PR already in
+ * the running session has had comments written during it: only those older
+ * than the session count as «from a previous session». Every other PR has
+ * nothing but older comments, so all of them count (no `before`).
+ */
+export function oldCommentScopes(
+  session: ReviewSession | null,
+  repo: { host: string; owner: string; repo: string },
+  numbers: number[],
+): { before: string | undefined; numbers: number[] }[] {
+  const inSession = session && session.host === repo.host && session.owner === repo.owner && session.repo === repo.repo;
+  const mine = inSession ? numbers.filter((n) => session.prs.some((p) => p.number === n)) : [];
+  const others = numbers.filter((n) => !mine.includes(n));
+  const scopes: { before: string | undefined; numbers: number[] }[] = [];
+  if (others.length) scopes.push({ before: undefined, numbers: others });
+  if (mine.length && session) scopes.push({ before: session.startedAt, numbers: mine });
+  return scopes;
 }

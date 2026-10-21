@@ -200,8 +200,9 @@
 
 .rv-row--pr .rv-row__main {
   align-items: flex-start;
-  /* The checkbox before it brings its own margin; the gap is the row's 8px. */
-  padding-left: 0;
+  /* The checkbox before it brings its own margin; a little room keeps the
+     focus ring off the PR icon. */
+  padding-left: var(--base-size-6);
 }
 
 /* Review session: the checkbox at the start of a result row, a picked row,

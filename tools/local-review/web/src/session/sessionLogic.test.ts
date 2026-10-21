@@ -4,12 +4,15 @@ import {
   allOrder,
   cleanupRows,
   cleanupTotal,
-  commentTotals,
   descriptorOf,
   doneCount,
+  freshCount,
   neighbourIndex,
+  oldCommentScopes,
   pickable,
   positionOf,
+  prCount,
+  prCountOf,
   prKey,
   sessionIndex,
   sessionOrder,
@@ -164,51 +167,105 @@ const session = (over: Partial<ReviewSession> = {}): ReviewSession => ({
   ...over,
 });
 
+const c = (total: number, old = 0) => ({ total, old });
+
 describe('statusOf', () => {
   it('is «не открыт» before the PR is opened and «открыт» after', () => {
-    expect(statusOf(session(), 82, 0)).toBe('todo');
-    expect(statusOf(session(), 84, 0)).toBe('seen');
+    expect(statusOf(session(), 82, c(0))).toBe('todo');
+    expect(statusOf(session(), 84, c(0))).toBe('seen');
+    expect(statusOf(session(), 82, undefined)).toBe('todo');
   });
 
   it('shows a mark', () => {
-    expect(statusOf(session({ marks: { 82: 'lgtm', 80: 'skip' } }), 82, 0)).toBe('lgtm');
-    expect(statusOf(session({ marks: { 82: 'lgtm', 80: 'skip' } }), 80, 0)).toBe('skip');
+    expect(statusOf(session({ marks: { 82: 'lgtm', 80: 'skip' } }), 82, c(0))).toBe('lgtm');
+    expect(statusOf(session({ marks: { 82: 'lgtm', 80: 'skip' } }), 80, c(0))).toBe('skip');
   });
 
-  it('puts comments over a mark, and a mark over having looked', () => {
-    expect(statusOf(session({ marks: { 84: 'lgtm' } }), 84, 2)).toBe('comments');
-    expect(statusOf(session({ marks: { 84: 'skip' } }), 84, 0)).toBe('skip');
+  it('puts comments of this session over a mark, and a mark over having looked', () => {
+    expect(statusOf(session({ marks: { 84: 'lgtm' } }), 84, c(2))).toBe('comments');
+    expect(statusOf(session({ marks: { 84: 'skip' } }), 84, c(0))).toBe('skip');
   });
 
   it('brings the mark back once the comments are gone', () => {
     const s = session({ marks: { 84: 'lgtm' } });
-    expect(statusOf(s, 84, 1)).toBe('comments');
-    expect(statusOf(s, 84, 0)).toBe('lgtm');
+    expect(statusOf(s, 84, c(1))).toBe('comments');
+    expect(statusOf(s, 84, c(0))).toBe('lgtm');
+  });
+
+  it('does not take comments from before the session for the reviewer\'s work', () => {
+    expect(statusOf(session(), 82, c(3, 3))).toBe('old');
+    expect(statusOf(session(), 84, c(3, 3))).toBe('old');
+    // one written since: the PR has been worked on
+    expect(statusOf(session(), 82, c(4, 3))).toBe('comments');
+    // a mark made on such a PR is the reviewer's word and shows
+    expect(statusOf(session({ marks: { 82: 'lgtm' } }), 82, c(3, 3))).toBe('lgtm');
+  });
+});
+
+describe('freshCount', () => {
+  it('is what was written since the session began, never negative', () => {
+    expect(freshCount(c(5, 2))).toBe(3);
+    expect(freshCount(c(1, 3))).toBe(0);
+    expect(freshCount(undefined)).toBe(0);
   });
 });
 
 describe('statusLabel', () => {
-  it('words every status, with the count for comments', () => {
-    expect(statusLabel('comments', 3)).toBe('есть замечания · 3');
-    expect(statusLabel('lgtm', 0)).toBe('без замечаний');
-    expect(statusLabel('skip', 0)).toBe('пропущен');
-    expect(statusLabel('seen', 0)).toBe('открыт, не отмечен');
-    expect(statusLabel('todo', 0)).toBe('не открыт');
+  it('words every status, with the fresh count for comments', () => {
+    expect(statusLabel('comments', c(5, 2))).toBe('есть замечания · 3');
+    expect(statusLabel('lgtm', c(0))).toBe('без замечаний');
+    expect(statusLabel('skip', c(0))).toBe('пропущен');
+    expect(statusLabel('seen', c(0))).toBe('открыт, не отмечен');
+    expect(statusLabel('todo', c(0))).toBe('не открыт');
+  });
+
+  it('says that old comments are there, and whether the PR was opened', () => {
+    expect(statusLabel('old', c(3, 3))).toBe('не открыт · есть старые комментарии (3)');
+    expect(statusLabel('old', c(3, 3), true)).toBe('открыт · есть старые комментарии (3)');
   });
 });
 
-describe('commentTotals and doneCount', () => {
-  const counts = { 84: { total: 1, old: 1 }, 82: { total: 0, old: 0 }, 80: { total: 0, old: 0 } };
-
-  it('replaces the open PR\'s count with the live one', () => {
-    expect(commentTotals(counts, { number: 84, total: 4 })).toEqual({ 84: 4, 82: 0, 80: 0 });
-    expect(commentTotals(counts)).toEqual({ 84: 1, 82: 0, 80: 0 });
+describe('doneCount', () => {
+  it('counts a PR as done when it has comments of this session or a mark, not when it was merely opened', () => {
+    const s = session({ marks: { 82: 'lgtm' }, visited: { 84: true, 82: true, 80: true } });
+    expect(doneCount(s, { 84: c(1), 82: c(0), 80: c(0) })).toBe(2);
+    expect(doneCount(s, { 84: c(0), 82: c(0), 80: c(0) })).toBe(1);
   });
 
-  it('counts a PR as done when it has comments or a mark, not when it was merely opened', () => {
-    const s = session({ marks: { 82: 'lgtm' }, visited: { 84: true, 82: true, 80: true } });
-    expect(doneCount(s, commentTotals(counts))).toBe(2);
-    expect(doneCount(s, commentTotals(counts, { number: 84, total: 0 }))).toBe(1);
+  it('does not count comments from before the session: a new session starts at nothing', () => {
+    const fresh = session({ visited: { 84: true } });
+    expect(doneCount(fresh, { 84: c(1, 1), 82: c(3, 3), 80: c(0) })).toBe(0);
+  });
+});
+
+describe('prCount and prCountOf', () => {
+  it('follows the Russian rule for 1 / 2–4 / the rest, teens included', () => {
+    expect([1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 111].map(prCount)).toEqual([
+      '1 PR', '2 PR-а', '4 PR-а', '5 PR-ов', '11 PR-ов', '12 PR-ов', '14 PR-ов', '21 PR', '22 PR-а', '25 PR-ов', '111 PR-ов',
+    ]);
+  });
+
+  it('has no «-а» in the genitive after «из»', () => {
+    expect([1, 2, 5, 11, 21].map(prCountOf)).toEqual(['1 PR', '2 PR-ов', '5 PR-ов', '11 PR-ов', '21 PR']);
+  });
+});
+
+describe('oldCommentScopes', () => {
+  const repo = { host: 'github.com', owner: 'o', repo: 'r' };
+
+  it('asks about every comment when no session runs', () => {
+    expect(oldCommentScopes(null, repo, [1, 2])).toEqual([{ before: undefined, numbers: [1, 2] }]);
+  });
+
+  it('limits PRs of the running session to what predates it, and takes all of the others', () => {
+    expect(oldCommentScopes(session(), repo, [84, 1, 82])).toEqual([
+      { before: undefined, numbers: [1] },
+      { before: '2026-10-21T10:00:00.000Z', numbers: [84, 82] },
+    ]);
+  });
+
+  it('knows nothing of a session over another repository', () => {
+    expect(oldCommentScopes(session(), { ...repo, repo: 'other' }, [84])).toEqual([{ before: undefined, numbers: [84] }]);
   });
 });
 
