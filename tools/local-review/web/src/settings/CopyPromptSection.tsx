@@ -14,7 +14,7 @@ export function CopyPromptSection({ value, onChange }: { value: string; onChange
   return (
     <SettingsSection
       title="Промпт при копировании"
-      description="Добавляется после комментариев — и в буфер, и в .md-файл. Пусто — экспортируются только комментарии."
+      description="Добавляется после комментариев — и в буфер, и в .md-файл. В экспорте сессии — в конце раздела каждого PR-а с замечаниями. Пусто — экспортируются только комментарии."
     >
       <Textarea
         block

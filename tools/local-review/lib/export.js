@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { isGeneralComment } = require('./store');
 
-const GENERAL_HEADING = '## Общие комментарии';
-const CODE_HEADING = '## Комментарии к коду';
+const GENERAL_TITLE = 'Общие комментарии';
+const CODE_TITLE = 'Комментарии к коду';
 
 /**
  * `path:L42` for a single line, `path:L42-L50` for a range, bare `path` for a
@@ -82,8 +82,15 @@ function bodyOf(comment) {
  * `anchor\ntext` blocks, nothing else. General comments, when there are any,
  * come first under their own heading, oldest first, and the code comments
  * follow under a second heading.
+ *
+ * A review session's export puts a PR's comments under the PR's own heading,
+ * so it asks for two things: `level`, the depth of the headings (3 = `###`
+ * under a `## PR` heading), and `sectioned`, which keeps the code comments
+ * under their heading even when there are no general ones — a PR's section is
+ * handed to an agent on its own, and the heading tells it what the blocks are.
  */
-function renderMarkdown(comments) {
+function renderMarkdown(comments, { level = 2, sectioned = false } = {}) {
+  const hashes = '#'.repeat(level);
   const general = comments
     .filter(isGeneralComment)
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
@@ -96,11 +103,12 @@ function renderMarkdown(comments) {
     })
     .join('\n\n');
 
-  if (!general.length) return codeBlocks + (code.length ? '\n' : '');
+  if (!general.length && !sectioned) return codeBlocks + (code.length ? '\n' : '');
 
-  const sections = [`${GENERAL_HEADING}\n\n${general.map(bodyOf).join('\n\n')}`];
-  if (code.length) sections.push(`${CODE_HEADING}\n\n${codeBlocks}`);
-  return sections.join('\n\n') + '\n';
+  const sections = [];
+  if (general.length) sections.push(`${hashes} ${GENERAL_TITLE}\n\n${general.map(bodyOf).join('\n\n')}`);
+  if (code.length) sections.push(`${hashes} ${CODE_TITLE}\n\n${codeBlocks}`);
+  return sections.length ? sections.join('\n\n') + '\n' : '';
 }
 
 /**
@@ -116,6 +124,91 @@ function exportMarkdown(comments, prompt) {
   return markdown ? `${markdown}\n${tail}\n` : `${tail}\n`;
 }
 
+function promptOf(value) {
+  return String(value || '').replace(/\r\n/g, '\n').trim();
+}
+
+const SHORT_SHA = 7;
+
+/** «1 PR», «2 PR-а», «5 PR-ов»: the noun after a count, by the Russian rule for 1 / 2–4 / the rest. */
+function prCount(n) {
+  const last = n % 10;
+  const tens = n % 100;
+  if (last === 1 && tens !== 11) return `${n} PR`;
+  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) return `${n} PR-а`;
+  return `${n} PR-ов`;
+}
+
+/** Why a PR with no comments is in the export at all: what the reviewer said about it. */
+const NO_COMMENTS_LINE = {
+  lgtm: 'Без замечаний (LGTM).',
+  skip: 'Пропущен — не трогать.',
+  none: 'Не отмечен — не трогать.',
+};
+
+function prUrl(session, pr) {
+  return `https://${session.host}/${session.owner}/${session.repo}/pull/${pr.number}`;
+}
+
+/**
+ * One PR of a session: its heading, branch and head, the link, then either
+ * its comments with the copy prompt after them, or one line saying why there
+ * are none. `level` is the depth of the PR heading (2 in a whole-session
+ * export, 1 when the PR is exported alone); the comment headings sit below it.
+ * Status wins over marks: a PR with comments is exported with them whatever
+ * was marked on it.
+ */
+function renderSessionPr(session, pr, comments, { level, copyPrompt }) {
+  const where = [];
+  if (pr.headRefName) where.push(`Ветка: ${pr.headRefName}`);
+  if (pr.headSha) where.push(`head: ${String(pr.headSha).slice(0, SHORT_SHA)}`);
+  const head = [`${'#'.repeat(level)} PR #${pr.number} — ${pr.title}`];
+  if (where.length) head.push(where.join(' · '));
+  head.push(prUrl(session, pr));
+  const parts = [head.join('\n')];
+
+  if (comments.length) {
+    parts.push(renderMarkdown(comments, { level: level + 1, sectioned: true }).trimEnd());
+    const tail = promptOf(copyPrompt);
+    if (tail) parts.push(tail);
+  } else {
+    const mark = session.marks && session.marks[pr.number];
+    parts.push(NO_COMMENTS_LINE[mark] || NO_COMMENTS_LINE.none);
+  }
+  return parts;
+}
+
+/**
+ * The text of a review session — the clipboard and the .md file are both this.
+ * `scope: 'all'` is the whole session: a title, the «Для оркестратора»
+ * section (the session's general comments, oldest first, then the
+ * orchestrator prompt; left out when both are empty), and a section per PR in
+ * session order. `scope: 'pr'` is one PR's section alone, one heading level
+ * up and with no orchestrator part — it can be handed to an agent as it is.
+ * `commentsByPr` maps a PR number to the comments of its own store.
+ */
+function exportSession({ session, scope, number, commentsByPr, copyPrompt, orchestratorPrompt }) {
+  if (scope === 'pr') {
+    const pr = session.prs.find((p) => p.number === number);
+    if (!pr) return '';
+    return renderSessionPr(session, pr, commentsByPr[pr.number] || [], { level: 1, copyPrompt }).join('\n\n') + '\n';
+  }
+
+  const parts = [`# Ревью: ${prCount(session.prs.length)} · ${session.owner}/${session.repo}`];
+  const forOrchestrator = (session.general || [])
+    .slice()
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .map((g) => promptOf(g.text))
+    .filter(Boolean);
+  const prompt = promptOf(orchestratorPrompt);
+  if (prompt) forOrchestrator.push(prompt);
+  if (forOrchestrator.length) parts.push(`## Для оркестратора\n\n${forOrchestrator.join('\n\n')}`);
+  for (const pr of session.prs) {
+    parts.push(...renderSessionPr(session, pr, commentsByPr[pr.number] || [], { level: 2, copyPrompt }));
+  }
+  return parts.join('\n\n') + '\n';
+}
+
 function stamp(date) {
   const d = date || new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -128,13 +221,22 @@ function stamp(date) {
 /**
  * Writes review-<YYYY-MM-DD-HHmm>.md at the repo root. Read-only w.r.t. git.
  * Takes the finished markdown, so the file and the clipboard cannot drift
- * apart: both come from the same exportMarkdown() call site.
+ * apart: both come from the same exportMarkdown() call site. A session's
+ * export is written the same way under its own prefix (`session`).
  */
-function writeMarkdownFile(repoRoot, markdown, date) {
-  const name = `review-${stamp(date)}.md`;
-  const abs = path.join(repoRoot, name);
-  fs.writeFileSync(abs, markdown, 'utf8');
-  return { name, path: abs };
+function writeMarkdownFile(repoRoot, markdown, date, prefix = 'review') {
+  // The stamp is to the minute: a second export in the same minute is a new
+  // file (`…-2.md`, `…-3.md`), never an overwrite of the first one.
+  for (let n = 1; ; n += 1) {
+    const name = `${prefix}-${stamp(date)}${n > 1 ? `-${n}` : ''}.md`;
+    const abs = path.join(repoRoot, name);
+    try {
+      fs.writeFileSync(abs, markdown, { encoding: 'utf8', flag: 'wx' });
+      return { name, path: abs };
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+    }
+  }
 }
 
-module.exports = { anchorOf, commitLineOf, quoteOf, renderMarkdown, exportMarkdown, writeMarkdownFile, sortComments, stamp };
+module.exports = { anchorOf, commitLineOf, quoteOf, renderMarkdown, exportMarkdown, exportSession, prCount, writeMarkdownFile, sortComments, stamp };

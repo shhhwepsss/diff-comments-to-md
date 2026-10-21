@@ -267,8 +267,30 @@ class CommentStore {
     return removed;
   }
 
+  /** How many comments were written before `iso` — the ones a review session did not write. */
+  countBefore(iso) {
+    const limit = Date.parse(iso);
+    return this.data.comments.filter((c) => Date.parse(c.createdAt) < limit).length;
+  }
+
   /**
-   * The one and only bulk delete. Callers must pass confirm:true explicitly.
+   * The second bulk delete, for a review session's cleanup: exactly the
+   * comments written before `iso`, which the reviewer picked in a dialog that
+   * said so. Comments written since stay, and so do the viewed marks.
+   */
+  removeBefore(iso) {
+    const limit = Date.parse(iso);
+    const kept = this.data.comments.filter((c) => !(Date.parse(c.createdAt) < limit));
+    const removed = this.data.comments.length - kept.length;
+    if (removed > 0) {
+      this.data.comments = kept;
+      this.save();
+    }
+    return removed;
+  }
+
+  /**
+   * The bulk delete of the whole store. Callers must pass confirm:true explicitly.
    * Only comments go: viewed marks are not comments and stay.
    */
   clearAll() {

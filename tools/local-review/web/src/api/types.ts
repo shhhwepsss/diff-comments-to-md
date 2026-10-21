@@ -420,6 +420,8 @@ export type DiffLayout = 'unified' | 'split';
 export type Settings = {
   /** Appended after the comments in both exports; empty = comments alone. */
   copyPrompt: string;
+  /** Only in a review session's export: follows the session's general comments in «Для оркестратора». */
+  orchestratorPrompt: string;
   /** Where the `.local-review/` ignore line goes: repo root .gitignore or the machine-wide one. */
   gitignoreTarget: 'project' | 'global';
   /** Shortcut per action, e.g. `{ zen: 'Ctrl+Shift+F' }`; '' means not bound. */
@@ -458,6 +460,8 @@ export type PrItem = {
   title: string;
   author: string | null;
   headRefName: string | null;
+  /** The head commit; known for a search in one repository, null across repositories. */
+  headSha: string | null;
   baseRefName: string | null;
   state: string;
   isDraft: boolean;
@@ -470,4 +474,51 @@ export type PrSearchResponse = {
   items: PrItem[];
   homeDir: string;
   storedPrs: number;
+  /** Where review sessions are kept, and how many are there (finished ones included). */
+  sessionsDir: string;
+  storedSessions: number;
 };
+
+/** What the reviewer said about a PR of a session without writing a comment. */
+export type SessionMark = 'lgtm' | 'skip';
+
+export type SessionPr = {
+  number: number;
+  title: string;
+  headRefName: string | null;
+  headSha: string | null;
+};
+
+/** A remark for the orchestrator agent, about the session as a whole. */
+export type SessionGeneralComment = {
+  id: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** lib/review-session.js: a pass over several PRs of one repository. */
+export type ReviewSession = {
+  id: string;
+  host: string;
+  owner: string;
+  repo: string;
+  prs: SessionPr[];
+  /** Index into `prs` of the PR the reviewer is on. */
+  current: number;
+  /** Keyed by PR number. */
+  marks: Record<string, SessionMark>;
+  visited: Record<string, true>;
+  general: SessionGeneralComment[];
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+/** Per PR number: comments in its store, and how many of them predate the session. */
+export type SessionCounts = Record<string, { total: number; old: number }>;
+
+export type SessionOverview = { session: ReviewSession | null; counts: SessionCounts };
+
+export type SessionPrInput = { number: number; title?: string; headRefName?: string | null; headSha?: string | null };
+
+export type SessionExportScope = 'all' | 'pr';

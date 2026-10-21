@@ -45,6 +45,8 @@ export const KEYBINDING_ACTIONS = [
   { id: 'callHierarchy', label: 'Иерархия вызовов (слово под курсором)' },
   { id: 'navBack', label: 'Назад по переходам' },
   { id: 'navForward', label: 'Вперёд по переходам' },
+  { id: 'sessionPrev', label: 'Сессия ревью: предыдущий PR' },
+  { id: 'sessionNext', label: 'Сессия ревью: следующий PR' },
 ] as const;
 
 export type KeybindingAction = (typeof KEYBINDING_ACTIONS)[number]['id'];
@@ -65,6 +67,9 @@ export const KEYBINDING_DEFAULTS: Keybindings = {
   callHierarchy: 'Alt+Shift+H',
   navBack: 'Alt+Left',
   navForward: 'Alt+Right',
+  // Alt+←/→ already walk the history of code jumps; the session's PRs get Shift on top.
+  sessionPrev: 'Alt+Shift+Left',
+  sessionNext: 'Alt+Shift+Right',
 };
 
 const MODIFIERS: Record<string, keyof Omit<Binding, 'key'>> = {

@@ -25,6 +25,7 @@ import type { DiffLayout } from '../lib/diffLayout';
 import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview, type Review } from '../review/ReviewContext';
 import { generalComments } from '../review/generalComments';
+import { SessionMenu } from '../session/SessionMenu';
 import { GeneralComments } from './GeneralComments';
 import { TabbedSelect } from './TabbedSelect';
 import './header.css';
@@ -268,6 +269,9 @@ type Props = ViewProps & {
   onConversation: (open: boolean) => void;
   /** «Перечитать PR» re-reads an opened conversation as well. */
   onReloadConversation: () => void;
+  /** The shortcuts of the session's previous / next PR, named in the buttons' hints. */
+  sessionPrevKey: string;
+  sessionNextKey: string;
 };
 
 export function AppHeader({
@@ -278,6 +282,8 @@ export function AppHeader({
   conversation,
   onConversation,
   onReloadConversation,
+  sessionPrevKey,
+  sessionNextKey,
   ...view
 }: Props) {
   const review = useOptionalReview();
@@ -390,6 +396,8 @@ export function AppHeader({
         <div className="rv-header__spacer" />
 
         <div className="rv-header__actions">
+          {/* Only for a PR of the running review session; nothing otherwise. */}
+          <SessionMenu prevKey={sessionPrevKey} nextKey={sessionNextKey} />
           {/* Opens the panel beside the diff; the count stays in the label. */}
           <Button
             size="small"
@@ -401,7 +409,7 @@ export function AppHeader({
             // the click turns it off, and DiffScreen takes that as «show it».
             onClick={() => onCommentsPanel(!commentsPanel)}
           >
-            Комментарии <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
+            <span className="rv-header__count-word">Комментарии</span> <CounterLabel scheme={count ? 'primary' : undefined}>{count}</CounterLabel>
           </Button>
           {review.commitsMode && review.outsideCount > 0 && (
             <button

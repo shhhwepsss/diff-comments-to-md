@@ -68,7 +68,7 @@ async function create(req, res, ctx, url) {
   sendJson(res, 201, { comment });
 }
 
-/** The one and only bulk delete. Callers must pass confirm:true explicitly. */
+/** Bulk delete of a whole store. Callers must pass confirm:true explicitly. */
 async function clearAll(req, res, ctx, url) {
   const store = storeOf(ctx, url);
   const body = await readJsonBody(req);

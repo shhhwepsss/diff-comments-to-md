@@ -16,6 +16,7 @@ import type {
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
 import { copyToClipboard } from '../lib/clipboard';
+import { COMMENTS_CHANGED_EVENT } from '../lib/commentsEvent';
 import { conversationFromHash, descriptorFromHash, fileFromHash, hashFor, lineFromHash, navigationFor, viewHash } from '../lib/hash';
 import { LspSession } from '../lsp/session';
 import { NavHistory, type StorageLike } from '../nav/history';
@@ -605,6 +606,13 @@ export function ReviewProvider({
     const data = await api.comments(descriptor);
     setComments(data.comments);
   }, [descriptor]);
+
+  // Comments deleted from outside this review (a session's cleanup).
+  useEffect(() => {
+    const onChanged = () => void refreshComments().catch(() => {});
+    window.addEventListener(COMMENTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(COMMENTS_CHANGED_EVENT, onChanged);
+  }, [refreshComments]);
 
   const reload = useCallback(() => {
     if (isCommitsMode(descriptorRef.current)) {

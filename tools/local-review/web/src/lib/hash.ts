@@ -87,6 +87,20 @@ export function hashFor(d: Descriptor | null): string {
   return `#/pr/${d.host}/${d.owner}/${d.repo}/${d.number}`;
 }
 
+/**
+ * `#/pr?compose=1`: the PR search opened to change the line-up of the running
+ * review session — its PRs ticked in their order, and starting again carries
+ * the session over instead of beginning a new one. It is in the address, not
+ * in memory, so a reload or a stray click on the brand does not lose which of
+ * the two the reviewer is doing.
+ */
+export const PR_COMPOSE_HASH = '#/pr?compose=1';
+
+export function composeFromHash(hash: string): boolean {
+  const parts = routeParts(hash);
+  return parts.length === 1 && parts[0] === 'pr' && new URLSearchParams(splitHash(hash).query).get('compose') === '1';
+}
+
 /** `view=conversation`: the PR's conversation page is open instead of its diff. */
 const CONVERSATION = 'conversation';
 

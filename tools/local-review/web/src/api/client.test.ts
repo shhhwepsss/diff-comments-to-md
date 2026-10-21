@@ -48,12 +48,19 @@ describe('commitsListDescriptor', () => {
 describe('normalizeSettings', () => {
   const full = {
     copyPrompt: '',
+    orchestratorPrompt: '',
     gitignoreTarget: 'project' as const,
     keybindings: { ...KEYBINDING_DEFAULTS },
     defaultViewMode: 'single' as const,
     defaultDiffLayout: 'split' as const,
     renderModeForAllFiles: false,
   };
+
+  it("falls back to an empty orchestrator prompt when an older server sends none", () => {
+    const { orchestratorPrompt: _dropped, ...older } = full;
+    expect(normalizeSettings(older as Settings).orchestratorPrompt).toBe('');
+    expect(normalizeSettings({ ...full, orchestratorPrompt: 'Раздай.' }).orchestratorPrompt).toBe('Раздай.');
+  });
 
   it('keeps a valid view mode', () => {
     expect(normalizeSettings(full).defaultViewMode).toBe('single');

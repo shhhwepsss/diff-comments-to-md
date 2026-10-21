@@ -58,7 +58,7 @@ async function searchPrs({ repo, q, state, limit, author }) {
       '--limit',
       String(n),
       '--json',
-      'number,title,author,headRefName,baseRefName,updatedAt,url,state,isDraft',
+      'number,title,author,headRefName,headRefOid,baseRefName,updatedAt,url,state,isDraft',
     ];
     if (query) args.push('--search', query);
     if (who === 'mine') args.push('--author', '@me');
@@ -74,6 +74,8 @@ async function searchPrs({ repo, q, state, limit, author }) {
         title: r.title,
         author: r.author ? r.author.login : null,
         headRefName: r.headRefName || null,
+        // The head commit the list already knows: a review session pins it.
+        headSha: r.headRefOid || null,
         baseRefName: r.baseRefName || null,
         state: r.state,
         isDraft: Boolean(r.isDraft),
@@ -109,6 +111,7 @@ async function searchPrs({ repo, q, state, limit, author }) {
         title: r.title,
         author: r.author ? r.author.login : null,
         headRefName: null,
+        headSha: null,
         baseRefName: null,
         state: r.state,
         isDraft: Boolean(r.isDraft),
