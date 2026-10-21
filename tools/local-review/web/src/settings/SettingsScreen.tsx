@@ -9,6 +9,7 @@ import { CopyPromptSection } from './CopyPromptSection';
 import { GitignoreSection } from './GitignoreSection';
 import { KeybindingsSection } from './KeybindingsSection';
 import { LspStatusSection } from './LspStatusSection';
+import { OrchestratorPromptSection } from './OrchestratorPromptSection';
 import { descriptorFromHash } from '../lib/hash';
 import { RenderModeSection } from './RenderModeSection';
 import { ViewModeSection } from './ViewModeSection';
@@ -162,6 +163,10 @@ export function SettingsScreen({ back }: { back: string }) {
       ) : (
         <>
           <CopyPromptSection value={draft.copyPrompt} onChange={(copyPrompt) => setDraft({ ...draft, copyPrompt })} />
+          <OrchestratorPromptSection
+            value={draft.orchestratorPrompt}
+            onChange={(orchestratorPrompt) => setDraft({ ...draft, orchestratorPrompt })}
+          />
           <GitignoreSection
             value={draft.gitignoreTarget}
             onChange={(gitignoreTarget) => setDraft({ ...draft, gitignoreTarget })}

@@ -24,6 +24,13 @@ import type {
   PickFolderResponse,
   PrSearchResponse,
   RepoListResponse,
+  ReviewSession,
+  SessionCounts,
+  SessionExportScope,
+  SessionGeneralComment,
+  SessionMark,
+  SessionOverview,
+  SessionPrInput,
   SessionResponse,
   Settings,
   StateResponse,
@@ -66,6 +73,8 @@ export function renderModeForAllFilesFrom(value: unknown): boolean {
 export function normalizeSettings(s: Settings): Settings {
   return {
     ...s,
+    // An older server has no such setting.
+    orchestratorPrompt: typeof s.orchestratorPrompt === 'string' ? s.orchestratorPrompt : '',
     keybindings: keybindingsFrom(s.keybindings),
     defaultViewMode: viewModeFrom(s.defaultViewMode),
     defaultDiffLayout: diffLayoutFrom(s.defaultDiffLayout),
@@ -178,6 +187,12 @@ export function commitsListDescriptor(d: Descriptor): Descriptor {
   return d.source === 'local' && d.mode === 'commits' && !(d.from && d.to) ? { ...d, mode: 'working' } : d;
 }
 
+function sessionScopeQuery(scope: SessionExportScope, number?: number): string {
+  const p = new URLSearchParams({ scope });
+  if (scope === 'pr' && number !== undefined) p.set('number', String(number));
+  return p.toString();
+}
+
 export const api = {
   state: (d: Descriptor, fresh = false) =>
     request<StateResponse>(`/api/state?${descriptorQuery(d, fresh ? { fresh: '1' } : undefined)}`),
@@ -263,6 +278,42 @@ export const api = {
     if (cursors.threadsAfter) extra.threadsAfter = cursors.threadsAfter;
     if (fresh) extra.fresh = '1';
     return request<ConversationPage>(`/api/pr/conversation?${descriptorQuery(d, extra)}`);
+  },
+
+  // A review session over several PRs (lib/review-session.js). There is at
+  // most one open, and no request names it: they all mean that one.
+  reviewSession: () => request<SessionOverview>('/api/review-session'),
+  startReviewSession: (body: { host: string; owner: string; repo: string; prs: SessionPrInput[]; carryOver?: boolean }) =>
+    request<{ session: ReviewSession; counts: SessionCounts }>('/api/review-session', jsonBody('POST', body)),
+  updateReviewSession: (patch: { current?: number; marks?: Record<string, SessionMark | null>; visited?: number[] }) =>
+    request<{ session: ReviewSession }>('/api/review-session', jsonBody('PUT', patch)),
+  finishReviewSession: () => request<{ session: ReviewSession }>('/api/review-session/finish', jsonBody('POST', {})),
+  addSessionComment: (text: string) =>
+    request<{ session: ReviewSession; comment: SessionGeneralComment }>('/api/review-session/general', jsonBody('POST', { text })),
+  updateSessionComment: (id: string, text: string) =>
+    request<{ session: ReviewSession; comment: SessionGeneralComment }>(
+      `/api/review-session/general/${encodeURIComponent(id)}`,
+      jsonBody('PUT', { text }),
+    ),
+  deleteSessionComment: (id: string) =>
+    request<{ session: ReviewSession }>(`/api/review-session/general/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  sessionExportText: (scope: SessionExportScope, number?: number) =>
+    request<string>(`/api/review-session/export?${sessionScopeQuery(scope, number)}`),
+  sessionExportFile: (scope: SessionExportScope, number?: number) =>
+    request<{ file: string; path: string; dir: string; count: number }>(
+      `/api/review-session/export-file?${sessionScopeQuery(scope, number)}`,
+      jsonBody('POST', {}),
+    ),
+  cleanupSession: (numbers: number[]) =>
+    request<{ removed: number; counts: SessionCounts }>('/api/review-session/cleanup', jsonBody('POST', { numbers })),
+  /**
+   * Comments already lying on PRs of one repository — all of them, or only
+   * those written before `before`; { number: count }, zeros left out.
+   */
+  oldComments: (repo: { host: string; owner: string; repo: string }, numbers: number[], before?: string) => {
+    const p = new URLSearchParams({ host: repo.host, owner: repo.owner, repo: repo.repo, numbers: numbers.join(',') });
+    if (before) p.set('before', before);
+    return request<{ counts: Record<string, number> }>(`/api/review-session/old-comments?${p}`);
   },
 
   ghStatus: () => request<GhStatus>('/api/gh/status'),

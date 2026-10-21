@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Descriptor } from '../api/types';
 import {
+  composeFromHash,
   conversationFromHash,
   conversationHash,
   DEFAULT_HASH,
@@ -9,6 +10,7 @@ import {
   hashFor,
   navigationFor,
   lineFromHash,
+  PR_COMPOSE_HASH,
   routeFromHash,
   sameView,
   settingsHash,
@@ -291,5 +293,19 @@ describe('the conversation page in the address', () => {
     const link = viewHash(pr, 'b.ts', 42);
     expect(conversationFromHash(link)).toBe(false);
     expect(navigationFor(link, pr, 'a.ts')).toEqual({ kind: 'file', file: 'b.ts', line: 42 });
+  });
+});
+
+describe('the session line-up in the address', () => {
+  it('is asked for by the search address alone', () => {
+    expect(composeFromHash(PR_COMPOSE_HASH)).toBe(true);
+    expect(composeFromHash('#/pr')).toBe(false);
+    expect(composeFromHash('#/pr?compose=0')).toBe(false);
+    expect(composeFromHash('#/local?compose=1')).toBe(false);
+    expect(composeFromHash('#/pr/github.com/o/r/7?compose=1')).toBe(false);
+  });
+
+  it('is still the PR search for the router', () => {
+    expect(routeFromHash(PR_COMPOSE_HASH)).toEqual({ screen: 'pr' });
   });
 });

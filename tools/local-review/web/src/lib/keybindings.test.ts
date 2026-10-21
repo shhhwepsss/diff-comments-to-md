@@ -145,6 +145,8 @@ describe('keybindingsFrom', () => {
       callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
+      sessionPrev: 'Alt+Shift+Left',
+      sessionNext: 'Alt+Shift+Right',
     });
   });
 
@@ -161,6 +163,8 @@ describe('keybindingsFrom', () => {
       callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
+      sessionPrev: 'Alt+Shift+Left',
+      sessionNext: 'Alt+Shift+Right',
     });
   });
 
@@ -178,6 +182,8 @@ describe('keybindingsFrom', () => {
       callHierarchy: 'Alt+Shift+H',
       navBack: 'Alt+Left',
       navForward: 'Alt+Right',
+      sessionPrev: 'Alt+Shift+Left',
+      sessionNext: 'Alt+Shift+Right',
     });
   });
 
@@ -208,6 +214,13 @@ describe('keybindingsFrom', () => {
     expect(KEYBINDING_DEFAULTS.definition).toBe('F12');
     expect(KEYBINDING_DEFAULTS.navBack).toBe('Alt+Left');
     expect(KEYBINDING_DEFAULTS.navForward).toBe('Alt+Right');
+  });
+
+  it('ships the session neighbours on Alt+Shift+←/→, off the code-jump history keys', () => {
+    expect(KEYBINDING_DEFAULTS.sessionPrev).toBe('Alt+Shift+Left');
+    expect(KEYBINDING_DEFAULTS.sessionNext).toBe('Alt+Shift+Right');
+    expect(KEYBINDING_DEFAULTS.sessionPrev).not.toBe(KEYBINDING_DEFAULTS.navBack);
+    expect(keybindingsFrom({ sessionNext: '' }).sessionNext).toBe('');
   });
 });
 
