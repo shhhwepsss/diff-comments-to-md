@@ -5,6 +5,7 @@ import { needsLoad, type DiffStore } from '../review/diffStore';
 import type { EditorAnchor } from '../review/ReviewContext';
 import { useToast } from '../lib/toast';
 import { useFileDiff } from '../review/useFileDiff';
+import { SessionNextButton } from '../session/SessionChrome';
 import { Empty, FileDiff, type FileDiffActions, type FileDiffProps } from './FileDiff';
 import { currentIndexAt, isCollapsed, placeholderHeight, type CollapseChoice } from './feedMath';
 
@@ -421,7 +422,13 @@ export function FileFeed({
           onRetry={onRetry}
         />
       ))}
-      {files.length > 0 && <div className="rv-feed__end">Конец диффа · файлов: {files.length}</div>}
+      {files.length > 0 && (
+        <div className="rv-feed__end">
+          Конец диффа · файлов: {files.length}
+          {/* In a review session: the next PR is one click from here. */}
+          <SessionNextButton />
+        </div>
+      )}
     </div>
   );
 }

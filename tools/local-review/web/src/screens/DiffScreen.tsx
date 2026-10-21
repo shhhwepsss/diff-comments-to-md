@@ -12,6 +12,7 @@ import { DiffPane } from '../diff/DiffPane';
 import { CommitRail } from '../commits/CommitRail';
 import { DirtyBanner } from '../commits/DirtyBanner';
 import { CommentsPanel } from '../comments/CommentsPanel';
+import { SessionPanel } from '../session/SessionPanel';
 import { selHi, selLo } from '../review/commitSelection';
 import { isTypingTarget, matchesEvent } from '../lib/keybindings';
 import { portalOpen } from '../lib/portal';
@@ -429,6 +430,8 @@ export function DiffScreen({
         ) : (
           commentsPanel && <CommentsPanel onClose={() => onCommentsPanel(false)} />
         )}
+        {/* The session's list pinned on the right; Zen shows nothing but the diff. */}
+        {!zen && <SessionPanel />}
         {loading && (
           <div className="rv-reload" role="status">
             <div className="rv-reload__bar" />

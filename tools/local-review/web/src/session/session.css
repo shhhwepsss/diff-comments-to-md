@@ -1,0 +1,173 @@
+/* Review session (web/src/session): header group, menu, pinned list, Zen pill, dialogs. */
+
+.rv-sess-group {
+  margin-right: var(--base-size-4);
+}
+
+/* The session menu: a short column, the PR list scrolls inside it. */
+.rv-sess-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  padding: var(--base-size-12) 0 var(--base-size-8);
+}
+
+.rv-sess-menu__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 var(--base-size-16);
+}
+
+.rv-sess-menu__title {
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-sess-menu > [role='progressbar'],
+.rv-sess-menu > span:has(> [role='progressbar']) {
+  margin: 0 var(--base-size-16);
+}
+
+.rv-sess-menu__scroll {
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.rv-sess-menu__marks {
+  display: flex;
+  gap: var(--base-size-8);
+  padding: 0 var(--base-size-16);
+}
+
+.rv-sess-menu__note {
+  padding: 0 var(--base-size-16);
+}
+
+.rv-sess-list__title {
+  overflow-wrap: anywhere;
+}
+
+/* Status of a PR in the session, in the icon and in the line under the title. */
+.rv-sess-status--comments {
+  color: var(--fgColor-attention);
+}
+.rv-sess-status--lgtm {
+  color: var(--fgColor-success);
+}
+.rv-sess-status--skip,
+.rv-sess-status--seen,
+.rv-sess-status--todo {
+  color: var(--fgColor-muted);
+}
+
+/* The list pinned beside the diff, docked like the comments panel. */
+.rv-spanel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-height: 0;
+  border-left: var(--borderWidth-thin) solid var(--borderColor-default);
+  background: var(--bgColor-default);
+}
+
+.rv-spanel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 var(--base-size-8) 0 var(--base-size-16);
+  background: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
+.rv-spanel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Zen: the one thing of the session that stays. Faint, so it does not sit on the code. */
+.rv-sess-pill {
+  position: fixed;
+  left: 50%;
+  bottom: var(--base-size-16);
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  padding: 2px var(--base-size-4);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 999px;
+  background: var(--bgColor-default);
+  box-shadow: var(--shadow-floating-small);
+  font-size: var(--text-body-size-small);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.rv-sess-pill:hover,
+.rv-sess-pill:focus-within {
+  opacity: 1;
+}
+
+.rv-sess-pill__text {
+  padding: 0 var(--base-size-4);
+  white-space: nowrap;
+}
+
+/* Under «Конец диффа», inside the same block. */
+.rv-sess-next {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--base-size-12);
+}
+
+.rv-sess-export {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-12);
+}
+
+.rv-sess-export__text {
+  max-height: 55vh;
+  margin: 0;
+  padding: var(--base-size-12);
+  overflow: auto;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-inset);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--text-body-size-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rv-sess-export__error {
+  color: var(--fgColor-danger);
+}
+
+.rv-sess-cleanup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+
+.rv-sess-cleanup__row {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  cursor: pointer;
+}
+
+.rv-sess-cleanup__title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-sess-cleanup p {
+  margin: var(--base-size-4) 0 0;
+}

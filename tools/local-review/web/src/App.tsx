@@ -13,6 +13,8 @@ import { readCommentsPanel, writeCommentsPanel } from './lib/commentsPanel';
 import { readWrap, writeWrap } from './lib/wrap';
 import { readDiffLayout, resolveDiffLayout, toggleDiffLayout, writeDiffLayout, type DiffLayout } from './lib/diffLayout';
 import { ReviewProvider } from './review/ReviewContext';
+import { SessionProvider } from './session/SessionProvider';
+import { SessionKeys, SessionZenPill } from './session/SessionChrome';
 import { AppHeader } from './components/AppHeader';
 import { DiffScreen } from './screens/DiffScreen';
 import { LocalPicker } from './screens/LocalPicker';
@@ -237,6 +239,7 @@ export function App({ theme, onTheme }: Props) {
 
   const shell = (
     <div className={zenActive ? 'rv-app is-zen' : 'rv-app'}>
+      <SessionKeys prevKey={keys.sessionPrev} nextKey={keys.sessionNext} />
       {!zenActive && (
         <AppHeader
           route={route}
@@ -248,6 +251,8 @@ export function App({ theme, onTheme }: Props) {
           conversation={conversation}
           onConversation={setConversation}
           onReloadConversation={reloadConversation}
+          sessionPrevKey={keys.sessionPrev}
+          sessionNextKey={keys.sessionNext}
           viewMode={viewMode}
           onViewMode={setViewMode}
           diffLayout={diffLayout}
@@ -287,16 +292,23 @@ export function App({ theme, onTheme }: Props) {
           <LocalPicker />
         )}
       </div>
+      {/* Zen hides the header, and with it the session's buttons. */}
+      {zenActive && <SessionZenPill />}
     </div>
   );
 
   // A new descriptor is a new review: remount so no state leaks across.
   // The file in the hash is left out of the key: switching files is not a new review.
-  return route.screen === 'diff' ? (
-    <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor} initialFile={route.file} viewMode={viewMode}>
-      {shell}
-    </ReviewProvider>
-  ) : (
-    shell
+  // The review session sits above it: it outlives every PR it walks through.
+  return (
+    <SessionProvider descriptor={route.screen === 'diff' ? route.descriptor : null}>
+      {route.screen === 'diff' ? (
+        <ReviewProvider key={hashFor(route.descriptor)} initial={route.descriptor} initialFile={route.file} viewMode={viewMode}>
+          {shell}
+        </ReviewProvider>
+      ) : (
+        shell
+      )}
+    </SessionProvider>
   );
 }
