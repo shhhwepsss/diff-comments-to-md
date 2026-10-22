@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActionList, ActionMenu, AnchoredOverlay, Button, CounterLabel, IconButton, SegmentedControl, TextInput, ToggleSwitch, UnderlineNav } from '@primer/react';
 import {
   CodeReviewIcon,
-  CommentDiscussionIcon,
   CommentIcon,
   CopyIcon,
   DeviceDesktopIcon,
@@ -24,9 +23,7 @@ import type { ViewMode } from '../lib/viewMode';
 import type { DiffLayout } from '../lib/diffLayout';
 import { PRODUCT_NAME, repoName, titleFor } from '../lib/title';
 import { useOptionalReview, type Review } from '../review/ReviewContext';
-import { generalComments } from '../review/generalComments';
 import { SessionMenu } from '../session/SessionMenu';
-import { GeneralComments } from './GeneralComments';
 import { TabbedSelect } from './TabbedSelect';
 import './header.css';
 
@@ -128,54 +125,36 @@ function RepoMenu({ review }: { review: Review }) {
  * away from the actions that are safe to click by mistake.
  */
 function ReviewMenu({ review }: { review: Review }) {
-  const anchor = useRef<HTMLButtonElement>(null);
-  const [generalOpen, setGeneralOpen] = useState(false);
-  const general = generalComments(review.comments).length;
   const noComments = review.comments.length === 0;
   return (
-    <>
-      <ActionMenu anchorRef={anchor}>
-        <ActionMenu.Button size="small">
-          Ревью
-        </ActionMenu.Button>
-        <ActionMenu.Overlay width="small" align="end">
-          <ActionList>
-            <ActionList.Item onSelect={() => setGeneralOpen(true)}>
-              <ActionList.LeadingVisual>
-                <CommentDiscussionIcon />
-              </ActionList.LeadingVisual>
-              Общий комментарий…
-              {general > 0 && (
-                <ActionList.TrailingVisual>
-                  <CounterLabel>{general}</CounterLabel>
-                </ActionList.TrailingVisual>
-              )}
-            </ActionList.Item>
-            <ActionList.Divider />
-            <ActionList.Item disabled={noComments} onSelect={() => void review.copyAll()}>
-              <ActionList.LeadingVisual>
-                <CopyIcon />
-              </ActionList.LeadingVisual>
-              Скопировать всё
-            </ActionList.Item>
-            <ActionList.Item disabled={noComments} onSelect={() => void review.exportMd()}>
-              <ActionList.LeadingVisual>
-                <DownloadIcon />
-              </ActionList.LeadingVisual>
-              Сгенерировать .md
-            </ActionList.Item>
-            <ActionList.Divider />
-            <ActionList.Item variant="danger" disabled={noComments} onSelect={() => void review.clearAll()}>
-              <ActionList.LeadingVisual>
-                <TrashIcon />
-              </ActionList.LeadingVisual>
-              Очистить всё…
-            </ActionList.Item>
-          </ActionList>
-        </ActionMenu.Overlay>
-      </ActionMenu>
-      {generalOpen && <GeneralComments review={review} onClose={() => setGeneralOpen(false)} returnFocusRef={anchor} />}
-    </>
+    <ActionMenu>
+      <ActionMenu.Button size="small">
+        Ревью
+      </ActionMenu.Button>
+      <ActionMenu.Overlay width="small" align="end">
+        <ActionList>
+          <ActionList.Item disabled={noComments} onSelect={() => void review.copyAll()}>
+            <ActionList.LeadingVisual>
+              <CopyIcon />
+            </ActionList.LeadingVisual>
+            Скопировать всё
+          </ActionList.Item>
+          <ActionList.Item disabled={noComments} onSelect={() => void review.exportMd()}>
+            <ActionList.LeadingVisual>
+              <DownloadIcon />
+            </ActionList.LeadingVisual>
+            Сгенерировать .md
+          </ActionList.Item>
+          <ActionList.Divider />
+          <ActionList.Item variant="danger" disabled={noComments} onSelect={() => void review.clearAll()}>
+            <ActionList.LeadingVisual>
+              <TrashIcon />
+            </ActionList.LeadingVisual>
+            Очистить всё…
+          </ActionList.Item>
+        </ActionList>
+      </ActionMenu.Overlay>
+    </ActionMenu>
   );
 }
 
