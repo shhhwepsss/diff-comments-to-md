@@ -107,6 +107,74 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
   color: var(--fgColor-muted);
 }
 
+.rv-sidebar__shown {
+  color: var(--fgColor-accent);
+}
+
+/* Status toggles: a pill per status, the picked ones in the accent. */
+.rv-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-4);
+}
+
+.rv-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  height: 24px;
+  padding: 0 var(--base-size-8) 0 6px;
+  font: inherit;
+  font-size: var(--text-body-size-small);
+  line-height: 1;
+  color: var(--fgColor-default);
+  background: var(--bgColor-default);
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: 12px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-status-chip:hover:not(:disabled) {
+  background: var(--control-bgColor-hover);
+}
+
+.rv-status-chip:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: -2px;
+}
+
+.rv-status-chip__count {
+  color: var(--fgColor-muted);
+}
+
+.rv-status-chip[aria-pressed='true'] {
+  background: var(--bgColor-accent-muted);
+  border-color: var(--borderColor-accent-emphasis);
+}
+
+.rv-status-chip[aria-pressed='true'] .rv-status-chip__count {
+  color: var(--fgColor-default);
+  font-weight: var(--base-text-weight-semibold, 600);
+}
+
+.rv-status-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rv-status-chip--reset {
+  padding: 0 6px;
+  color: var(--fgColor-muted);
+  background: none;
+  border-color: transparent;
+}
+
+.rv-status-chip--reset:hover:not(:disabled) {
+  color: var(--fgColor-default);
+  background: var(--control-transparent-bgColor-hover);
+}
+
 /* A viewed file reads as done: muted name, a check at the end of the row. */
 .rv-tree-name.is-viewed {
   color: var(--fgColor-muted);
@@ -172,6 +240,10 @@ body.rv-dragging-sidebar .rv-sidebar__resize {
 }
 
 .rv-sidebar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--base-size-8);
   padding: var(--base-size-16);
   text-align: center;
   color: var(--fgColor-muted);
