@@ -31,8 +31,8 @@ export function SessionDialogs({ dialog, onCloseDialog, cleanup, onCloseCleanup,
 
 /**
  * Remarks for the orchestrator agent, about the whole session rather than a
- * PR. Built like the review's own general comments (components/GeneralComments):
- * the same cards and form, unsaved text kept until it is saved.
+ * PR. The same cards and form as the review's own comments, unsaved text kept
+ * until it is saved.
  */
 function GeneralDialog({ onClose }: { onClose: () => void }) {
   const { session, drafts, refresh, focusRef } = useSession();

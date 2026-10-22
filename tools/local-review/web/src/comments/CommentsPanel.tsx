@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Button, CounterLabel, IconButton, TextInput } from '@primer/react';
-import { ArrowDownIcon, ArrowUpIcon, FilterIcon, HistoryIcon, LinkExternalIcon, PencilIcon, SearchIcon, TrashIcon, TriangleDownIcon, XIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, ArrowUpIcon, FilterIcon, HistoryIcon, LinkExternalIcon, PencilIcon, PlusIcon, SearchIcon, TrashIcon, TriangleDownIcon, XIcon } from '@primer/octicons-react';
 import type { Comment } from '../api/types';
 import { useReview } from '../review/ReviewContext';
-import { editDraftKey } from '../review/drafts';
+import { editDraftKey, NEW_GENERAL_DRAFT } from '../review/drafts';
 import { openTarget, ownCommitLabel, staleTarget } from '../review/commentAge';
 import { CommentForm, StaleChip } from '../diff/CommentCard';
 import { ResizeHandle, usePaneWidth } from '../diff/paneResize';
@@ -65,7 +65,9 @@ function Marked({ text, query }: { text: string; query: string }) {
  * Every comment of the review beside the diff, in export order. Not a dialog:
  * the diff stays usable, and picking a comment scrolls the diff to it. j / k
  * walk the list from anywhere but a text field; / puts the cursor in the text
- * search, which narrows the list by comment text or file path.
+ * search, which narrows the list by comment text or file path. «Общий
+ * комментарий» opens a form above the list for a comment about the whole
+ * review; closing it keeps the unsaved text in review.drafts.
  */
 export function CommentsPanel({ onClose }: { onClose: () => void }) {
   const review = useReview();
@@ -76,6 +78,8 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
   // Edited here, not through review.editingId: that would open a second form
   // for the same comment in the diff.
   const [editing, setEditing] = useState<string | null>(null);
+  // Reopened with the panel when a new general comment was left unsaved.
+  const [adding, setAdding] = useState(() => drafts.get(NEW_GENERAL_DRAFT) !== undefined);
   const [width, setWidth] = usePaneWidth(COMMENTS_PANEL_WIDTH_KEY, COMMENTS_PANEL_WIDTH);
   const list = useRef<HTMLDivElement>(null);
 
@@ -169,6 +173,15 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
     if (saved) {
       drafts.clear(editDraftKey(id));
       setEditing(null);
+    }
+    return saved;
+  };
+
+  const addGeneral = async (text: string) => {
+    const saved = await review.createGeneralComment(text);
+    if (saved) {
+      drafts.clear(NEW_GENERAL_DRAFT);
+      setAdding(false);
     }
     return saved;
   };
@@ -320,6 +333,9 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
             </Button>
           )}
         />
+        <Button size="small" leadingVisual={PlusIcon} disabled={adding} onClick={() => setAdding(true)}>
+          Общий комментарий
+        </Button>
         {searching ? (
           <span className="rv-hint rv-cpanel__found" role="status">
             {items.length} из {inFilter.length}
@@ -330,6 +346,18 @@ export function CommentsPanel({ onClose }: { onClose: () => void }) {
           </span>
         )}
       </div>
+      {adding && (
+        <div className="rv-cpanel__new">
+          <CommentForm
+            label="Новый общий комментарий — к ревью целиком"
+            submitLabel="Добавить"
+            initial={drafts.get(NEW_GENERAL_DRAFT)}
+            onChange={(text) => drafts.set(NEW_GENERAL_DRAFT, text)}
+            onSubmit={addGeneral}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
       <div className="rv-cpanel__list" ref={list}>
         {items.length === 0 &&
           (searching && inFilter.length > 0 ? (

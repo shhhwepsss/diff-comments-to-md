@@ -63,6 +63,12 @@ body.rv-dragging-sidebar .rv-cpanel__resize:active {
   background: var(--bgColor-muted);
 }
 
+/* The new general comment form, between the tools and the list. */
+.rv-cpanel__new {
+  padding: var(--base-size-8) var(--base-size-12);
+  border-bottom: var(--borderWidth-thin) solid var(--borderColor-default);
+}
+
 .rv-cpanel__found {
   font-variant-numeric: tabular-nums;
 }
