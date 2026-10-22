@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileRule, hasRules, matchesSearch, passesRules, type FileRules } from './fileFilter';
+import { compileRule, hasRules, matchesSearch, matchesStatus, passesRules, statusKind, toggleStatus, type FileRules, type StatusKind } from './fileFilter';
 
 function rules(include: string, exclude: string): FileRules {
   return { include: compileRule(include).regex, exclude: compileRule(exclude).regex };
@@ -96,5 +96,57 @@ describe('matchesSearch', () => {
   it('takes regexp characters literally', () => {
     expect(matchesSearch('app/[id]/page.tsx', '[id]')).toBe(true);
     expect(matchesSearch('abts', 'a.ts')).toBe(false);
+  });
+});
+
+describe('statusKind', () => {
+  it('groups git statuses the way the sidebar icons do', () => {
+    expect(statusKind({ status: 'A' })).toBe('A');
+    expect(statusKind({ status: 'M' })).toBe('M');
+    expect(statusKind({ status: 'D' })).toBe('D');
+    expect(statusKind({ status: 'R100' })).toBe('R');
+    expect(statusKind({ status: 'C75' })).toBe('R');
+    expect(statusKind({ status: 'T' })).toBe('M');
+    expect(statusKind({ status: '' })).toBe('M');
+  });
+
+  it('counts an untracked file as added', () => {
+    expect(statusKind({ status: 'U', untracked: true })).toBe('A');
+    expect(statusKind({ status: '?', untracked: true })).toBe('A');
+  });
+});
+
+describe('matchesStatus', () => {
+  it('passes every file when no status is picked', () => {
+    expect(matchesStatus({ status: 'D' }, new Set())).toBe(true);
+  });
+
+  it('passes only the picked statuses', () => {
+    const kinds = new Set<StatusKind>(['A', 'D']);
+    expect(matchesStatus({ status: 'A' }, kinds)).toBe(true);
+    expect(matchesStatus({ status: 'D' }, kinds)).toBe(true);
+    expect(matchesStatus({ status: 'M' }, kinds)).toBe(false);
+    expect(matchesStatus({ status: 'R100' }, kinds)).toBe(false);
+  });
+});
+
+describe('toggleStatus', () => {
+  it('adds and removes a status', () => {
+    const one = toggleStatus(new Set(), 'A');
+    expect([...one]).toEqual(['A']);
+    expect([...toggleStatus(one, 'D')].sort()).toEqual(['A', 'D']);
+    expect([...toggleStatus(one, 'A')]).toEqual([]);
+  });
+
+  it('keeps only one status, and on a second time shows all again', () => {
+    const only = toggleStatus(new Set<StatusKind>(['A', 'M']), 'D', true);
+    expect([...only]).toEqual(['D']);
+    expect([...toggleStatus(only, 'D', true)]).toEqual([]);
+  });
+
+  it('does not change the set it was given', () => {
+    const kinds = new Set<StatusKind>(['A']);
+    toggleStatus(kinds, 'M');
+    expect([...kinds]).toEqual(['A']);
   });
 });

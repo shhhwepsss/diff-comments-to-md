@@ -404,7 +404,7 @@ export function FileFeed({
     <div className="rv-feed" ref={root}>
       {files.length === 0 && (
         <Empty icon={FileIcon} title="Нет файлов для показа">
-          Поиск или правила в списке слева скрыли все файлы.
+          Поиск, статус или правила в списке слева скрыли все файлы.
         </Empty>
       )}
       {files.map((file) => (

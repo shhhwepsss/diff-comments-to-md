@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { CounterLabel, FormControl, IconButton, TextInput, TreeView } from '@primer/react';
+import { CounterLabel, FormControl, IconButton, Link, TextInput, TreeView } from '@primer/react';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -18,6 +18,7 @@ import { useReview } from '../review/ReviewContext';
 import type { FileEntry, OrphanFile } from '../api/types';
 import { buildTree, filesOf, type TreeNode } from './fileTree';
 import type { FileFilter } from './useFileFilter';
+import { STATUS_KINDS, type StatusKind } from './fileFilter';
 import { viewHash, wantsNativeLink } from '../lib/hash';
 import { SIDEBAR_PANE, SIDEBAR_WIDTH_KEY } from './sidebarWidth';
 import { ResizeHandle, usePaneWidth } from './paneResize';
@@ -33,6 +34,53 @@ function StatusIcon({ file }: { file: FileEntry }) {
 }
 
 const NO_FILES: FileEntry[] = [];
+
+const KIND_CHIPS: Record<StatusKind, { label: string; icon: typeof FileAddedIcon; className: string }> = {
+  A: { label: 'Добавлены', icon: FileAddedIcon, className: 'rv-status--added' },
+  M: { label: 'Изменены', icon: FileDiffIcon, className: 'rv-status--modified' },
+  D: { label: 'Удалены', icon: FileRemovedIcon, className: 'rv-status--deleted' },
+  R: { label: 'Переименованы', icon: FileMovedIcon, className: 'rv-status--renamed' },
+};
+
+/**
+ * Status toggles under the search. Several can be on; none means all. Alt+click
+ * keeps only the one clicked. A count is how many files of that status the
+ * search and the rules leave, so it says what turning the status on would add.
+ */
+function StatusChips({ filter }: { filter: FileFilter }) {
+  const { kinds, kindCounts, toggleKind, clearKinds } = filter;
+  return (
+    <div className="rv-status-chips" role="group" aria-label="Статус файла">
+      {STATUS_KINDS.map((kind) => {
+        const { label, icon: Icon, className } = KIND_CHIPS[kind];
+        const on = kinds.has(kind);
+        const n = kindCounts[kind];
+        return (
+          <button
+            key={kind}
+            type="button"
+            className="rv-status-chip"
+            aria-pressed={on}
+            // A picked status stays clickable at zero, so it can be turned off.
+            disabled={n === 0 && !on}
+            title={`${label}: ${n}. Alt+клик — только они`}
+            onClick={(e) => toggleKind(kind, e.altKey)}
+          >
+            <Icon className={`rv-status ${className}`} />
+            {label}
+            <span className="rv-status-chip__count">{n}</span>
+          </button>
+        );
+      })}
+      {kinds.size > 0 && (
+        <button type="button" className="rv-status-chip rv-status-chip--reset" title="Показать все статусы" onClick={clearKinds}>
+          <XIcon />
+          Сбросить
+        </button>
+      )}
+    </div>
+  );
+}
 
 type RuleFieldProps = {
   id: string;
@@ -70,7 +118,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
   const review = useReview();
   const { state, comments, activeFile, navFiles } = review;
   const { search, setSearch, include, setInclude, exclude, setExclude, includeRule, excludeRule, rulesActive } = filter;
-  const { shown, hidden, shownOrphans, hiddenOrphans } = filter;
+  const { shown, hidden, shownOrphans, hiddenOrphans, kinds, clearKinds } = filter;
   const [rulesOpen, setRulesOpen] = useState(false);
   // The feed of all files changes the current file by scrolling; keep its row
   // in sight here. 'nearest' moves nothing when the row is already visible.
@@ -93,6 +141,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
   const files = state?.files ?? NO_FILES;
   const hiddenCount = hidden.length + hiddenOrphans.length;
   const tree = useMemo(() => buildTree(shown, (f) => f.path), [shown]);
+  const narrowed = kinds.size > 0 || search.trim() !== '' || rulesActive;
 
   const trailing = (path: string, viewed = false): ReactNode => {
     const n = counts.get(path) || 0;
@@ -270,6 +319,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
         <div className="rv-sidebar__range" title={state?.rangeLabel}>
           <span className="rv-sidebar__count">
             Файлов: {files.length}
+            {files.length > 0 && narrowed && <span className="rv-sidebar__shown"> · показано {shown.length}</span>}
             {files.length > 0 && <span className="rv-sidebar__viewed"> · просмотрено {viewedCount(files)}</span>}
           </span>
           {state?.rangeLabel && <span className="rv-sidebar__label">{state.rangeLabel}</span>}
@@ -298,6 +348,7 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
             {rulesActive && !rulesOpen && <span className="rv-rules-toggle__dot" aria-hidden="true" />}
           </span>
         </div>
+        {files.length > 0 && <StatusChips filter={filter} />}
         {rulesOpen && (
           <div id="rv-file-rules" className="rv-rules">
             <RuleField
@@ -322,7 +373,18 @@ export function FileSidebar({ filter }: { filter: FileFilter }) {
       <div className="rv-sidebar__tree">
         {files.length === 0 && <div className="rv-sidebar__empty">Дифф пуст</div>}
         {files.length > 0 && shown.length === 0 && hidden.length === 0 && (
-          <div className="rv-sidebar__empty">Ничего не найдено</div>
+          <div className="rv-sidebar__empty">
+            {kinds.size > 0 ? (
+              <>
+                Нет файлов с выбранным статусом
+                <Link as="button" onClick={clearKinds}>
+                  Показать все статусы
+                </Link>
+              </>
+            ) : (
+              'Ничего не найдено'
+            )}
+          </div>
         )}
         {shown.length === 0 && hidden.length > 0 && <div className="rv-sidebar__empty">Все файлы скрыты правилами</div>}
         {tree.length > 0 && (
