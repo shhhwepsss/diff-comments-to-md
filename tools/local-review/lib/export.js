@@ -152,11 +152,12 @@ function prUrl(session, pr) {
 
 /**
  * One PR of a session: its heading, branch and head, the link, then either
- * its comments with the copy prompt after them, or one line saying why there
- * are none. `level` is the depth of the PR heading (2 in a whole-session
- * export, 1 when the PR is exported alone); the comment headings sit below it.
- * Status wins over marks: a PR with comments is exported with them whatever
- * was marked on it.
+ * its comments or one line saying why there are none. `level` is the depth of
+ * the PR heading (2 in a whole-session export, 1 when the PR is exported
+ * alone); the comment headings sit below it. The copy prompt goes after the
+ * comments only when it is passed — a PR exported alone; the whole-session
+ * export puts it once at the very end instead. Status wins over marks: a PR
+ * with comments is exported with them whatever was marked on it.
  */
 function renderSessionPr(session, pr, comments, { level, copyPrompt }) {
   const where = [];
@@ -182,8 +183,9 @@ function renderSessionPr(session, pr, comments, { level, copyPrompt }) {
  * The text of a review session — the clipboard and the .md file are both this.
  * `scope: 'all'` is the whole session: a title, the «Для оркестратора»
  * section (the session's general comments, oldest first, then the
- * orchestrator prompt; left out when both are empty), and a section per PR in
- * session order. `scope: 'pr'` is one PR's section alone, one heading level
+ * orchestrator prompt; left out when both are empty), a section per PR in
+ * session order, and the copy prompt once at the end (only when some PR has
+ * comments — it is an instruction about them). `scope: 'pr'` is one PR's section alone, one heading level
  * up and with no orchestrator part — it can be handed to an agent as it is.
  * `commentsByPr` maps a PR number to the comments of its own store.
  */
@@ -204,8 +206,10 @@ function exportSession({ session, scope, number, commentsByPr, copyPrompt, orche
   if (prompt) forOrchestrator.push(prompt);
   if (forOrchestrator.length) parts.push(`## Для оркестратора\n\n${forOrchestrator.join('\n\n')}`);
   for (const pr of session.prs) {
-    parts.push(...renderSessionPr(session, pr, commentsByPr[pr.number] || [], { level: 2, copyPrompt }));
+    parts.push(...renderSessionPr(session, pr, commentsByPr[pr.number] || [], { level: 2 }));
   }
+  const tail = promptOf(copyPrompt);
+  if (tail && session.prs.some((pr) => (commentsByPr[pr.number] || []).length)) parts.push(tail);
   return parts.join('\n\n') + '\n';
 }
 
