@@ -1418,8 +1418,6 @@ async function reviewSessionChecks(call, home) {
     '',
     'src/a.js:L10',
     'Новое замечание',
-    '',
-    'Исправь замечания.',
   ];
   const expectedAll = [
     '# Ревью: 3 PR-а · o/r',
@@ -1444,9 +1442,11 @@ async function reviewSessionChecks(call, home) {
     '',
     'Пропущен — не трогать.',
     '',
+    'Исправь замечания.',
+    '',
   ].join('\n');
   const exAll = await call('/api/review-session/export');
-  eq([exAll.status, exAll.body], [200, expectedAll], 'экспорт сессии: заголовок, «Для оркестратора», раздел на каждый PR');
+  eq([exAll.status, exAll.body], [200, expectedAll], 'экспорт сессии: заголовок, «Для оркестратора», раздел на каждый PR, промпт при копировании один раз в конце');
 
   const exPr = await call('/api/review-session/export?scope=pr&number=501');
   eq(
@@ -1485,7 +1485,7 @@ async function reviewSessionChecks(call, home) {
   await call('/api/review-session', json('PUT', { marks: { 501: 'lgtm', 503: null } }));
   const exMarked = (await call('/api/review-session/export')).body;
   ok(exMarked.includes('Новое замечание') && !exMarked.includes('PR #501 — Первый PR\nВетка: feat/a · head: aaaaaaa\nhttps://github.com/o/r/pull/501\n\nБез замечаний'), 'отметка «без замечаний» на PR-е с комментариями не прячет их');
-  ok(exMarked.endsWith('Не отмечен — не трогать.\n'), 'PR без отметки и без комментариев: «Не отмечен — не трогать.»');
+  ok(exMarked.endsWith('Не отмечен — не трогать.\n\nИсправь замечания.\n'), 'PR без отметки и без комментариев: «Не отмечен — не трогать.»');
 
   // Пустые общие комментарии и пустой промпт — раздела нет; промпт без комментариев — раздел из промпта.
   await call(`/api/review-session/general/${g1.body.comment.id}`, { method: 'DELETE' });
